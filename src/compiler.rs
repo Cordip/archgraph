@@ -47,6 +47,10 @@ pub async fn compile(
         .dependency_edges()
         .await
         .context("code-graph dependency query failed")?;
+    let indexed_paths = provider
+        .indexed_files()
+        .await
+        .context("code-graph file query failed")?;
     let index_after = provider
         .fingerprint()
         .await
@@ -66,6 +70,25 @@ pub async fn compile(
         .collect();
     let mut anomalies: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut resolved = Vec::new();
+    // Edges to files the configuration deliberately leaves out (excluded,
+    // outside source_roots, or unassigned under `unassigned_files: ignore`)
+    // are expected; they are counted, not reported as anomalies.
+    let ignore_unassigned =
+        validated.config.policies.unassigned_files == crate::config::FilePolicy::Ignore;
+    let out_of_scope = |path: &str, owner: Option<&Option<&str>>| match owner {
+        None => {
+            validated.exclude_globs.is_match(path)
+                || !validated
+                    .config
+                    .project
+                    .source_roots
+                    .iter()
+                    .any(|source| crate::discovery::under(path, source))
+        }
+        Some(None) => ignore_unassigned && !diagnostics.ambiguous_files.contains_key(path),
+        Some(Some(_)) => false,
+    };
+    let mut out_of_scope_edge_count = 0;
     for mut edge in observed {
         let from_path = provider_path(&root, &edge.from_file);
         let to_path = provider_path(&root, &edge.to_file);
@@ -97,9 +120,12 @@ pub async fn compile(
                     evidence: edge.into(),
                 });
             }
+            _ if out_of_scope(&from_path, from_node) || out_of_scope(&to_path, to_node) => {
+                out_of_scope_edge_count += 1;
+            }
             _ => {
                 let message = if from_node.is_none() || to_node.is_none() {
-                    "endpoint is outside the discovered project file set; check source_roots, excludes and index freshness"
+                    "endpoint is in scope but was not discovered: ignored by .gitignore, deleted, or the index is stale"
                 } else {
                     "endpoint is unassigned or ambiguously mapped; add unambiguous node maps"
                 };
@@ -147,6 +173,7 @@ pub async fn compile(
                     direct_files: Vec::new(),
                     descendant_file_count: 0,
                     observed_file_count: 0,
+                    unindexed_file_count: 0,
                     interfaces: node.interfaces.clone(),
                 },
             )
@@ -170,9 +197,21 @@ pub async fn compile(
             ]
         })
         .collect();
+    let indexed: Option<HashSet<String>> = indexed_paths.map(|paths| {
+        paths
+            .iter()
+            .filter_map(|path| provider_path(&root, path).ok())
+            .collect()
+    });
     for file in &files {
         if let Some(owner) = &file.node {
             let observed = observed_files.contains(file.path.as_str());
+            let unindexed = indexed
+                .as_ref()
+                .is_some_and(|indexed| !indexed.contains(&file.path));
+            if unindexed {
+                diagnostics.unindexed_files.push(file.path.clone());
+            }
             nodes
                 .get_mut(owner)
                 .context("mapped node missing while compiling hierarchy")?
@@ -185,6 +224,7 @@ pub async fn compile(
                     .context("ancestor missing while counting descendant files")?;
                 node.descendant_file_count += 1;
                 node.observed_file_count += usize::from(observed);
+                node.unindexed_file_count += usize::from(unindexed);
                 current = parent_id(id);
             }
         }
@@ -215,6 +255,12 @@ pub async fn compile(
         (&a.from, &a.to, &a.kind, a.origin).cmp(&(&b.from, &b.to, &b.kind, b.origin))
     });
     let violations = rules::evaluate(&config.rules, &resolved, EVIDENCE_LIMIT);
+    if let Some(example) = diagnostics.unindexed_files.first() {
+        diagnostics.warnings.push(format!(
+            "{} mapped file(s) are not in the code-graph index at all (e.g. `{example}`) and can never show dependencies; the provider skips some directories and file types (see docs/gitnexus-limitations.md)",
+            diagnostics.unindexed_files.len()
+        ));
+    }
     diagnostics.low_coverage =
         coverage_issues(&config.rules, &nodes, config.policies.min_observed_ratio);
     if config.policies.low_coverage != crate::config::FilePolicy::Ignore {
@@ -232,6 +278,8 @@ pub async fn compile(
         filtered_edge_count,
         observed_edge_count,
         resolved_edge_count: resolved.len(),
+        out_of_scope_edge_count,
+        unindexed_file_count: diagnostics.unindexed_files.len(),
         aggregated_architecture_edge_count: edges.len(),
         violation_count: violations.len(),
     };
@@ -272,6 +320,7 @@ fn coverage_issues(
                 rule_id: rule.id().into(),
                 node: node.id.clone(),
                 observed_files: node.observed_file_count,
+                unindexed_files: node.unindexed_file_count,
                 total_files: total,
             });
         }
@@ -420,6 +469,7 @@ mod tests {
                     direct_files: Vec::new(),
                     descendant_file_count: total,
                     observed_file_count: observed,
+                    unindexed_file_count: (total - observed) / 2,
                     interfaces: Vec::new(),
                 },
             )
@@ -434,6 +484,9 @@ mod tests {
         assert!(issues[0]
             .to_string()
             .contains("only 1 of 10 files under `app.a`"));
+        assert!(issues[0]
+            .to_string()
+            .contains("4 are not in the index at all"));
         assert_eq!(coverage_issues(&config.config.rules, &nodes, 0.05).len(), 0);
     }
 }

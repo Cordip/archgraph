@@ -157,12 +157,21 @@ async fn unknown_and_unassigned_provider_paths_are_diagnostics() {
         vec![
             edge("outside.py", "src/domain/model.py"),
             edge("../escape.py", "src/domain/model.py"),
+            edge("src/ghost.py", "src/domain/model.py"),
         ],
     )
     .await;
-    assert_eq!(ir.stats.observed_edge_count, 2);
+    assert_eq!(ir.stats.observed_edge_count, 3);
     assert_eq!(ir.stats.resolved_edge_count, 0);
+    // outside.py is outside source_roots: expected, counted, not an anomaly.
+    assert_eq!(ir.stats.out_of_scope_edge_count, 1);
+    // An escaping path and an in-scope file that was never discovered are.
     assert_eq!(ir.diagnostics.provider_anomalies.len(), 2);
+    assert!(ir
+        .diagnostics
+        .provider_anomalies
+        .iter()
+        .any(|a| a.from_file == "src/ghost.py" && a.message.contains("not discovered")));
     assert!(!ir.diagnostics.warnings.is_empty());
 }
 

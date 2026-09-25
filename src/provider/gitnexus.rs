@@ -124,6 +124,34 @@ pub fn parse_edge_page(stdout: &str) -> Result<Vec<CodeEdge>> {
     Ok(edges)
 }
 
+/// Every file in the index, to tell unindexed files from files without
+/// dependencies.
+pub fn file_query(offset: usize, page_size: usize) -> String {
+    format!(
+        "MATCH (f:File) RETURN f.filePath AS path ORDER BY path SKIP {offset} LIMIT {page_size}"
+    )
+}
+
+pub fn parse_file_page(stdout: &str) -> Result<Vec<String>> {
+    let page = parse_wrapper(stdout)?;
+    let path = page.table.column("path")?;
+    page.table
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            if present(&row[path]) {
+                Ok(row[path].replace('\\', "/"))
+            } else {
+                Err(compatibility(format!(
+                    "file row {} has an empty/null path",
+                    index + 1
+                )))
+            }
+        })
+        .collect()
+}
+
 /// File-level relations of the given types. Symbol endpoints are lifted to
 /// their files and grouped, so every row is unique and SKIP/LIMIT paging is
 /// stable. Edge types are validated identifiers (`config::valid_edge_type`).
@@ -219,6 +247,47 @@ impl GitNexusCliProvider {
             args.push(OsString::from(repository));
         }
         args
+    }
+
+    /// Runs a `SKIP`/`LIMIT` query until a short page. Queries must order by a
+    /// unique key so pages neither overlap nor skip rows.
+    async fn paged<T: PartialEq + Clone>(
+        &self,
+        what: &str,
+        query: impl Fn(usize) -> String,
+        parse: impl Fn(&str) -> Result<Vec<T>>,
+    ) -> Result<Vec<T>> {
+        let mut rows = Vec::new();
+        let mut offset: usize = 0;
+        let mut previous_first: Option<T> = None;
+        loop {
+            let stdout = self
+                .query(&query(offset))
+                .await
+                .with_context(|| format!("failed to read {what} page at offset {offset}"))?;
+            let mut page = parse(&stdout)?;
+            let row_count = page.len(); // Strict wrapper parsing checked equality.
+            if row_count > self.page_size {
+                return Err(compatibility(
+                    "query returned more rows than LIMIT; pagination is unsafe",
+                ));
+            }
+            // A provider that ignores SKIP returns the same full page forever.
+            if !page.is_empty() && page.first() == previous_first.as_ref() {
+                return Err(compatibility(format!(
+                    "{what} page at offset {offset} repeats the previous page; SKIP is not honored"
+                )));
+            }
+            previous_first = page.first().cloned();
+            rows.append(&mut page);
+            if row_count < self.page_size {
+                break;
+            }
+            offset = offset
+                .checked_add(self.page_size)
+                .context("GitNexus pagination offset overflow")?;
+        }
+        Ok(rows)
     }
 
     async fn query(&self, query: &str) -> Result<String> {
@@ -326,29 +395,22 @@ impl CodeGraphProvider for GitNexusCliProvider {
     }
 
     async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {
-        let mut edges = Vec::new();
-        let mut offset: usize = 0;
-        loop {
-            let stdout = self
-                .query(&edge_query(&self.edge_types, offset, self.page_size))
-                .await
-                .with_context(|| format!("failed to read dependency page at offset {offset}"))?;
-            let mut page = parse_edge_page(&stdout)?;
-            let row_count = page.len(); // Strict wrapper parsing checked equality.
-            if row_count > self.page_size {
-                return Err(compatibility(
-                    "query returned more rows than LIMIT; pagination is unsafe",
-                ));
-            }
-            edges.append(&mut page);
-            if row_count < self.page_size {
-                break;
-            }
-            offset = offset
-                .checked_add(self.page_size)
-                .context("GitNexus pagination offset overflow")?;
-        }
-        Ok(edges)
+        self.paged(
+            "dependency",
+            |offset| edge_query(&self.edge_types, offset, self.page_size),
+            parse_edge_page,
+        )
+        .await
+    }
+
+    async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
+        self.paged(
+            "file",
+            |offset| file_query(offset, self.page_size),
+            parse_file_page,
+        )
+        .await
+        .map(Some)
     }
 
     async fn reindex(&self) -> Result<()> {

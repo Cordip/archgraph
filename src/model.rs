@@ -76,6 +76,9 @@ pub struct CompiledNode {
     /// Descendant files with at least one resolved observed dependency, in
     /// either direction. A low ratio means a clean check is weak evidence.
     pub observed_file_count: usize,
+    /// Descendant files absent from the provider's index altogether.
+    #[serde(default)]
+    pub unindexed_file_count: usize,
     pub interfaces: Vec<Interface>,
 }
 
@@ -214,6 +217,9 @@ pub struct Diagnostics {
     pub unassigned_files: Vec<String>,
     pub ambiguous_files: BTreeMap<String, Vec<String>>,
     pub provider_anomalies: Vec<ProviderAnomaly>,
+    /// Mapped files the provider did not index (empty if it cannot list files).
+    #[serde(default)]
+    pub unindexed_files: Vec<String>,
     pub warnings: Vec<String>,
 }
 
@@ -223,6 +229,9 @@ pub struct CoverageIssue {
     pub rule_id: String,
     pub node: String,
     pub observed_files: usize,
+    /// Files the provider never indexed; they cannot show dependencies.
+    #[serde(default)]
+    pub unindexed_files: usize,
     pub total_files: usize,
 }
 
@@ -230,12 +239,17 @@ impl std::fmt::Display for CoverageIssue {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "rule `{}`: only {} of {} files under `{}` ({:.0}%) have any observed dependency; a passing check there is weak evidence",
+            "rule `{}`: only {} of {} files under `{}` ({:.0}%) have any observed dependency{}; a passing check there is weak evidence",
             self.rule_id,
             self.observed_files,
             self.total_files,
             self.node,
-            100.0 * self.observed_files as f64 / self.total_files as f64
+            100.0 * self.observed_files as f64 / self.total_files as f64,
+            if self.unindexed_files == 0 {
+                String::new()
+            } else {
+                format!(", {} are not in the index at all", self.unindexed_files)
+            }
         )
     }
 }
@@ -262,6 +276,11 @@ pub struct CompileStats {
     pub observed_edge_count: usize,
     /// Observations whose both files map to architecture nodes.
     pub resolved_edge_count: usize,
+    /// Observations with an endpoint deliberately outside the project scope.
+    #[serde(default)]
+    pub out_of_scope_edge_count: usize,
+    #[serde(default)]
+    pub unindexed_file_count: usize,
     pub aggregated_architecture_edge_count: usize,
     pub violation_count: usize,
 }

@@ -29,6 +29,16 @@ if mode == "malformed":
     print("{}")
     sys.exit(0)
 query = args[1]
+files_match = re.search(r"MATCH \(f:File\) RETURN f.filePath AS path ORDER BY path SKIP (\d+) LIMIT (\d+)$", query)
+if files_match:
+    # The indexed-file listing. src/a2.rs is deliberately not indexed.
+    offset, size = map(int, files_match.groups())
+    if mode == "ignores_skip":
+        offset = 0
+    page = ["src/a.rs", "src/b.rs"][offset:offset + size]
+    table = "| path |\n| --- |" + "".join(f"\n| {path} |" for path in page)
+    print(json.dumps({"markdown": table, "row_count": len(page)}))
+    sys.exit(0)
 if "RETURN f.filePath AS path" in query:
     print(json.dumps({"markdown": "| path |\n| --- |\n| src/a.rs |", "row_count": 1}))
     sys.exit(0)
@@ -49,6 +59,8 @@ if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_larg
     rows.append(("src/a.rs", "src/b.rs"))
 if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
+if mode == "out_of_scope":
+    rows.append(("src/a.rs", "vendor/lib.rs"))
 if mode == "violation_grown":
     rows.extend([("src/a.rs", "src/b.rs"), ("src/a2.rs", "src/b.rs")])
 page = rows[offset:offset + size]

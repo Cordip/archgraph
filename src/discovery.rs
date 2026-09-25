@@ -3,7 +3,7 @@ use anyhow::{bail, Context, Result};
 use ignore::WalkBuilder;
 use std::{collections::BTreeSet, path::Path};
 
-fn under(path: &str, root: &str) -> bool {
+pub(crate) fn under(path: &str, root: &str) -> bool {
     root.is_empty()
         || path == root
         || path

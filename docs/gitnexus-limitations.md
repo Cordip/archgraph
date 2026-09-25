@@ -6,7 +6,11 @@ zammad validation run ([examples/zammad](../examples/zammad/README.md)),
 GitNexus 1.6.12. Record new findings here; see [AGENTS.md](../AGENTS.md).
 
 Detect gaps with `observed_file_count` (shown by `show`, `context` and the UI)
-and with the coverage warnings `compile` and `check` print. A node where most
+and with the coverage warnings `compile` and `check` print. ArchGraph also
+lists every mapped file missing from the index altogether
+(`diagnostics.unindexed_files`, counted per node and in the coverage warnings):
+such a file was never read, which is different from a file read and found to
+have no dependencies. A node where most
 files have no observed dependency cannot fail a rule in any meaningful way.
 
 ## 1. `#` subpath imports resolve only through a named workspace package
@@ -97,7 +101,9 @@ file-level evidence names the wrong file. No workaround.
 ## 6. CoffeeScript is not parsed
 
 zammad's legacy desktop UI (671 `.coffee` files in `app/assets`) is 99%
-unobserved. No workaround in ArchGraph; treat such nodes as unchecked.
+unobserved. The files are in the index (only 6 of 814 files there are not), but
+GitNexus extracts no relations from them. No workaround in ArchGraph; treat
+such nodes as unchecked.
 
 ## 7. The index can change while ArchGraph reads it
 

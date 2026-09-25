@@ -288,6 +288,40 @@ fn provider_output_larger_than_a_pipe_buffer_is_not_truncated() {
 }
 
 #[test]
+fn unindexed_files_and_out_of_scope_edges_are_told_apart() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["compile", "--json"], "out_of_scope");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    // src/a2.rs exists and is mapped but the fake index does not list it.
+    assert_eq!(value["stats"]["unindexed_file_count"], 1);
+    assert_eq!(value["diagnostics"]["unindexed_files"][0], "src/a2.rs");
+    assert!(String::from_utf8_lossy(&output.stderr).contains("not in the code-graph index at all"));
+    // An edge into vendor/, outside source_roots, is expected, not an anomaly.
+    assert_eq!(value["stats"]["out_of_scope_edge_count"], 1);
+    assert_eq!(
+        value["diagnostics"]["provider_anomalies"]
+            .as_array()
+            .unwrap()
+            .len(),
+        0
+    );
+}
+
+#[test]
+fn a_provider_that_ignores_skip_fails_instead_of_looping() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["compile"], "ignores_skip");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("SKIP is not honored"));
+}
+
+#[test]
 fn pagination_uses_argv_cwd_and_a_final_empty_page() {
     let fixture = Fixture::new();
     let output = fixture.run(&["compile", "--json"], "cycle");
@@ -305,7 +339,7 @@ fn pagination_uses_argv_cwd_and_a_final_empty_page() {
         .filter(|log| {
             log["args"][1]
                 .as_str()
-                .is_some_and(|q| q.contains(" SKIP "))
+                .is_some_and(|q| q.contains("CodeRelation") && q.contains(" SKIP "))
         })
         .collect();
     assert_eq!(queries.len(), 3);

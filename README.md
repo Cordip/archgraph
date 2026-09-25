@@ -334,8 +334,15 @@ Pages continue until `row_count < page_size`. Query timeout is five minutes;
 indexing itself has no imposed timeout. Keep the provider index quiescent while
 compiling so offset pagination describes a consistent dataset.
 
-Provider paths outside the discovered file set, unmatched paths, and unmapped
-endpoints are counted as diagnostics. They are never silently guessed into
+Provider edges with an endpoint the configuration deliberately leaves out
+(excluded, outside `source_roots`, or unassigned under `unassigned_files:
+ignore`) are only counted (`stats.out_of_scope_edge_count`). Other endpoints
+that do not resolve, such as an in-scope file that was not discovered (stale
+index, `.gitignore`) or an escaping path, are reported in
+`diagnostics.provider_anomalies`. ArchGraph also asks the provider for its list
+of indexed files and reports mapped files missing from it
+(`diagnostics.unindexed_files`). Paged queries fail instead of looping if the
+provider ignores `SKIP`. They are never silently guessed into
 logical nodes. Source paths are metadata only and are not dereferenced by the
 provider adapter.
 

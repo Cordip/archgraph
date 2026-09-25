@@ -11,6 +11,12 @@ pub trait CodeGraphProvider: Send + Sync {
     /// Verify availability, indexing, and the expected query schema.
     async fn info(&self) -> Result<ProviderInfo>;
     async fn dependency_edges(&self) -> Result<Vec<CodeEdge>>;
+    /// Every file path in the provider's index, if the provider can list them.
+    /// Lets the compiler tell files it never indexed (unsupported language,
+    /// ignored directory) from indexed files without dependencies.
+    async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
+        Ok(None)
+    }
     /// Cheap identity of the provider's current index, if it has one. The
     /// compiler compares it before and after querying to detect an index
     /// rewritten mid-compile (e.g. by an auto-index service).
@@ -30,6 +36,8 @@ pub struct InMemoryProvider {
     pub failure: Option<String>,
     /// Successive `fingerprint()` results; the last one repeats. Empty: none.
     pub fingerprints: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    /// Files reported as indexed; `None` means the provider cannot list them.
+    pub indexed: Option<Vec<String>>,
 }
 #[async_trait]
 impl CodeGraphProvider for InMemoryProvider {
@@ -48,6 +56,9 @@ impl CodeGraphProvider for InMemoryProvider {
             bail!("{message}");
         }
         Ok(self.edges.clone())
+    }
+    async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
+        Ok(self.indexed.clone())
     }
     async fn fingerprint(&self) -> Result<Option<String>> {
         let mut sequence = self.fingerprints.lock().expect("fingerprint lock");
