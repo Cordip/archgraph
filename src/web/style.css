@@ -108,6 +108,11 @@ main { position: relative; display: grid; grid-template-columns: var(--side-w) m
 body.sidebar-closed { --side-w: 0px; }
 body.inspector-closed { --insp-w: 0px; }
 body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; }
+/* Explicit columns: a hidden panel leaves the grid flow, and auto-placement
+   would move the canvas into its zero-width column. */
+.sidebar { grid-column: 1; }
+.canvas { grid-column: 2; }
+.inspector { grid-column: 3; }
 
 /* Sidebar */
 .sidebar { display: flex; flex-direction: column; min-height: 0; overflow: auto; background: var(--sheet); border-right: 1.5px solid var(--frame); }
@@ -368,6 +373,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
    the left and the details rise from the bottom, one at a time. */
 @media (max-width: 900px) {
   main { grid-template-columns: minmax(0, 1fr); }
+  .sidebar, .canvas, .inspector { grid-column: 1; }
   body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: flex; }
   body.inspector-closed .inspector { display: grid; }
   .sidebar { position: absolute; top: 0; bottom: 0; left: 0; z-index: 20; width: min(330px, 88vw); transform: translateX(-105%); transition: transform .2s ease; visibility: hidden; }

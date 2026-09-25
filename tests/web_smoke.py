@@ -257,6 +257,22 @@ def main():
         assert page.locator("#graph .node.selected").get_attribute("aria-label") == "Domain"
         checks.append("sidebar tree with violation badges, violations-only toggle, click selects and centres the entry")
 
+        # Hiding one panel keeps the canvas and the other panel in place.
+        def box(selector):
+            return page.locator(selector).bounding_box()
+        canvas_before, inspector_before = box("#canvas"), box("#inspector")
+        page.locator("#sidebar-toggle").click()
+        assert page.locator("#sidebar").is_hidden()
+        canvas_after, inspector_after = box("#canvas"), box("#inspector")
+        assert canvas_after["x"] == 0 and canvas_after["width"] > canvas_before["width"], canvas_after
+        assert inspector_after["x"] == inspector_before["x"], inspector_after
+        page.locator("#sidebar-toggle").click()
+        assert page.locator("#sidebar").is_visible() and box("#canvas") == canvas_before
+        page.locator("#inspector-toggle").click()
+        assert box("#canvas")["x"] == canvas_before["x"] and box("#canvas")["width"] > canvas_before["width"]
+        page.locator("#inspector-toggle").click()
+        checks.append("hiding the node list or the inspector widens the canvas and moves nothing else")
+
         # The table lists the same entries and filters them.
         page.locator("#view-table").click()
         assert page.locator("#stage").is_hidden()
