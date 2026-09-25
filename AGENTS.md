@@ -169,3 +169,9 @@ Add new entries at the end: what happened, why, and what to do.
     so it cannot catch this. Style through classes in `style.css` (the SVG
     edge weights are `w1`–`w4` classes for this reason) and look at the
     browser console of a real `archgraph serve`.
+23. **The browser smoke test needs a real origin and visible text.** A page
+    made with `set_content` on `about:blank` has no `localStorage` (the UI's
+    remembered layouts silently do nothing), so `tests/web_smoke.py` first
+    navigates to a routed fake origin. And Playwright's `inner_text()` of an
+    element inside a closed `<details>` is empty; the coverage notes fold when
+    there are many, so check them with `text_content()`.
