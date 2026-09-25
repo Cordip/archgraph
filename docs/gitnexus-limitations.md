@@ -110,14 +110,18 @@ while compiling" instead of reporting the mix. Rerun when indexing has
 finished. Writing `.archgraph/` inside the repository is itself a file change
 such a service may react to.
 
+## 8. Some directory names are never indexed
+
+GitNexus skips a hard-coded list of directory names at any depth
+(`dist/config/ignore-service.js`), including `__tests__`, `__mocks__`,
+`coverage`, `logs`, `log`, `tmp`, `temp` and `cache`. In zammad none of the 810
+files under `app/frontend/**/__tests__/` are in the index, so they look like
+files without dependencies. A source directory that happens to be called
+`cache` or `log` disappears the same way. To index such a directory, add a
+negation to `.gitnexusignore` in the analyzed repository, e.g. `!__tests__/`,
+and reindex with `--force`.
+
 ## ArchGraph-side limitations
 
-These are ArchGraph's own and could be fixed here:
-
-- **Co-located tests cannot be mapped to a test node.** JavaScript projects keep
-  `__tests__/`, `*.spec.ts` and `*.mocks.ts` next to production code. A glob
-  mapping them to a sibling "tests" node conflicts with the app node's glob
-  and is rejected as ambiguous. Left in the app node, test helpers create
-  false app ↔ test-support cycles. The zammad example excludes them via
-  `project.exclude`. A cross-cutting mapping (e.g. an explicit priority) would
-  remove the need.
+None known at the moment. Co-located tests used to be one: they can now be
+assigned to a test node with a node `priority` (see the README).

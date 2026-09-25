@@ -26,7 +26,18 @@ pub fn resolve(files: &[String], validated: &ValidatedConfig) -> Result<Membersh
             .into_iter()
             .map(|index| validated.mapping_owners[index].clone())
             .collect();
-        let mut ranked: Vec<String> = matches.into_iter().collect();
+        let priority = |id: &String| {
+            validated
+                .config
+                .nodes
+                .get(id)
+                .map_or(0, |node| node.priority)
+        };
+        let top = matches.iter().map(priority).max().unwrap_or(0);
+        let mut ranked: Vec<String> = matches
+            .into_iter()
+            .filter(|id| priority(id) == top)
+            .collect();
         ranked.sort_by(|a, b| {
             a.split('.')
                 .count()
@@ -135,5 +146,19 @@ mod tests {
                 assert_eq!(result.diagnostics.warnings.is_empty(), policy == "ignore");
             }
         }
+    }
+    #[test]
+    fn priority_lets_a_cross_cutting_node_claim_co_located_files() {
+        let nodes = "  app.web: {maps: ['src/web/**']}\n  app.tests: {maps: ['src/**/__tests__/**'], priority: 1}\n";
+        let c = config(nodes, "{}");
+        let m = resolve(
+            &["src/web/__tests__/a.spec.ts".into(), "src/web/a.ts".into()],
+            &c,
+        )
+        .unwrap();
+        assert_eq!(m.files[0].node.as_deref(), Some("app.tests"));
+        assert_eq!(m.files[1].node.as_deref(), Some("app.web"));
+        let without = config(&nodes.replace(", priority: 1", ""), "{}");
+        assert!(resolve(&["src/web/__tests__/a.spec.ts".into()], &without).is_err());
     }
 }

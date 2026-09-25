@@ -17,13 +17,6 @@ project:
   exclude:
     - "**/node_modules/**"
     - "app/assets/builds/**"
-    # Co-located frontend test helpers. Sibling nodes cannot share files, so they
-    # cannot be mapped to frontend.test_support; left in, they create a false
-    # app <-> test_support cycle.
-    - "app/frontend/**/__tests__/**"
-    - "app/frontend/**/*.spec.ts"
-    - "app/frontend/**/*.mocks.ts"
-    - "app/frontend/**/graphql/mocks/**"
     - "app/assets/stylesheets/**"
     - "**/*.{png,svg,jpg,gif,ico,woff,woff2,ttf,eot,css,scss,json,yml,yaml,md,txt,erb,eco,jst,html,snap,gql,graphql}"
 provider:
@@ -91,8 +84,19 @@ nodes:
     title: Mobile app
     maps: ["app/frontend/apps/mobile/**"]
   zammad.frontend.test_support:
-    title: Frontend test support
-    maps: ["app/frontend/tests/**", "app/frontend/cypress/**"]
+    title: Frontend tests and test helpers
+    description: >-
+      Test support plus the tests and GraphQL mocks kept next to the code they
+      test. Priority 1 lets these files win over the app nodes' broader globs;
+      left in the apps, they form a false app <-> test_support cycle.
+    maps:
+      - "app/frontend/tests/**"
+      - "app/frontend/cypress/**"
+      - "app/frontend/**/__tests__/**"
+      - "app/frontend/**/*.spec.ts"
+      - "app/frontend/**/*.mocks.ts"
+      - "app/frontend/**/graphql/mocks/**"
+    priority: 1
   zammad.tests:
     title: Backend test suites
     maps: ["spec/**", "test/**"]

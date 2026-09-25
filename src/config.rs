@@ -164,6 +164,12 @@ pub struct NodeConfig {
     pub description: Option<String>,
     #[serde(default)]
     pub maps: Vec<String>,
+    /// Mapping precedence. A file matched by several nodes belongs to those
+    /// with the highest priority; among them the usual deepest-ancestor rule
+    /// applies. Lets a cross-cutting node (e.g. co-located tests) claim files
+    /// that a sibling's broader glob also matches.
+    #[serde(default)]
+    pub priority: i32,
     #[serde(default)]
     pub interfaces: Vec<Interface>,
 }

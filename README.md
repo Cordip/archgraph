@@ -130,6 +130,13 @@ disabled for reproducibility. Symlinks are not followed. `.git`, `.archgraph`,
 and `.gitnexus` are never crawled, so compiler/provider output cannot become
 source input on subsequent runs. Missing source roots are actionable errors.
 
+A node may set `priority` (default 0). A file matched by several nodes belongs
+to those with the highest priority, and among them the rules below apply. This
+lets a cross-cutting node claim files a sibling's broader glob also matches,
+typically tests kept next to production code (`**/__tests__/**`, `*.spec.ts`).
+Without it such files are ambiguous, or, left in the app node, create false
+app ↔ test-support cycles.
+
 A file matching an ancestor chain belongs to its deepest matching node. Parents
 implicitly contain descendant files for counts and projections. Unrelated
 matching branches are ambiguous. The default is an error; `ambiguous_mapping:

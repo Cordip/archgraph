@@ -124,7 +124,11 @@ check then reports one more real violation and one more cycle:
 
 The first attempt reported a large app ↔ `test_support` cycle. It came from
 test helpers kept next to production code (`*.mocks.ts`, `__tests__/`,
-`*.spec.ts`), which the committed config now excludes.
+`*.spec.ts`) being counted as app code. The committed config assigns them to
+`frontend.test_support` with `priority: 1`. GitNexus does not index
+`__tests__/` directories at all (see
+[docs/gitnexus-limitations.md](../../docs/gitnexus-limitations.md)), so those
+810 files stay unobserved.
 
 ## UI
 
