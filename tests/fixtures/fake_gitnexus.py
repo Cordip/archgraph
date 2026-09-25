@@ -41,6 +41,17 @@ if files_match:
     table = "| path |\n| --- |" + "".join(f"\n| {path} |" for path in page)
     print(json.dumps({"markdown": table, "row_count": len(page)}))
     sys.exit(0)
+if query.startswith("MATCH (r:Route)"):
+    rows = []
+    if mode == "routes":
+        rows = [
+            ("Route:GET /api/items", "GET", "/api/items", "src/api/app.py"),
+            ("Route:GET /{path:path}", "GET", "/{path:path}", "src/api/app.py"),
+            ("Route:POST /api/items", "POST", "/api/items", "src/api/app.py"),
+        ]
+    table = "| id | method | path | file |\n| --- | --- | --- | --- |" + "".join(f"\n| {' | '.join(row)} |" for row in rows)
+    print(json.dumps({"markdown": table, "row_count": len(rows)}))
+    sys.exit(0)
 if "RETURN f.filePath AS path" in query:
     print(json.dumps({"markdown": "| path |\n| --- |\n| src/a.rs |", "row_count": 1}))
     sys.exit(0)
@@ -49,7 +60,7 @@ if mode == "query_failure":
 match = re.search(r"SKIP (\d+) LIMIT (\d+)$", query)
 if match is None:
     sys.exit("missing pagination")
-if "r.type IN ['IMPORTS']" not in query or "ORDER BY source, target, kind, reason" not in query:
+if not re.search(r"r\.type IN \[('FETCHES', )?'IMPORTS'\]", query) or "ORDER BY source, target, kind, reason" not in query:
     sys.exit("unexpected dependency query")
 offset, size = map(int, match.groups())
 if mode == "index_rewrite_torn":

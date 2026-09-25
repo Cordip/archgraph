@@ -5,7 +5,7 @@ use super::{
 use crate::{
     config::ProviderConfig,
     error::{compatibility, ProviderError},
-    model::{CodeEdge, ProviderInfo},
+    model::{CodeEdge, ProviderInfo, Route},
 };
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -28,6 +28,7 @@ pub struct GitNexusCliProvider {
     repository: Option<String>,
     page_size: usize,
     edge_types: Vec<String>,
+    routes: bool,
 }
 
 #[derive(Debug)]
@@ -158,6 +159,43 @@ pub fn parse_file_page(stdout: &str) -> Result<Vec<String>> {
         .collect()
 }
 
+/// HTTP routes. The id orders them uniquely; the handler file is the
+/// route's `filePath`.
+pub fn route_query(offset: usize, page_size: usize) -> String {
+    format!(
+        "MATCH (r:Route) RETURN r.id AS id, r.method AS method, r.name AS path, r.filePath AS file \
+ORDER BY id SKIP {offset} LIMIT {page_size}"
+    )
+}
+
+pub fn parse_route_page(stdout: &str) -> Result<Vec<Route>> {
+    let page = parse_wrapper(stdout)?;
+    let table = &page.table;
+    let (method, path, file) = (
+        table.column("method")?,
+        table.column("path")?,
+        table.column("file")?,
+    );
+    table
+        .rows
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            if !present(&row[path]) || !present(&row[file]) {
+                return Err(compatibility(format!(
+                    "route row {} has an empty/null path or file",
+                    index + 1
+                )));
+            }
+            Ok(Route {
+                method: present(&row[method]).then(|| row[method].to_uppercase()),
+                path: row[path].clone(),
+                file: row[file].replace('\\', "/"),
+            })
+        })
+        .collect()
+}
+
 /// File-level relations of the given types. Symbol endpoints are lifted to
 /// their files and grouped, so every row is unique and SKIP/LIMIT paging is
 /// stable. Edge types are validated identifiers (`config::valid_edge_type`).
@@ -204,6 +242,7 @@ impl GitNexusCliProvider {
                 .filter(|kind| !super::css::EDGE_TYPES.contains(&kind.as_str()))
                 .cloned()
                 .collect(),
+            routes: config.http,
         })
     }
 
@@ -408,13 +447,19 @@ impl CodeGraphProvider for GitNexusCliProvider {
 
     fn query_identity(&self) -> Option<String> {
         // The query texts change whenever ArchGraph changes what it asks.
-        Some(format!(
-            "{}\n{PROBE}\n{}\n{}\n{:?}",
-            self.executable.to_string_lossy(),
-            edge_query(&self.edge_types, 0, self.page_size),
-            file_query(0, self.page_size),
-            self.repository
-        ))
+        Some(
+            format!(
+                "{}\n{PROBE}\n{}\n{}\n{:?}",
+                self.executable.to_string_lossy(),
+                edge_query(&self.edge_types, 0, self.page_size),
+                file_query(0, self.page_size),
+                self.repository
+            ) + &if self.routes {
+                format!("\n{}", route_query(0, self.page_size))
+            } else {
+                String::new()
+            },
+        )
     }
 
     async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {
@@ -431,6 +476,18 @@ impl CodeGraphProvider for GitNexusCliProvider {
             "file",
             |offset| file_query(offset, self.page_size),
             parse_file_page,
+        )
+        .await
+        .map(Some)
+    }
+    async fn routes(&self) -> Result<Option<Vec<Route>>> {
+        if !self.routes {
+            return Ok(None);
+        }
+        self.paged(
+            "route",
+            |offset| route_query(offset, self.page_size),
+            parse_route_page,
         )
         .await
         .map(Some)
@@ -521,6 +578,35 @@ mod tests {
         }
     }
     #[test]
+    fn routes_keep_their_handler_file_and_an_optional_method() {
+        let page = |table: &str| {
+            let count = table.lines().count() - 2;
+            parse_route_page(
+                &serde_json::json!({"markdown": table, "row_count": count}).to_string(),
+            )
+        };
+        let routes = page("| id | method | path | file |\n| --- | --- | --- | --- |\n| Route:GET /a | get | /a | api\\\\app.py |\n| Route:/b | | /b | pages/b.ts |").unwrap();
+        assert_eq!(
+            routes,
+            [
+                Route {
+                    method: Some("GET".into()),
+                    path: "/a".into(),
+                    file: "api/app.py".into()
+                },
+                Route {
+                    method: None,
+                    path: "/b".into(),
+                    file: "pages/b.ts".into()
+                },
+            ]
+        );
+        assert!(page(
+            "| id | method | path | file |\n| --- | --- | --- | --- |\n| Route:/c | | /c | null |"
+        )
+        .is_err());
+    }
+    #[test]
     fn argv_preserves_spaces_and_omits_unconfigured_repo() {
         let mut provider = GitNexusCliProvider {
             executable: "gitnexus".into(),
@@ -528,6 +614,7 @@ mod tests {
             repository: None,
             page_size: 2,
             edge_types: vec!["IMPORTS".into()],
+            routes: false,
         };
         assert_eq!(provider.query_args("a query with spaces").len(), 2);
         provider.repository = Some("repo with spaces; not a shell".into());

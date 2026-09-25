@@ -8,10 +8,12 @@ changing anything, and add to **Gotchas** whenever something surprises you.
 ArchGraph is a single Rust crate (`archgraph` binary). It compiles a desired
 architecture (`architecture.yaml`) against file-level dependencies observed by
 the external GitNexus CLI, checks rules and serves a read-only UI. Language
-parsing belongs to GitNexus. The one exception is CSS, which GitNexus cannot
-parse: with `provider.css`, `src/provider/css/` reads stylesheets
-(lightningcss) and class names in scripts (tree-sitter). Do not extend it to
-anything GitNexus parses. See
+parsing belongs to GitNexus. Two exceptions fill gaps GitNexus leaves in a
+web application: with `provider.css`, `src/provider/css/` reads stylesheets
+(lightningcss) and class names in scripts (tree-sitter); with
+`provider.http`, `src/provider/http/` reads client HTTP calls (tree-sitter)
+and matches them to GitNexus's routes. Do not extend them to anything
+GitNexus already observes. See
 [README.md](README.md) for behavior, [DESIGN.md](DESIGN.md) for the original
 design and [docs/](docs/) for provider limitations.
 
@@ -155,3 +157,8 @@ Add new entries at the end: what happened, why, and what to do.
     defined in two stylesheets gives `classname-ambiguous` edges at 0.5, which
     `min_confidence: 0.6` drops (they are counted in
     `stats.filtered_edge_count`).
+21. **tree-sitter reads `await f<T>(x)` as `(await f)<T>(x)`.** The call's
+    `function` is then an `await_expression`, so a lookup by callee name
+    silently misses every awaited generic call: in lct-task3 the candidates
+    route looked uncalled. Look through `await` (`client::Scan::callee`), and
+    dump the tree (a small `tree_sitter` program) before assuming a shape.

@@ -18,12 +18,15 @@ provider:
   command: gitnexus
   repo: null
   page_size: 5000
-  edge_types: &observed [IMPORTS, CALLS, EXTENDS, IMPLEMENTS, USES_CLASS]
+  edge_types: &observed [IMPORTS, CALLS, EXTENDS, IMPLEMENTS, USES_CLASS, FETCHES]
   # Both are GitNexus guesses that are false here (see README.md).
   exclude_reasons: [markdown-link, property-dispatch, callable-value-flow]
   min_confidence: 0.6
   # GitNexus parses no CSS; ArchGraph reads the stylesheet and class names.
   css: true
+  # GitNexus finds the FastAPI routes but not the frontend's calls through
+  # its `request()` wrapper; ArchGraph matches those calls to the routes.
+  http: true
 policies:
   unassigned_files: warn
   ambiguous_mapping: error
@@ -100,6 +103,11 @@ rules:
     from: lct.backend
     to: lct.tests
     edge_types: *observed
+  # The frontend is a client of the backend's HTTP API, and only the HTTP
+  # client (api.ts) calls it; everything else goes through the client.
+  - {id: app-calls-the-backend-through-the-client, kind: deny_dependency, from: lct.frontend.app, to: lct.backend, edge_types: [FETCHES]}
+  - {id: components-call-the-backend-through-the-client, kind: deny_dependency, from: lct.frontend.components, to: lct.backend, edge_types: [FETCHES]}
+  - {id: view-logic-calls-the-backend-through-the-client, kind: deny_dependency, from: lct.frontend.logic, to: lct.backend, edge_types: [FETCHES]}
   # State and orchestration on top, components below, then pure helpers and
   # the client, then the shared types and the stylesheet.
   - id: frontend-layers

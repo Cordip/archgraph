@@ -677,6 +677,101 @@ fn css_classes_become_edges_and_the_styles_report() {
     assert!(String::from_utf8_lossy(&styles.stderr).contains("needs `provider.css: true`"));
 }
 
+const HTTP_YAML: &str = r#"version: 1
+project: {name: http-fixture, root: app, source_roots: [src]}
+provider: {kind: gitnexus, command: intentionally-missing-fallback, edge_types: [IMPORTS, FETCHES], http: true}
+policies: {unassigned_files: ignore}
+nodes:
+  app: {}
+  app.client: {maps: ["src/web/**"]}
+  app.ui: {maps: ["src/ui/**"]}
+  app.api: {maps: ["src/api/**"]}
+rules:
+  - {id: ui-calls-through-the-client, kind: deny_dependency, from: app.ui, to: app.api, edge_types: [FETCHES]}
+"#;
+
+#[test]
+fn http_calls_reach_routes_as_fetches_edges_and_the_http_report() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    std::fs::write(root.join("architecture.yaml"), HTTP_YAML).unwrap();
+    for directory in ["src/web", "src/ui", "src/api"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    std::fs::write(root.join("src/api/app.py"), "").unwrap();
+    std::fs::write(
+        root.join("src/web/client.ts"),
+        "const BASE = '/api'\n\
+         function request(path: string, init?: RequestInit) {\n  return fetch(BASE + path, { ...init })\n}\n\
+         export const list = () => request('/items')\n\
+         export const add = () => request('/items', { method: 'POST' })\n\
+         export const gone = () => request('/missing')\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/ui/view.tsx"),
+        "export const load = (url: string) => fetch('/api/items', { method: 'DELETE' })\n\
+         export const reload = () => fetch('/api/items')\n",
+    )
+    .unwrap();
+
+    let check = fixture.run(&["check"], "routes");
+    let text = String::from_utf8_lossy(&check.stdout);
+    assert_eq!(check.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("src/ui/view.tsx -> src/api/app.py  (http-call, confidence 1)"),
+        "{text}"
+    );
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        stderr.contains("2 HTTP call(s) reach no route or use a method the route does not accept"),
+        "{stderr}"
+    );
+
+    let report = fixture.run(&["http"], "routes");
+    let report = String::from_utf8_lossy(&report.stdout);
+    for expected in [
+        "Routes: 3 (2 called by client code)",
+        "  GET    /api/items    src/ui/view.tsx:2, src/web/client.ts:5",
+        "  POST   /api/items    src/web/client.ts:6",
+        "  GET    /{path:path}  not called",
+        "  GET    /api/missing  src/web/client.ts:7",
+        "  DELETE /api/items  src/ui/view.tsx:1  (the route does not accept this method)",
+    ] {
+        assert!(
+            report.contains(expected),
+            "missing {expected:?} in\n{report}"
+        );
+    }
+    let scoped: Value =
+        serde_json::from_slice(&fixture.run(&["http", "app.ui", "--json"], "routes").stdout)
+            .unwrap();
+    assert_eq!(scoped["routes"].as_array().unwrap().len(), 1);
+    assert_eq!(scoped["unmatched"][0]["problem"], "wrong_method");
+
+    // Without FETCHES in edge_types, provider.http could observe nothing.
+    std::fs::write(
+        root.join("architecture.yaml"),
+        HTTP_YAML
+            .replace("[IMPORTS, FETCHES]", "[IMPORTS]")
+            .replace("edge_types: [FETCHES]", "edge_types: [IMPORTS]"),
+    )
+    .unwrap();
+    let invalid = fixture.run(&["check"], "routes");
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("does not list FETCHES"));
+    std::fs::write(
+        root.join("architecture.yaml"),
+        HTTP_YAML
+            .replace(", http: true", "")
+            .replace("edge_types: [FETCHES]", "edge_types: [IMPORTS]"),
+    )
+    .unwrap();
+    let http = fixture.run(&["http"], "routes");
+    assert_eq!(http.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&http.stderr).contains("needs `provider.http: true`"));
+}
+
 #[test]
 fn the_work_directory_keeps_itself_out_of_git() {
     let fixture = Fixture::new();

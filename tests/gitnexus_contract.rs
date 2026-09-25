@@ -304,3 +304,90 @@ fn gitnexus_drops_stylesheet_imports_and_archgraph_supplies_them() {
         ir["resolved_edges"]
     );
 }
+
+const HTTP_YAML: &str = r#"version: 1
+project: {name: service, root: app, source_roots: [backend, web]}
+provider: {kind: gitnexus, edge_types: [IMPORTS, FETCHES], http: true}
+nodes:
+  app: {}
+  app.backend: {maps: ["backend/**"]}
+  app.web: {maps: ["web/**"]}
+"#;
+
+/// GitNexus reports FastAPI routes with their method and handler file, but
+/// links a client to them only for a literal `fetch('/path')`, not through a
+/// wrapper such as `request('/items')`; `provider.http` fills that gap.
+#[test]
+#[ignore = "needs a real GitNexus installation; run with --ignored"]
+fn gitnexus_routes_and_archgraph_client_calls_meet() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let repo = temp.path().join("repo");
+    write(
+        &repo,
+        "backend/app.py",
+        "from fastapi import FastAPI\n\napp = FastAPI()\n\n\n@app.get(\"/api/items\")\ndef items():\n    return []\n\n\n@app.post(\"/api/orders\")\ndef order():\n    return {}\n",
+    );
+    write(
+        &repo,
+        "web/wrapped.ts",
+        "const BASE = '/api'\n\nfunction request(path: string, init?: RequestInit) {\n  return fetch(BASE + path, { ...init })\n}\n\nexport const order = () => request('/orders', { method: 'POST' })\n",
+    );
+    write(
+        &repo,
+        "web/literal.ts",
+        "export const items = () => fetch('/api/items')\n",
+    );
+    write(&repo, "architecture.yaml", HTTP_YAML);
+    analyze(&repo, &home);
+
+    let http = archgraph(&repo, &home, &["http", "--json"]);
+    assert!(
+        http.status.success(),
+        "{}",
+        String::from_utf8_lossy(&http.stderr)
+    );
+    let report: Value = serde_json::from_slice(&http.stdout).unwrap();
+    let routes: Vec<(&str, &str, &str)> = report["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|route| {
+            (
+                route["method"].as_str().unwrap_or("-"),
+                route["path"].as_str().unwrap(),
+                route["file"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        routes,
+        [
+            ("GET", "/api/items", "backend/app.py"),
+            ("POST", "/api/orders", "backend/app.py"),
+        ]
+    );
+    let ir = ir(&repo);
+    let mut fetches: Vec<(&str, &str)> = ir["resolved_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|edge| edge["kind"] == "FETCHES")
+        .map(|edge| {
+            (
+                edge["evidence"]["from_file"].as_str().unwrap(),
+                edge["evidence"]["reason"].as_str().unwrap_or(""),
+            )
+        })
+        .collect();
+    fetches.sort();
+    assert_eq!(
+        fetches,
+        [
+            ("web/literal.ts", "fetch-url-match; http-call"),
+            ("web/wrapped.ts", "http-wrapper"),
+        ],
+        "{:#}",
+        ir["resolved_edges"]
+    );
+}

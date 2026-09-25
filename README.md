@@ -14,9 +14,12 @@ There are no fixed C4 levels. IDs such as `app.billing.domain.invoicing` encode
 an arbitrary-depth hierarchy. Logical nodes may collect files from unrelated
 filesystem directories. GitNexus—not ArchGraph—owns language parsing and symbol
 resolution, whether the source is Python, Rust, C/C++, or another supported
-language. The one exception is CSS, which GitNexus does not parse: with
-`provider.css: true` ArchGraph reads stylesheets and class names itself (see
-[Stylesheets and CSS classes](#stylesheets-and-css-classes)).
+language. The exceptions are two gaps GitNexus leaves in a web application:
+CSS, which it does not parse, and HTTP calls from a frontend, which it links
+to backend routes only for `fetch('/literal')`. With `provider.css: true` and
+`provider.http: true`, ArchGraph reads stylesheets, class names and client
+HTTP calls itself (see [Stylesheets and CSS classes](#stylesheets-and-css-classes)
+and [HTTP calls between frontend and backend](#http-calls-between-frontend-and-backend)).
 
 ## Prerequisites and quick start
 
@@ -256,6 +259,9 @@ archgraph context app.billing --json --evidence-limit 50
 archgraph styles
 archgraph styles app.web --json
 
+archgraph http
+archgraph http app.web --json
+
 archgraph serve
 archgraph serve --reindex --port 7331 --host 127.0.0.1
 ```
@@ -451,6 +457,43 @@ React frontend.
 Not covered: CSS Modules (`styles.panel`), Sass/Less, Vue/Svelte templates,
 `url()` and custom-property references, and class names in `.html` files.
 
+## HTTP calls between frontend and backend
+
+A frontend and its backend share no imports; they meet over HTTP. GitNexus
+finds server routes (`Route` nodes, e.g. from FastAPI decorators, with the
+method and the handling file) and links a client to a route only for
+`fetch('/literal')` and a few wrapper names such as `apiFetch`. A frontend that
+calls `request('/plans')`, with `request` adding a base URL, is invisible to it
+(see [docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)).
+
+With `provider.http: true` and `FETCHES` in `provider.edge_types`, ArchGraph
+lists the routes from GitNexus, reads client calls in TypeScript/JavaScript
+with tree-sitter and adds `FETCHES` from the calling file to the file handling
+the matched route, next to GitNexus's own `FETCHES`:
+
+| Reason | Confidence | Call |
+| --- | --- | --- |
+| `http-call` | 1.0 | `fetch`, `new EventSource`, `new WebSocket`, `axios.<verb>`, `navigator.sendBeacon` |
+| `http-wrapper` | 1.0 | a same-file function passing its parameter into such a call, e.g. `request('/plans', { method: 'POST' })` |
+| `http-link` | 0.8 | a string built on a call's base constant outside any call, e.g. a download link `` `${BASE}/plans/${id}/export` `` |
+
+URLs are evaluated through the file's string constants; any other value is a
+path parameter. A call matches the route with the most literal segments that
+accepts its method; a route of parameters only, such as a single-page app's
+catch-all `/{path:path}`, matches nothing. Rules over `FETCHES` then express
+the API boundary, e.g. `deny_dependency` from UI components to the backend so
+that only the HTTP client module calls it.
+
+`archgraph http [NODE] [--json]` lists every route with the calls reaching it,
+calls that reach no route or use a method the route does not accept (a broken
+contract), calls to absolute URLs of other services, and calls whose URL is
+not known statically. Every compile warns with the counts.
+
+Not covered: server routes GitNexus does not report (check the route list
+of `archgraph http` against the backend), calls through wrappers defined in
+another file, GraphQL and other non-path protocols, and calls made by Python
+or other backend code.
+
 ## Human focus UI
 
 The embedded HTML/CSS/plain JavaScript UI includes breadcrumbs, purpose and
@@ -578,7 +621,8 @@ repositories. The CLI process tests run the real binary against
 `tests/fixtures/fake_gitnexus.py` and need `python3`; they are Unix-only. The
 contract tests index generated TypeScript and Ruby repositories with the real
 GitNexus CLI and check the assumptions the fake encodes, including that
-GitNexus still ignores stylesheet imports. The browser smoke test
+GitNexus still ignores stylesheet imports and links routes only to literal
+`fetch` calls. The browser smoke test
 loads the embedded UI with mocked fetch and history. There is no production
 Python component.
 
@@ -586,7 +630,8 @@ Python component.
 
 ArchGraph covers one repository per configuration and observes the GitNexus
 relation kinds listed in `provider.edge_types`, plus stylesheets and CSS
-classes with `provider.css: true`. Symbol/function/AST exploration
+classes with `provider.css: true` and client HTTP calls with
+`provider.http: true`. Symbol/function/AST exploration
 is delegated to GitNexus. Interfaces and manual relationships are descriptive,
 the UI is read-only, and there is no application database or architecture
 editor. Very large file-only focuses may need further authored child nodes for

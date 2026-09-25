@@ -25,6 +25,10 @@ that are used but undefined, defined but unused, and shared between nodes.
 Class expressions it could not resolve may use any class: check them before
 removing a class reported unused.
 
+When `provider.http: true` is set, `archgraph http <node>` lists the backend
+routes with the frontend calls reaching them, and calls that reach no route.
+A frontend's dependency on the backend appears as `FETCHES` edges.
+
 After source edits, from the repository root:
 
 ```bash

@@ -182,6 +182,32 @@ stylesheets and class names itself and add `IMPORTS` and `USES_CLASS`
 edges (README, "Stylesheets and CSS classes"). It never asks GitNexus for
 `USES_CLASS`.
 
+## 11. Client HTTP calls reach routes only as literal URLs
+
+**Symptom.** In lct-task3, GitNexus reports all 19 FastAPI routes
+(`HANDLES_ROUTE`, `Route` nodes with method and handler file), but not one
+`FETCHES` relation from the frontend: the frontend's dependency on the
+backend is invisible.
+
+**Cause.** Client calls are captured by tree-sitter queries in
+`dist/core/ingestion/tree-sitter-queries.js`: `fetch(...)` with a string or
+template argument, and a string argument to wrappers named like `apiFetch`,
+`fetchJSON` or `httpGet`. lct-task3 calls a wrapper named `request('/plans')`,
+which no pattern names. Its direct calls use a base constant,
+`` fetch(`${BASE}/scenarios/upload`) ``: `normalizeFetchURL`
+(`dist/core/ingestion/route-extractors/nextjs.js`) turns that into
+`[param]/scenarios/upload`, which does not start with `/`, and drops it. The
+wrapper's own `fetch(BASE + path)` passes no string or template at all, so it
+has no URL to match.
+A literal `fetch('/api/items')` does get a `FETCHES` edge (reason
+`fetch-url-match`); the contract test
+`gitnexus_routes_and_archgraph_client_calls_meet` checks both behaviors.
+
+**What ArchGraph does.** `provider.http: true` reads client calls itself,
+evaluating base constants and same-file wrappers, and matches them to the
+routes GitNexus reports (README, "HTTP calls between frontend and backend").
+Where GitNexus links a call too, the two observations merge.
+
 ## ArchGraph-side limitations
 
 None known at the moment. Co-located tests used to be one: they can now be

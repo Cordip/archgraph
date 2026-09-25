@@ -69,6 +69,31 @@ pub async fn compile(
     Ok(compile_with(root, validated, provider, &options).await?.ir)
 }
 
+/// One summary line per kind of HTTP call problem, pointing to `archgraph http`.
+fn http_warnings(report: &HttpReport) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if report.routes.is_empty() {
+        warnings.push("the code-graph provider reported no HTTP routes, so no client call can reach one; see `archgraph http`".to_owned());
+    }
+    let broken = report
+        .unmatched
+        .iter()
+        .filter(|call| call.problem != CallProblem::External)
+        .count();
+    if broken > 0 {
+        warnings.push(format!(
+            "{broken} HTTP call(s) reach no route or use a method the route does not accept; see `archgraph http`"
+        ));
+    }
+    if !report.unresolved.is_empty() {
+        warnings.push(format!(
+            "{} HTTP call(s) have a URL that could not be read statically, so their dependencies are not observed; see `archgraph http`",
+            report.unresolved.len()
+        ));
+    }
+    warnings
+}
+
 /// Reads everything the compiler needs from the provider, from the cache when
 /// the index is unchanged since it was written.
 async fn observe(
@@ -111,7 +136,11 @@ async fn observe(
             .indexed_files()
             .await
             .context("code-graph file query failed")?;
-        anyhow::Ok((info, edges, indexed_files))
+        let routes = provider
+            .routes()
+            .await
+            .context("code-graph route query failed")?;
+        anyhow::Ok((info, edges, indexed_files, routes))
     }
     .await;
     let index_after = provider
@@ -122,7 +151,7 @@ async fn observe(
     // a half-written one; neither result may be reported, clean or not. A
     // query that failed meanwhile failed because of the rewrite, not because
     // GitNexus is incompatible.
-    let (info, edges, indexed_files) = match queried {
+    let (info, edges, indexed_files, routes) = match queried {
         Err(error) if index_before != index_after => {
             return Err(error.context(INDEX_CHANGED));
         }
@@ -135,6 +164,7 @@ async fn observe(
         info,
         edges,
         indexed_files,
+        routes,
     };
     if let Some((path, key)) = &cache_entry {
         // A cache that cannot be written only costs speed on the next run.
@@ -164,6 +194,7 @@ pub async fn compile_with(
             info: provider_info,
             edges: mut provided,
             indexed_files: indexed_paths,
+            routes,
         },
         cached,
     ) = observe(provider, options).await?;
@@ -184,6 +215,25 @@ pub async fn compile_with(
     if let Some(report) = &css_report {
         diagnostics.warnings.extend(css_warnings(report));
     }
+    let http = if validated.config.provider.http {
+        let routes = routes.context(
+            "provider.http needs HTTP routes, but the code-graph provider cannot list them",
+        )?;
+        let extraction = crate::provider::http::extract(&root, &discovered, &routes)
+            .context("cannot read HTTP calls (provider.http)")?;
+        diagnostics.warnings.extend(extraction.warnings);
+        diagnostics
+            .warnings
+            .extend(http_warnings(&extraction.report));
+        Some((extraction.edges, extraction.report))
+    } else {
+        None
+    };
+    let http_row_count = http.as_ref().map_or(0, |(edges, _)| edges.len());
+    let http_report = http.map(|(edges, report)| {
+        provided.extend(edges);
+        report
+    });
     let (observed, filtered_edge_count) =
         select_observations(provided, &validated.config.provider)?;
     let observed_edge_count = observed.len();
@@ -413,6 +463,7 @@ pub async fn compile_with(
         out_of_scope_edge_count,
         unindexed_file_count: diagnostics.unindexed_files.len(),
         stylesheet_row_count,
+        http_row_count,
         aggregated_architecture_edge_count: edges.len(),
         violation_count: violations.len(),
     };
@@ -430,6 +481,7 @@ pub async fn compile_with(
         stats,
         evidence_notice: EVIDENCE_NOTICE.into(),
         css: css_report,
+        http: http_report,
     };
     Ok(Compiled { ir, cached })
 }

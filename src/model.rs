@@ -285,6 +285,10 @@ pub struct CompileStats {
     /// before filtering; not included in `provider_row_count`.
     #[serde(default)]
     pub stylesheet_row_count: usize,
+    /// `FETCHES` rows ArchGraph matched from client HTTP calls to routes
+    /// (`provider.http`), before filtering; not included in `provider_row_count`.
+    #[serde(default)]
+    pub http_row_count: usize,
     pub aggregated_architecture_edge_count: usize,
     pub violation_count: usize,
 }
@@ -306,6 +310,9 @@ pub struct ArchitectureIr {
     /// Present when `provider.css` is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub css: Option<CssReport>,
+    /// Present when `provider.http` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http: Option<HttpReport>,
 }
 
 /// Stylesheet facts ArchGraph reads itself, since GitNexus does not parse
@@ -387,6 +394,63 @@ pub struct DynamicClassUse {
     /// Static text before the runtime part (`em-` in `em-${status}`);
     /// `None` when nothing about the class name is known.
     pub prefix: Option<String>,
+}
+
+/// An HTTP endpoint as the code graph provider reports it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Route {
+    /// Upper case; `None` when the route accepts any method.
+    pub method: Option<String>,
+    /// As declared, e.g. `/api/plans/{plan_id}`.
+    pub path: String,
+    /// The file handling it.
+    pub file: String,
+}
+
+/// Client HTTP calls ArchGraph reads itself and matches to the provider's
+/// routes: which route each call reaches, and which calls reach none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct HttpReport {
+    pub routes: Vec<RouteUse>,
+    /// Calls that reach no route, or reach it with another method.
+    pub unmatched: Vec<ClientCall>,
+    /// Calls whose URL could not be read statically.
+    pub unresolved: Vec<UnresolvedCall>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RouteUse {
+    #[serde(flatten)]
+    pub route: Route,
+    pub callers: Vec<SourceLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ClientCall {
+    pub file: String,
+    pub line: usize,
+    pub method: Option<String>,
+    /// With `{}` for the parts known only at runtime.
+    pub url: String,
+    pub problem: CallProblem,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CallProblem {
+    /// No route has this path: a typo, or a route that was removed.
+    NoRoute,
+    /// Routes have this path, but none accepts the method.
+    WrongMethod,
+    /// An absolute URL no route matches, presumably another service.
+    External,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct UnresolvedCall {
+    pub file: String,
+    pub line: usize,
+    pub expression: String,
 }
 
 #[cfg(test)]

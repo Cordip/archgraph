@@ -3,12 +3,12 @@
 //! queries (seconds on a large repository). Only raw provider output is cached,
 //! keyed on the provider's index fingerprint and query identity; configuration,
 //! file discovery and everything derived from them are recomputed every run.
-use crate::model::{CodeEdge, ProviderInfo};
+use crate::model::{CodeEdge, ProviderInfo, Route};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-const SCHEMA_VERSION: u32 = 1;
+const SCHEMA_VERSION: u32 = 2;
 
 /// Everything the compiler reads from the provider for one index state.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -16,6 +16,7 @@ pub struct Snapshot {
     pub info: ProviderInfo,
     pub edges: Vec<CodeEdge>,
     pub indexed_files: Option<Vec<String>>,
+    pub routes: Option<Vec<Route>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -77,6 +78,7 @@ mod tests {
                 reason: None,
             }],
             indexed_files: Some(vec!["a".into(), "b".into()]),
+            routes: None,
         }
     }
 

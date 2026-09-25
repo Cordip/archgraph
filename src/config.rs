@@ -77,6 +77,12 @@ pub struct ProviderConfig {
     /// the class report of `archgraph styles`.
     #[serde(default)]
     pub css: bool,
+    /// Match client HTTP calls in TypeScript/JavaScript to the provider's
+    /// routes (GitNexus links only `fetch('/literal')` itself): adds
+    /// `FETCHES` from the calling file to the handling file, and the report
+    /// of `archgraph http`. Needs `FETCHES` in `edge_types`.
+    #[serde(default)]
+    pub http: bool,
 }
 
 impl ProviderConfig {
@@ -425,6 +431,16 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
         {
             bail!("provider.edge_types lists {kind}, which only `provider.css: true` observes");
         }
+    }
+    let http_kind = crate::provider::http::KIND;
+    if config.provider.http
+        && !config
+            .provider
+            .edge_types
+            .iter()
+            .any(|kind| kind == http_kind)
+    {
+        bail!("provider.http adds {http_kind} edges, but provider.edge_types does not list {http_kind}, so none would be observed");
     }
     if config
         .provider

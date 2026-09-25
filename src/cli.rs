@@ -123,6 +123,14 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Compile fresh and report HTTP routes and the client calls reaching
+    /// them (needs `provider.http: true`): uncalled routes, calls that reach
+    /// no route, unresolved calls.
+    Http {
+        node: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Compile fresh and emit agent-oriented architecture context.
     Context {
         node: String,
@@ -207,13 +215,20 @@ pub async fn run(cli: Cli) -> Result<u8> {
     let requested_node = match &cli.command {
         Commands::Check { node, .. }
         | Commands::Show { node, .. }
-        | Commands::Styles { node, .. } => node.as_deref(),
+        | Commands::Styles { node, .. }
+        | Commands::Http { node, .. } => node.as_deref(),
         Commands::Context { node, .. } => Some(node.as_str()),
         _ => None,
     };
     if matches!(cli.command, Commands::Styles { .. }) && !validated.config.provider.css {
         bail!(
             "`archgraph styles` needs `provider.css: true` in {}",
+            config_path.display()
+        );
+    }
+    if matches!(cli.command, Commands::Http { .. }) && !validated.config.provider.http {
+        bail!(
+            "`archgraph http` needs `provider.http: true` in {}",
             config_path.display()
         );
     }
@@ -462,6 +477,25 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     "{}",
                     render::styles::render(&ir, &selected, node.as_deref())
                 );
+            }
+            Ok(0)
+        }
+        Commands::Http { node, json } => {
+            let report = ir
+                .http
+                .as_ref()
+                .context("internal error: provider.http is on but the IR has no HTTP report")?;
+            let selected = render::http::select(&ir, report, node.as_deref());
+            if json {
+                outln!(
+                    "{}",
+                    render::json::render(&serde_json::json!({
+                        "node": node, "routes": selected.routes, "unmatched": selected.unmatched,
+                        "unresolved": selected.unresolved
+                    }))?
+                );
+            } else {
+                out!("{}", render::http::render(&selected, node.as_deref()));
             }
             Ok(0)
         }

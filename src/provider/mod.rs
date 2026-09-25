@@ -1,10 +1,11 @@
 //! External indexing/querying is isolated here; core graph code is provider-neutral.
 pub mod css;
 pub mod gitnexus;
+pub mod http;
 pub mod markdown_table;
 pub mod typescript;
 
-use crate::model::{CodeEdge, ProviderInfo};
+use crate::model::{CodeEdge, ProviderInfo, Route};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 
@@ -29,13 +30,18 @@ pub trait CodeGraphProvider: Send + Sync {
     async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
         Ok(None)
     }
+    /// HTTP routes and the files handling them, when `provider.http` asks
+    /// for them and the provider can list them.
+    async fn routes(&self) -> Result<Option<Vec<Route>>> {
+        Ok(None)
+    }
     /// Cheap identity of the provider's current index, if it has one. The
     /// compiler compares it before and after querying to detect an index
     /// rewritten mid-compile (e.g. by an auto-index service).
     async fn fingerprint(&self) -> Result<Option<String>> {
         Ok(None)
     }
-    /// What `info`, `dependency_edges` and `indexed_files` depend on besides
+    /// What `info`, `dependency_edges`, `indexed_files` and `routes` depend on besides
     /// the index itself: queries, their parameters, the executable. With
     /// `fingerprint` it keys the result cache; `None` disables caching.
     fn query_identity(&self) -> Option<String> {
@@ -56,6 +62,7 @@ pub struct InMemoryProvider {
     pub fingerprints: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Files reported as indexed; `None` means the provider cannot list them.
     pub indexed: Option<Vec<String>>,
+    pub routes: Option<Vec<Route>>,
     /// Number of `dependency_edges` calls, shared between clones.
     pub queries: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
@@ -81,6 +88,9 @@ impl CodeGraphProvider for InMemoryProvider {
     }
     async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
         Ok(self.indexed.clone())
+    }
+    async fn routes(&self) -> Result<Option<Vec<Route>>> {
+        Ok(self.routes.clone())
     }
     async fn fingerprint(&self) -> Result<Option<String>> {
         let mut sequence = self.fingerprints.lock().expect("fingerprint lock");
