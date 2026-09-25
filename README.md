@@ -496,12 +496,27 @@ or other backend code.
 
 ## Human focus UI
 
-The embedded HTML/CSS/plain JavaScript UI includes breadcrumbs, purpose and
-interfaces, children or files, directed aggregated edges, violation markers,
-node search, and an evidence panel. Click a node or edge for details;
+The embedded HTML/CSS/plain JavaScript UI works offline (no external fonts or
+scripts) and follows the system light or dark mode. It is laid out like a
+drawing sheet: a title block with the focus, its purpose, interfaces and
+counts (mapped files, the share with an observed dependency, entries,
+dependencies, violations); the drawing of the current level with a legend; a
+details and evidence panel; the violations in view; and notes with the
+evidence notice and coverage diagnostics. Click a node or edge for details;
 double-click an architecture node to focus, or use the explicit Open button.
-Deep links use `/?focus=app.billing.domain` and browser back/forward navigation
-is supported. Only the current focus level is rendered with a small SVG layout.
+Selecting a node, edge or violation dims everything it is not connected to.
+A node's details list what it depends on and what uses it, each opening that
+dependency's evidence. Search with `/`. Deep links use
+`/?focus=app.billing.domain` and browser back/forward navigation is supported.
+Only the current focus level is rendered, with a small SVG layout.
+
+The drawing is one tab stop: arrow keys move between entries, Enter shows
+details and Shift+Enter opens an architecture node. **Table** lists the same
+entries grouped by directory, with dependency counts, a filter and other
+orders. Levels with more than 150 entries (zammad's leaves have up to 2,577
+files) are listed in the table only; open a smaller node for a drawing.
+Entries that take part in a violation get a red revision cloud, and each
+architecture card shows its observed share as a bar.
 
 A non-leaf can own files directly: these appear in a **Directly owned files**
 entry rather than disappearing. A manual edge naming the focus itself appears
@@ -511,9 +526,13 @@ collapsed to the same visible node are omitted. Manual and observed edges are
 visually distinguished. Relation kinds between the same two entries are drawn
 as one edge (`2 kinds × 114`); its details list each kind with its evidence. Entries are laid out in rows from upper to lower
 layer (`layers` in the projection, the same minimum-upward ordering used for
-cycle cuts), so dependencies point down and anything pointing up stands out.
-Outside entries that only depend on the focus are drawn above it, others
-below. Levels with more than 60 entries fall back to a grid. Mermaid is another renderer of the same projection,
+cycle cuts), so dependencies point down and anything pointing up stands out;
+within a row, entries are ordered to reduce crossings, and edges that skip
+rows pass between the cards of the rows in between. The focus is drawn as a
+frame; outside entries that only depend on it are drawn above the frame,
+others below. Levels with more than 60 entries have no layers and are drawn
+as a grid. Above 40 edges, labels appear only on highlighted edges.
+Mermaid is another renderer of the same projection,
 never an architecture source format.
 
 The server defaults to loopback and exposes only:

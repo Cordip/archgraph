@@ -22,7 +22,7 @@ def node(identity, title, children=(), files=(), kind="internal"):
             "description": "Fixture purpose; no Rust output is being simulated as validation.",
             "parent": identity.rsplit(".", 1)[0] if "." in identity else None,
             "children": list(children), "direct_files": list(files),
-            "descendant_file_count": max(len(files), 2), "interfaces": []}
+            "descendant_file_count": max(len(files), 2), "observed_file_count": 1, "interfaces": []}
 
 
 NODES = {n["id"]: n for n in [
@@ -31,6 +31,8 @@ NODES = {n["id"]: n for n in [
     node("app.domain", "Domain", files=["src/domain/a.rs", "src/domain/b.rs"]),
     node("external", "External", ["external.service"], kind="external"),
     node("external.service", "Service", kind="external"),
+    # More entries than the UI draws: listed in the table only.
+    node("app.big", "Big", files=[f"src/big/f{i:03}.rs" for i in range(200)]),
 ]}
 NODES["app.domain"]["interfaces"] = [{"name": "Domain service", "kind": "custom", "direction": "provides", "protocol": None, "contract": "invoice", "description": "Interface fixture"}]
 
@@ -73,6 +75,10 @@ PROJECTIONS = {
                    "nodes": [entry("app.domain", file="src/domain/a.rs"), entry("app.domain", file="src/domain/b.rs"), entry("app.api", True)],
                    "edges": [edge("node:app.api", "file:src/domain/a.rs")],
                    "violations": [VIOLATION], "evidence_limit": 20, "evidence_notice": NOTICE},
+    "app.big": {"focus": NODES["app.big"], "breadcrumbs": [NODES["app"], NODES["app.big"]],
+                "nodes": [entry("app.big", file=f) for f in NODES["app.big"]["direct_files"]],
+                "edges": [edge("file:src/big/f000.rs", "file:src/big/f001.rs")],
+                "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
 }
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
@@ -119,13 +125,15 @@ def main():
         assert page.locator("#graph .edge-line[marker-end]").count() == 2
         assert any(label.startswith("2 kinds × 50") for label in page.locator("#graph .edge-label").all_text_contents())
         assert page.locator("#graph .violating").count() >= 1
+        # Entries in a violation carry a revision cloud, a shape and not only a colour.
+        assert page.locator("#graph .node.violating .cloud").count() == 2
         # Layered layout: the dependent (API) is drawn above its dependency.
         api = page.get_by_role("button", name="API", exact=True).bounding_box()
         domain = page.get_by_role("button", name="Domain", exact=True).bounding_box()
         assert api["y"] < domain["y"], (api, domain)
         checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers")
 
-        page.locator("#graph .edge-label").first.click()
+        page.locator("#graph .edge-label", has_text="2 kinds").click()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
         assert "CALLS × 25" in page.locator("#details").inner_text()
         assert "IMPORTS × 25" in page.locator("#details").inner_text()
@@ -135,12 +143,52 @@ def main():
         assert page.locator("script").count() == 1
         checks.append("edge evidence and hostile provider text rendered without HTML execution")
 
+        # The drawing is one tab stop: arrow keys move between entries, Enter
+        # shows details, whose dependency list reaches the edges by keyboard.
+        assert page.locator("#graph .node[tabindex='0']").count() == 1
+        page.locator("#graph .node[tabindex='0']").focus()
+        start = page.evaluate("document.activeElement.getAttribute('aria-label')")
+        page.keyboard.press("ArrowDown")
+        moved = page.evaluate("document.activeElement.getAttribute('aria-label')")
+        assert moved != start and page.locator("#graph .node[tabindex='0']").count() == 1, (start, moved)
+        page.get_by_role("button", name="API", exact=True).focus()
+        page.keyboard.press("Enter")
+        assert "Depends on (2)" in page.locator("#details").inner_text()
+        # Selecting an entry dims everything it is not connected to.
+        assert page.locator("#graph.has-selection").count() == 1
+        assert page.locator("#graph .node.lit").count() == 3
+        page.locator("#details .dependency", has_text="app.domain").click()
+        assert "CALLS × 25" in page.locator("#details").inner_text()
+        assert "Observed dependency" in page.locator("#details").inner_text()
+        checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency list to edge evidence")
+
+        # The table lists the same entries and filters them.
+        page.locator("#view-table").click()
+        assert page.locator("#graph-wrap").is_hidden()
+        assert page.locator("#table-wrap .entry-row").count() == 3
+        page.locator("#table-filter").fill("dom")
+        page.wait_for_function("document.querySelectorAll('#table-wrap .entry-row').length === 1")
+        page.locator("#table-wrap .entry-row").click()
+        assert "Domain" in page.locator("#details h2").inner_text()
+        page.locator("#view-diagram").click()
+        assert page.locator("#graph .node").count() == 3
+        checks.append("table view with filter and row details, switching back to the diagram")
+
         page.get_by_role("button", name="Domain", exact=True).dblclick()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         assert page.locator("#graph .file").count() == 2
         assert "Domain service" in page.locator("#interfaces").inner_text()
         assert "focus=app.domain" in page.evaluate("window.__history.at(-1)")
         checks.append("double-click focus, leaf files, interfaces, updated deep link")
+
+        # A level too large to draw is listed, not drawn.
+        page.evaluate("loadFocus('app.big')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.big'")
+        assert page.locator("#view-diagram").is_disabled()
+        assert page.locator("#table-wrap .entry-row").count() == 200
+        assert page.locator("#graph .node").count() == 0
+        assert "too many to draw" in page.locator("#sheet-hint").inner_text()
+        checks.append("levels beyond the drawing limit fall back to the table")
 
         page.locator("#breadcrumbs").get_by_role("link", name="Application", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
@@ -149,13 +197,19 @@ def main():
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
         checks.append("breadcrumb navigation and popstate handler with mocked history")
 
+        page.keyboard.press("/")
+        assert page.evaluate("document.activeElement.id") == "search"
         page.locator("#search").fill("Domain")
+        page.locator("#search-results").get_by_role("button", name="Domain — app.domain", exact=True).wait_for()
+        page.keyboard.press("ArrowDown")
+        assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Domain — app.domain"
         page.locator("#search-results").get_by_role("button", name="Domain — app.domain", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         page.locator(".violation-button").click()
         assert "deny-api-domain" in page.locator("#details").inner_text()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
-        checks.append("architecture search and violation evidence selection")
+        assert page.locator("#violations .violation-button.selected").count() == 1
+        checks.append("architecture search with keyboard, violation evidence selection")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.
@@ -167,7 +221,7 @@ def main():
         }""")
         assert page.evaluate("checkForUpdates()") is True
         assert page.locator("#focus-title").inner_text() == "Domain v2"
-        assert page.locator("#snapshot").inner_text() == "Live · revision 2"
+        assert page.locator("#snapshot").inner_text() == "Live at revision 2"
         assert "Reloaded coverage warning" in page.locator("#diagnostics").inner_text()
         assert page.locator("#refresh-status").is_hidden()
         page.evaluate("() => { window.__fixture.meta = {...window.__fixture.meta, refresh_error: 'index changed while compiling'}; }")
