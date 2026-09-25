@@ -38,6 +38,12 @@ Exit codes are part of the verification contract:
 - **2:** compilation succeeded and matching architecture violations remain.
   Continue the refactoring loop. Do not declare completion while check exits 2.
 
+If the repository has a baseline file (`architecture.baseline.json` next to
+`architecture.yaml`), `check` fails only on observations that are not in it and
+lists exactly those under "New since baseline". Fix them. Never run
+`archgraph baseline` or edit the baseline file unless the user explicitly asks:
+it accepts the current violations, just like weakening a rule.
+
 Before declaring the task complete, run a repository-wide `archgraph check` when
 changes could affect other modules, plus the project's behavioral tests. Report
 any checks that could not run. Static evidence may be incomplete: no observed

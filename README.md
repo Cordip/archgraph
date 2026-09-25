@@ -164,6 +164,23 @@ other edges, and the UI draws cut edges dashed. On zammad's backend the cut is
 review, not a verdict: the cheapest cut can be the wrong one if the authored
 layering intends otherwise.
 
+### Baseline for legacy code
+
+A legacy repository usually violates its intended architecture from day one,
+and a check that always exits 2 gets switched off. `archgraph baseline` records
+every observation (rule, file pair, relation kind) behind the current
+violations in `<config stem>.baseline.json` next to the config. Commit it.
+From then on `check` exits 2 only for observations missing from the baseline,
+lists exactly those, and reports how many accepted observations have since
+disappeared. `check --no-baseline` shows everything; `--baseline PATH`
+chooses another file. Regenerate the baseline deliberately after paying off
+debt, never to make a failing check pass.
+
+On zammad, the backend cycle (202 observations) is accepted by the baseline.
+Checking the variant with resolved frontend imports against it fails with
+exactly one new observation for the dependency rule,
+`shared/composables/useStickyHeader.ts -> apps/mobile/.../LayoutHeader.vue`.
+
 `edge_types` defaults to `[IMPORTS]`. The dependency rules default
 `include_descendants` to `true`. With `false`, source selection and listed
 allow/deny targets match exact ownership nodes; dependencies internal to the

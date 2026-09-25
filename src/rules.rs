@@ -200,6 +200,41 @@ fn dependency_violations<'a>(
         .collect()
 }
 
+/// Every resolved observation behind `violation`, not just its bounded
+/// evidence sample. `rule` must be the rule that produced the violation.
+pub fn violation_observations<'a>(
+    rule: &RuleConfig,
+    violation: &Violation,
+    edges: &'a [ResolvedEdge],
+) -> Vec<&'a ResolvedEdge> {
+    match rule {
+        // Dependency rules decide by owner nodes and kind alone, and group
+        // violations by exactly those, so equal owners and kind means included.
+        RuleConfig::DenyDependency { .. } | RuleConfig::AllowOnly { .. } => edges
+            .iter()
+            .filter(|edge| {
+                violation.from.as_ref() == Some(&edge.from)
+                    && violation.to.as_ref() == Some(&edge.to)
+                    && violation.edge_kind.as_ref() == Some(&edge.kind)
+            })
+            .collect(),
+        RuleConfig::NoCycles {
+            within, edge_types, ..
+        } => edges
+            .iter()
+            .filter(|edge| {
+                let from = immediate_child(&edge.from, within);
+                let to = immediate_child(&edge.to, within);
+                edge_types.contains(&edge.kind)
+                    && from != to
+                    && [from, to].iter().all(|member| {
+                        member.is_some_and(|id| violation.nodes.iter().any(|node| node == id))
+                    })
+            })
+            .collect(),
+    }
+}
+
 /// Orders SCC members from upper to lower layer, minimizing the observations
 /// that point upwards (a minimum-weight feedback arc set). Exact by dynamic
 /// programming over subsets up to `EXACT_ORDER_LIMIT` members, else the greedy
@@ -644,5 +679,37 @@ mod tests {
             "{}",
             found[0].message
         );
+    }
+    #[test]
+    fn violation_observations_are_complete_beyond_the_evidence_cap() {
+        let rules = [
+            RuleConfig::DenyDependency {
+                id: "deny".into(),
+                from: "app.a".into(),
+                to: "app.b".into(),
+                edge_types: vec!["IMPORTS".into()],
+                include_descendants: true,
+            },
+            RuleConfig::NoCycles {
+                id: "cycles".into(),
+                within: "app".into(),
+                edge_types: vec!["IMPORTS".into()],
+            },
+        ];
+        let mut edges: Vec<_> = (0..30)
+            .map(|i| {
+                let mut e = edge("app.a", "app.b");
+                e.evidence.from_file = format!("a{i}.rs");
+                e
+            })
+            .collect();
+        edges.push(edge("app.b", "app.a"));
+        edges.push(edge("app.c", "app.a"));
+        let found = evaluate(&rules, &edges, 5);
+        let deny = found.iter().find(|v| v.rule_id == "deny").unwrap();
+        assert_eq!(deny.evidence.len(), 5);
+        assert_eq!(violation_observations(&rules[0], deny, &edges).len(), 30);
+        let cycle = found.iter().find(|v| v.rule_id == "cycles").unwrap();
+        assert_eq!(violation_observations(&rules[1], cycle, &edges).len(), 31);
     }
 }

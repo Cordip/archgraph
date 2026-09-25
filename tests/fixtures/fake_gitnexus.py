@@ -45,6 +45,8 @@ if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_larg
     rows.append(("src/a.rs", "src/b.rs"))
 if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
+if mode == "violation_grown":
+    rows.extend([("src/a.rs", "src/b.rs"), ("src/a2.rs", "src/b.rs")])
 page = rows[offset:offset + size]
 table = "| source | target | kind | confidence | reason |\n| --- | --- | --- | --- | --- |"
 for source, target in page:

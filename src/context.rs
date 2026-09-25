@@ -62,6 +62,7 @@ pub fn build(ir: &ArchitectureIr, node: &str, limit: usize) -> Result<AgentConte
         "After source edits, reindex with `gitnexus analyze --index-only` from the repository root.".into(),
         format!("Then run `archgraph check {node}` (or `archgraph check {node} --reindex` to do both)."),
         "Do not declare completion while check exits 2; exit 1 means verification failed, not a clean architecture.".into(),
+        "Never run `archgraph baseline` unless explicitly asked: it accepts the current violations, like weakening a rule.".into(),
         crate::model::EVIDENCE_NOTICE.into(),
     ];
     Ok(AgentContext {

@@ -1,0 +1,1218 @@
+{
+  "schema_version": 1,
+  "note": "Accepted architecture violations. `archgraph check` fails only on observations not listed here. Regenerate deliberately with `archgraph baseline`.",
+  "entries": [
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/checks_kb_client_notification_job.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/checks_kb_client_notification_job.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/checks_kb_client_visibility_job.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/collection_update_job.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/communicate_telegram_job.rb",
+      "to_file": "lib/telegram_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/reset_notifications_preferences_job.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/scheduled_whatsapp_reminder_job.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/session_timeout_job/session.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/ticket_ai_assistance_summarize_job.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/ticket_ai_assistance_summarize_job.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/ticket_article_communicate_email_job.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/ticket_article_communicate_email_job.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/transaction_job.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/trigger_webhook_job.rb",
+      "to_file": "app/services/service/template/interpolation/interpolator.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/jobs/user_device_log_job.rb",
+      "to_file": "app/models/user_device.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ai/agent/type.rb",
+      "to_file": "lib/erb_sanitizer.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ai/text_tool.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/application_model/can_assets.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/application_model/checks_user_columns_fillup.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/audit_log.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/audit_log/logs_association_updates.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/driver/base_email_outbound.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/driver/sms/massenversand.rb",
+      "to_file": "lib/user_agent.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/driver/sms/message_bird.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/driver/sms/twilio.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/driver/telegram.rb",
+      "to_file": "lib/telegram_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/email_parser.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/email_parser.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/filter/database.rb",
+      "to_file": "lib/filter_processor.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/channel/filter/identify_sender.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/chat.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/chat/session.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_be_published.rb",
+      "to_file": "app/jobs/scheduled_touch_job.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_be_published.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_csv_import.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_lookup_search_index_attributes_with_attachments.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_search.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_search.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/can_seed.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/checks_client_notification.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/checks_core_workflow.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/checks_kb_client_notification.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/ensures_no_related_objects.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/has_audit_logs.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/has_search_index_backend.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/has_search_index_backend.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/has_taskbars.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/has_timeplan.rb",
+      "to_file": "lib/timeplan_calculation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/concerns/perform_changes/action/attribute_updates.rb",
+      "to_file": "lib/time_range_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/core_workflow.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/core_workflow/condition/backend.rb",
+      "to_file": "lib/time_range_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/cti/caller_id.rb",
+      "to_file": "lib/bulk_import_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/cti/driver/base.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/cti/log.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/data_privacy_task.rb",
+      "to_file": "lib/pseudonymisation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/email_address.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/external_credential/sensitive_attributes.rb",
+      "to_file": "lib/application_lib.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/apply_value/date.rb",
+      "to_file": "lib/time_range_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/apply_value/form_id.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/concerns/applies_split_ticket_article.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/concerns/applies_split_ticket_article.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/concerns/applies_ticket_shared_draft.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/form_updater/updater/knowledge_base/answer/edit.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/group/assets.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/import_job.rb",
+      "to_file": "lib/mixin/start_finish_logger.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/object_lookup.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/object_manager/attribute.rb",
+      "to_file": "lib/app_version.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/object_manager/attribute.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/online_notification.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/organization/assets.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/package.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/pgp_key.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/pgp_key.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/recent_view.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/role/assets.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/setting.rb",
+      "to_file": "lib/app_version.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/setting.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/setting.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/setting/has_audit_logs.rb",
+      "to_file": "lib/sensitive_params_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/smime_certificate.rb",
+      "to_file": "lib/secure_mailing/smime/private_key.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/smime_certificate.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/store/file.rb",
+      "to_file": "lib/application_lib.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/system_report.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/system_report/plugin/entities/counts.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/system_report/plugin/entities/last_created_at.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/system_report/plugin/search_index.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/tag/item.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/taskbar.rb",
+      "to_file": "lib/identifier_name.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/taskbar.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/taskbar.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/taskbar/has_attachments.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/taskbar/has_attachments.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket.rb",
+      "to_file": "lib/event_buffer.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article.rb",
+      "to_file": "lib/core_ext/string.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article.rb",
+      "to_file": "lib/language_detection_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article/adds_metadata_origin_by_id.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article/preserve_context_after_transaction.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/article/resets_ticket_state.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/assets.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/enqueues_user_ticket_counter_job.rb",
+      "to_file": "lib/bulk_import_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/enqueues_user_ticket_counter_job.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/perform_changes/action/notification_email.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/perform_changes/action/notification_email.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/search.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/search_index.rb",
+      "to_file": "lib/language_detection_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/search_index.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/shared_draft_start.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/ticket/shared_draft_zoom.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/token.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction.rb",
+      "to_file": "lib/bulk_import_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction.rb",
+      "to_file": "lib/push_messages.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction/clearbit_enrichment.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/transaction/trigger.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user.rb",
+      "to_file": "lib/password_hash.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/assets.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/avatar.rb",
+      "to_file": "lib/bulk_import_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/avatar.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/has_audit_logs.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/permissions.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/user/permissions.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/models/webhook.rb",
+      "to_file": "lib/hostname_safety_check.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/policies/controllers/attachments_controller_policy.rb",
+      "to_file": "app/models/token.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/policies/controllers/knowledge_base/feeds_controller_policy.rb",
+      "to_file": "app/models/token.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ai/agent/run.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ai/agent/run.rb",
+      "to_file": "lib/transaction_dispatcher.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ai/vectordb/reload.rb",
+      "to_file": "lib/models.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/auth/concerns/check_admin_password_auth.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/avatar/image_validate.rb",
+      "to_file": "lib/image_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/base.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/knowledge_base/answer/create.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/knowledge_base/feed_paths.rb",
+      "to_file": "app/models/token.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/knowledge_base/search.rb",
+      "to_file": "lib/search_knowledge_base_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/search.rb",
+      "to_file": "lib/search_index_backend.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/check_setup.rb",
+      "to_file": "lib/auto_wizard.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/import/apply_freshdesk_configuration.rb",
+      "to_file": "lib/sequencer.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/import/apply_kayako_configuration.rb",
+      "to_file": "lib/sequencer.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/import/apply_zendesk_configuration.rb",
+      "to_file": "lib/sequencer.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/run_auto_wizard.rb",
+      "to_file": "lib/auto_wizard.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/system/set_system_information.rb",
+      "to_file": "lib/url_information.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ticket/ai/related_knowledge_base_answers.rb",
+      "to_file": "lib/sessions.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ticket/article/create.rb",
+      "to_file": "app/policies/ticket/time_accounting_policy.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ticket/article/create.rb",
+      "to_file": "lib/upload_cache.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ticket/create.rb",
+      "to_file": "lib/email_address_validation.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/ticket/forced_update.rb",
+      "to_file": "lib/application_handle_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/translation/search/collector.rb",
+      "to_file": "lib/sql_helper.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/user/add_first_admin.rb",
+      "to_file": "app/models/text_module.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/user/add_first_admin.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/user/add_internal.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/user/change_password.rb",
+      "to_file": "lib/password_hash.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "app/services/service/user/signup.rb",
+      "to_file": "lib/user_info.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/auth/backend/ldap.rb",
+      "to_file": "app/models/ldap_source.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/auto_wizard.rb",
+      "to_file": "app/models/text_module.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/core_ext/active_record/migration/suspends_audit_log.rb",
+      "to_file": "app/models/audit_log.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/core_ext/active_record/migration/suspends_audit_log.rb",
+      "to_file": "app/models/package/migration.rb",
+      "kind": "IMPORTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/core_ext/active_record/store/indifferent_coder.rb",
+      "to_file": "app/models/store.rb",
+      "kind": "IMPORTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/html_sanitizer/scrubber/inline_images.rb",
+      "to_file": "app/models/avatar.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/import/otrs/user.rb",
+      "to_file": "app/models/core_workflow/attributes/group.rb",
+      "kind": "IMPORTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/import/otrs/user.rb",
+      "to_file": "app/models/role.rb",
+      "kind": "IMPORTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/checks_kb_client_notification.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/checks_kb_client_visibility.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/has_agent_allowed_params.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/has_recursive_cte_query.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/has_translations.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/category/permission.rb",
+      "to_file": "app/models/concerns/triggers_knowledge_base_content_updates.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/server_snippet_nginx.rb",
+      "to_file": "app/models/concerns/checks_kb_client_notification.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/server_snippet_nginx.rb",
+      "to_file": "app/models/concerns/has_agent_allowed_params.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/server_snippet_nginx.rb",
+      "to_file": "app/models/concerns/has_translations.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/knowledge_base/server_snippet_nginx.rb",
+      "to_file": "app/models/concerns/triggers_knowledge_base_content_updates.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/notification_factory/renderer.rb",
+      "to_file": "app/models/avatar.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/notification_factory/renderer.rb",
+      "to_file": "app/models/object_lookup.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/scrub_html/div_removing_stream_parser.rb",
+      "to_file": "app/services/service/template/interpolation/engine/parser.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/pgp/incoming.rb",
+      "to_file": "app/models/pgp_key.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/pgp/notification_options.rb",
+      "to_file": "app/models/pgp_key.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/pgp/outgoing.rb",
+      "to_file": "app/models/pgp_key.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/pgp/security_options.rb",
+      "to_file": "app/models/pgp_key.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/smime/notification_options.rb",
+      "to_file": "app/models/smime_certificate.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/smime/outgoing.rb",
+      "to_file": "app/models/smime_certificate.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/secure_mailing/smime/security_options.rb",
+      "to_file": "app/models/smime_certificate.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/can_be_imported.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/can_clone_attachments.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/can_csv_import.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/can_lookup_search_index_attributes_with_attachments.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/checks_client_notification.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/checks_html_sanitized.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/has_activity_stream_log.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/has_default_model_user_relations.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/has_history.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/has_object_manager_attributes.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/common/model_class/ticket/article.rb",
+      "to_file": "app/models/concerns/has_transaction_dispatcher.rb",
+      "kind": "IMPLEMENTS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/sequencer/unit/import/common/user/skip/is_ldap_source.rb",
+      "to_file": "app/models/ldap_source.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/tasks/zammad/email_parser/failed_email/export_all.rake",
+      "to_file": "app/models/failed_email.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/tasks/zammad/email_parser/failed_email/reprocess.rake",
+      "to_file": "app/models/failed_email.rb",
+      "kind": "CALLS"
+    },
+    {
+      "rule_id": "no-backend-layer-cycles",
+      "from_file": "lib/validations/object_manager/attribute_validator.rb",
+      "to_file": "app/models/object_lookup.rb",
+      "kind": "CALLS"
+    }
+  ]
+}

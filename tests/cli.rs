@@ -13,7 +13,7 @@ project: {name: cli-fixture, root: app, source_roots: [src]}
 provider: {kind: gitnexus, command: intentionally-missing-fallback, page_size: 1}
 nodes:
   app: {}
-  app.a: {maps: ["src/a.rs"]}
+  app.a: {maps: ["src/a*.rs"]}
   app.b: {maps: ["src/b.rs"]}
   app.c: {}
 rules:
@@ -37,6 +37,7 @@ impl Fixture {
         std::fs::create_dir(root.path().join("src")).unwrap();
         std::fs::write(root.path().join("src/a.rs"), "").unwrap();
         std::fs::write(root.path().join("src/b.rs"), "").unwrap();
+        std::fs::write(root.path().join("src/a2.rs"), "").unwrap();
         std::fs::write(root.path().join("architecture.yaml"), YAML).unwrap();
         let executable = root.path().join("provider with spaces.py");
         std::fs::write(&executable, include_str!("fixtures/fake_gitnexus.py")).unwrap();
@@ -80,6 +81,80 @@ fn check_exit_zero_for_clean_two_for_violations_and_scope_filtering() {
         fixture.run(&["compile"], "violation").status.code(),
         Some(0)
     );
+}
+
+#[test]
+fn baseline_accepts_existing_violations_and_fails_only_on_new_ones() {
+    let fixture = Fixture::new();
+    let text = |output: &Output| String::from_utf8_lossy(&output.stdout).into_owned();
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(2));
+    let written = fixture.run(&["baseline"], "violation");
+    assert_eq!(
+        written.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&written.stderr)
+    );
+    assert!(fixture
+        .root
+        .path()
+        .join("architecture.baseline.json")
+        .exists());
+
+    let accepted = fixture.run(&["check"], "violation");
+    assert_eq!(accepted.status.code(), Some(0), "{}", text(&accepted));
+    assert!(text(&accepted).contains("1 accepted observation(s), 0 fixed since"));
+
+    let grown = fixture.run(&["check"], "violation_grown");
+    assert_eq!(grown.status.code(), Some(2));
+    assert!(
+        text(&grown).contains("New since baseline (1):\n    src/a2.rs -> src/b.rs [IMPORTS]"),
+        "{}",
+        text(&grown)
+    );
+    let json: Value =
+        serde_json::from_slice(&fixture.run(&["check", "--json"], "violation_grown").stdout)
+            .unwrap();
+    assert_eq!(json["violation_count"], 1);
+    assert_eq!(
+        json["violations"][0]["new_observations"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(json["baseline"]["accepted_observations"], 1);
+
+    let fixed = fixture.run(&["check"], "clean");
+    assert_eq!(fixed.status.code(), Some(0));
+    assert!(text(&fixed).contains("1 fixed since"), "{}", text(&fixed));
+    assert_eq!(
+        fixture
+            .run(&["check", "--no-baseline"], "violation")
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn closed_stdout_exits_quietly_instead_of_panicking() {
+    let fixture = Fixture::new();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_archgraph"))
+        .arg("--root")
+        .arg(fixture.root.path())
+        .arg("check")
+        .env("GITNEXUS_BIN", &fixture.executable)
+        .env("ARCHGRAPH_FAKE_MODE", "violation")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take()); // like `archgraph check | head -0`
+    let output = child.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("panicked"), "{stderr}");
+    assert_eq!(output.status.code(), Some(141));
 }
 
 #[test]

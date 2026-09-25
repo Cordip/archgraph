@@ -1,4 +1,5 @@
 use crate::{
+    baseline::{self, BaselineEntry},
     compiler, config, context,
     model::{ArchitectureIr, Violation, EVIDENCE_LIMIT},
     paths::locate_repository,
@@ -14,6 +15,26 @@ use std::{
     net::IpAddr,
     path::{Path, PathBuf},
 };
+
+/// `print!`/`println!` panic when stdout is closed early (`archgraph check |
+/// head`). Like Unix tools killed by SIGPIPE, exit quietly with 128 + 13.
+fn write_stdout(arguments: std::fmt::Arguments) {
+    use std::io::Write;
+    let mut stdout = std::io::stdout().lock();
+    if let Err(error) = stdout.write_fmt(arguments) {
+        if error.kind() == std::io::ErrorKind::BrokenPipe {
+            std::process::exit(141);
+        }
+        panic!("failed printing to stdout: {error}");
+    }
+}
+macro_rules! out {
+    ($($arg:tt)*) => { write_stdout(format_args!($($arg)*)) };
+}
+macro_rules! outln {
+    () => { write_stdout(format_args!("\n")) };
+    ($($arg:tt)*) => { write_stdout(format_args!("{}\n", format_args!($($arg)*))) };
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -52,12 +73,29 @@ pub enum Commands {
         json: bool,
     },
     /// Compile fresh and check all or a subtree. Exit: 0 clean, 1 failure, 2 violations.
+    ///
+    /// With a baseline file (see `baseline`), only observations missing from
+    /// it count as violations.
     Check {
         node: Option<String>,
         #[arg(long)]
         reindex: bool,
         #[arg(long)]
         json: bool,
+        /// Baseline file; default `<config stem>.baseline.json` next to the config.
+        #[arg(long)]
+        baseline: Option<PathBuf>,
+        /// Report every violation, ignoring an existing baseline.
+        #[arg(long, conflicts_with = "baseline")]
+        no_baseline: bool,
+    },
+    /// Accept all current violations: write them to the baseline file so that
+    /// `check` fails only on new ones. Commit the file; regenerate deliberately.
+    Baseline {
+        #[arg(long)]
+        reindex: bool,
+        #[arg(long)]
+        baseline: Option<PathBuf>,
     },
     /// Compile fresh and render one semantic focus level.
     Show {
@@ -147,6 +185,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
     let reindex = match &cli.command {
         Commands::Compile { reindex, .. }
         | Commands::Check { reindex, .. }
+        | Commands::Baseline { reindex, .. }
         | Commands::Serve { reindex, .. } => *reindex,
         _ => false,
     };
@@ -158,7 +197,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
     match cli.command {
         Commands::Compile { json, .. } => {
             if json {
-                println!(
+                outln!(
                     "{}",
                     render::json::render(&serde_json::json!({
                         "stats": ir.stats, "diagnostics": ir.diagnostics,
@@ -166,7 +205,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     }))?
                 );
             } else {
-                println!(
+                outln!(
                     "Architecture compiled\n  architecture nodes:  {}\n  mapped files:        {}\n  unassigned files:    {}\n  ambiguous files:     {}\n  provider rows:       {}\n  filtered out:        {}\n  observed edges:      {}\n  resolved edges:      {}\n  architecture edges:  {}\n  violations:          {}\n\nIR: {}",
                     ir.stats.architecture_node_count,
                     ir.stats.mapped_file_count,
@@ -180,91 +219,115 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     ir.stats.violation_count,
                     ir_path.display()
                 );
-                println!("\n{}", ir.evidence_notice);
+                outln!("\n{}", ir.evidence_notice);
             }
             Ok(0)
         }
-        Commands::Check { node, json, .. } => {
+        Commands::Check {
+            node,
+            json,
+            baseline: baseline_arg,
+            no_baseline,
+            ..
+        } => {
             let violations = matching_violations(&ir, node.as_deref())?;
-            let exit = check_exit_code(violations.len());
+            let baseline_path = baseline_file(&root, &config_path, baseline_arg);
+            let loaded = if no_baseline {
+                None
+            } else {
+                baseline::load(&baseline_path)?
+            };
+            let comparison = loaded
+                .as_ref()
+                .map(|loaded| baseline::compare(&ir, &violations, loaded));
+            let failing: Vec<&Violation> = match &comparison {
+                Some(comparison) => comparison.new.iter().map(|new| new.violation).collect(),
+                None => violations.clone(),
+            };
+            let exit = check_exit_code(failing.len());
+            let new_entries = |violation: &Violation| -> Option<&[BaselineEntry]> {
+                comparison.as_ref().and_then(|comparison| {
+                    comparison
+                        .new
+                        .iter()
+                        .find(|new| std::ptr::eq(new.violation, violation))
+                        .map(|new| new.new_entries.as_slice())
+                })
+            };
             if json {
-                println!(
+                let reported = failing
+                    .iter()
+                    .map(|&violation| {
+                        let mut value = serde_json::to_value(violation)?;
+                        if let Some(entries) = new_entries(violation) {
+                            value["new_observations"] = serde_json::to_value(entries)?;
+                        }
+                        Ok(value)
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                let baseline_json = comparison.as_ref().map(|comparison| serde_json::json!({
+                    "path": baseline_path.to_string_lossy().replace('\\', "/"),
+                    "accepted_observations": comparison.accepted_entry_count,
+                    "fixed_observations": comparison.fixed_entry_count,
+                    "accepted_violations": comparison.accepted.iter().map(|v| &v.rule_id).collect::<Vec<_>>(),
+                }));
+                outln!(
                     "{}",
                     render::json::render(
-                        &serde_json::json!({"node": node, "violation_count": violations.len(),
-                    "violations": violations, "diagnostics": ir.diagnostics, "evidence_notice": ir.evidence_notice,
+                        &serde_json::json!({"node": node, "violation_count": failing.len(),
+                    "violations": reported, "baseline": baseline_json, "diagnostics": ir.diagnostics,
+                    "evidence_notice": ir.evidence_notice,
                     "ir_path": ir_path.to_string_lossy().replace('\\', "/")})
                     )?
                 );
             } else {
-                println!("{} matching architecture violation(s)", violations.len());
-                for violation in violations {
-                    println!("\n[{}] {}", violation.rule_id, violation.message);
-                    let is_cut = |from: &str, to: &str| {
-                        violation
-                            .suggested_cuts
-                            .iter()
-                            .any(|cut| cut.from == from && cut.to == to)
-                    };
-                    if !violation.suggested_cuts.is_empty() {
-                        println!("  Suggested cut, most significant first:");
-                        for cut in &violation.suggested_cuts {
-                            println!("    {} -> {} × {}", cut.from, cut.to, cut.count);
-                        }
-                        println!(
-                            "  Evidence for the suggested cut; other cycle edges are summarized:"
-                        );
-                    }
-                    for edge in &violation.architecture_edges {
-                        let cut = is_cut(&edge.from, &edge.to);
-                        println!(
-                            "  {} -> {} [{}] × {}{}",
-                            edge.from,
-                            edge.to,
-                            edge.kind,
-                            edge.count,
-                            if cut { " [CUT]" } else { "" }
-                        );
-                        if !violation.suggested_cuts.is_empty() && !cut {
-                            continue;
-                        }
-                        for evidence in &edge.evidence {
-                            let detail = [
-                                evidence.reason.clone(),
-                                evidence
-                                    .confidence
-                                    .map(|value| format!("confidence {value}")),
-                            ]
-                            .into_iter()
-                            .flatten()
-                            .collect::<Vec<_>>();
-                            let detail = if detail.is_empty() {
-                                String::new()
-                            } else {
-                                format!("  ({})", detail.join(", "))
-                            };
-                            println!("    {} -> {}{detail}", evidence.from_file, evidence.to_file);
-                        }
-                        if edge.evidence.len() < edge.count {
-                            println!(
-                                "    (showing {} of {} observations)",
-                                edge.evidence.len(),
-                                edge.count
-                            );
-                        }
+                if let Some(comparison) = &comparison {
+                    outln!(
+                        "Baseline {}: {} accepted observation(s), {} fixed since; {} violation(s) fully accepted.",
+                        baseline_path.display(),
+                        comparison.accepted_entry_count,
+                        comparison.fixed_entry_count,
+                        comparison.accepted.len()
+                    );
+                    outln!(
+                        "{} architecture violation(s) with observations not in the baseline",
+                        failing.len()
+                    );
+                } else {
+                    outln!("{} matching architecture violation(s)", failing.len());
+                }
+                for violation in failing {
+                    match new_entries(violation) {
+                        Some(entries) => print_new_observations(violation, entries),
+                        None => print_violation(violation),
                     }
                 }
-                println!("\n{}", ir.evidence_notice);
+                outln!("\n{}", ir.evidence_notice);
             }
             Ok(exit)
+        }
+        Commands::Baseline {
+            baseline: baseline_arg,
+            ..
+        } => {
+            let path = baseline_file(&root, &config_path, baseline_arg);
+            let entries = baseline::current_entries(&ir);
+            baseline::write(&path, &entries)?;
+            outln!(
+                "Accepted {} observation(s) from {} violation(s) in {}",
+                entries.len(),
+                ir.violations.len(),
+                path.display()
+            );
+            Ok(0)
         }
         Commands::Show { node, format } => {
             let focus = node.as_deref().unwrap_or(&ir.project.root);
             let view = projection::project(&ir, focus, EVIDENCE_LIMIT)?;
             match format {
-                ShowFormat::Text => print!("{}", render::text::render(&view)),
-                ShowFormat::Json => println!("{}", render::json::render(&view)?),
-                ShowFormat::Mermaid => print!("{}", render::mermaid::render(&view)),
+                ShowFormat::Text => out!("{}", render::text::render(&view)),
+                ShowFormat::Json => outln!("{}", render::json::render(&view)?),
+                ShowFormat::Mermaid => out!("{}", render::mermaid::render(&view)),
             }
             Ok(0)
         }
@@ -275,9 +338,9 @@ pub async fn run(cli: Cli) -> Result<u8> {
         } => {
             let result = context::build(&ir, &node, evidence_limit)?;
             if json {
-                println!("{}", render::json::render(&result)?);
+                outln!("{}", render::json::render(&result)?);
             } else {
-                print!("{}", context::markdown(&result));
+                out!("{}", context::markdown(&result));
             }
             Ok(0)
         }
@@ -289,6 +352,97 @@ pub async fn run(cli: Cli) -> Result<u8> {
             Ok(0)
         }
         Commands::Init { .. } => Ok(0), // Handled before loading config/provider.
+    }
+}
+
+fn baseline_file(root: &Path, config_path: &Path, explicit: Option<PathBuf>) -> PathBuf {
+    match explicit {
+        Some(path) if path.is_absolute() => path,
+        Some(path) => root.join(path),
+        None => baseline::default_path(config_path),
+    }
+}
+
+fn evidence_line(evidence: &crate::model::EdgeEvidence) -> String {
+    let detail = [
+        evidence.reason.clone(),
+        evidence
+            .confidence
+            .map(|value| format!("confidence {value}")),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    let detail = if detail.is_empty() {
+        String::new()
+    } else {
+        format!("  ({})", detail.join(", "))
+    };
+    format!("{} -> {}{detail}", evidence.from_file, evidence.to_file)
+}
+
+fn print_violation(violation: &Violation) {
+    outln!("\n[{}] {}", violation.rule_id, violation.message);
+    let is_cut = |from: &str, to: &str| {
+        violation
+            .suggested_cuts
+            .iter()
+            .any(|cut| cut.from == from && cut.to == to)
+    };
+    if !violation.suggested_cuts.is_empty() {
+        outln!("  Suggested cut, most significant first:");
+        for cut in &violation.suggested_cuts {
+            outln!("    {} -> {} × {}", cut.from, cut.to, cut.count);
+        }
+        outln!("  Evidence for the suggested cut; other cycle edges are summarized:");
+    }
+    for edge in &violation.architecture_edges {
+        let cut = is_cut(&edge.from, &edge.to);
+        outln!(
+            "  {} -> {} [{}] × {}{}",
+            edge.from,
+            edge.to,
+            edge.kind,
+            edge.count,
+            if cut { " [CUT]" } else { "" }
+        );
+        if !violation.suggested_cuts.is_empty() && !cut {
+            continue;
+        }
+        for evidence in &edge.evidence {
+            outln!("    {}", evidence_line(evidence));
+        }
+        if edge.evidence.len() < edge.count {
+            outln!(
+                "    (showing {} of {} observations)",
+                edge.evidence.len(),
+                edge.count
+            );
+        }
+    }
+}
+
+/// With a baseline, the observations to fix are exactly the new ones.
+fn print_new_observations(violation: &Violation, entries: &[BaselineEntry]) {
+    const SHOWN: usize = 50;
+    outln!("\n[{}] {}", violation.rule_id, violation.message);
+    if !violation.suggested_cuts.is_empty() {
+        outln!("  Suggested cut, most significant first:");
+        for cut in &violation.suggested_cuts {
+            outln!("    {} -> {} × {}", cut.from, cut.to, cut.count);
+        }
+    }
+    outln!("  New since baseline ({}):", entries.len());
+    for entry in entries.iter().take(SHOWN) {
+        outln!(
+            "    {} -> {} [{}]",
+            entry.from_file,
+            entry.to_file,
+            entry.kind
+        );
+    }
+    if entries.len() > SHOWN {
+        outln!("    ... and {} more (use --json)", entries.len() - SHOWN);
     }
 }
 
@@ -325,14 +479,14 @@ const SKILL: &str = include_str!("../skills/archgraph/SKILL.md");
 
 pub fn initialize(root: &Path, config_path: &Path, install_skill: bool, force: bool) -> Result<()> {
     if config_path.exists() && !force {
-        println!("Keeping existing {}", config_path.display());
+        outln!("Keeping existing {}", config_path.display());
     } else {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::write(config_path, STARTER)
             .with_context(|| format!("cannot write {}", config_path.display()))?;
-        println!("Created {}", config_path.display());
+        outln!("Created {}", config_path.display());
     }
     if install_skill {
         let mut supported: Vec<PathBuf> = [".claude", ".agents"]
@@ -358,7 +512,7 @@ pub fn initialize(root: &Path, config_path: &Path, install_skill: bool, force: b
             std::fs::create_dir_all(&directory)?;
             let destination = directory.join("SKILL.md");
             if destination.exists() && !force {
-                println!(
+                outln!(
                     "Keeping existing {} (use --force to overwrite)",
                     destination.display()
                 );
@@ -375,7 +529,7 @@ pub fn initialize(root: &Path, config_path: &Path, install_skill: bool, force: b
             }
             std::fs::write(&destination, SKILL)
                 .with_context(|| format!("cannot install skill {}", destination.display()))?;
-            println!("Installed {}", destination.display());
+            outln!("Installed {}", destination.display());
         }
     }
     Ok(())
