@@ -52,6 +52,12 @@ if match is None:
 if "r.type IN ['IMPORTS']" not in query or "ORDER BY source, target, kind, reason" not in query:
     sys.exit("unexpected dependency query")
 offset, size = map(int, match.groups())
+if mode == "index_rewrite_torn":
+    # A half-written index: the rewrite shows, and so does a broken row.
+    with open(os.path.join(".gitnexus", "meta.json"), "a", encoding="utf-8") as meta:
+        meta.write(" ")
+    print(json.dumps({"markdown": "| source | target | kind | confidence | reason |\n| --- | --- | --- | --- | --- |\n|  | src/b.rs | IMPORTS | 1.0 | x |", "row_count": 1}))
+    sys.exit(0)
 if mode == "index_rewrite":
     # Another `gitnexus analyze` finishing while ArchGraph pages through results.
     with open(os.path.join(".gitnexus", "meta.json"), "a", encoding="utf-8") as meta:

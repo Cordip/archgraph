@@ -72,26 +72,39 @@ async fn observe(
             return Ok((snapshot, true));
         }
     }
-    let info = provider
-        .info()
-        .await
-        .context("code-graph provider probe failed")?;
-    let edges = provider
-        .dependency_edges()
-        .await
-        .context("code-graph dependency query failed")?;
-    let indexed_files = provider
-        .indexed_files()
-        .await
-        .context("code-graph file query failed")?;
+    const INDEX_CHANGED: &str = "the code-graph index changed while compiling (another `gitnexus analyze` ran, e.g. an auto-index service); rerun when indexing has finished";
+    let queried = async {
+        let info = provider
+            .info()
+            .await
+            .context("code-graph provider probe failed")?;
+        let edges = provider
+            .dependency_edges()
+            .await
+            .context("code-graph dependency query failed")?;
+        let indexed_files = provider
+            .indexed_files()
+            .await
+            .context("code-graph file query failed")?;
+        anyhow::Ok((info, edges, indexed_files))
+    }
+    .await;
     let index_after = provider
         .fingerprint()
         .await
         .context("cannot read the code-graph index identity")?;
-    // Paged queries against an index being rewritten mix two graphs; that
-    // result must never be reported, clean or not.
+    // Paged queries against an index being rewritten mix two graphs, or read
+    // a half-written one; neither result may be reported, clean or not. A
+    // query that failed meanwhile failed because of the rewrite, not because
+    // GitNexus is incompatible.
+    let (info, edges, indexed_files) = match queried {
+        Err(error) if index_before != index_after => {
+            return Err(error.context(INDEX_CHANGED));
+        }
+        result => result?,
+    };
     if index_before != index_after {
-        bail!("the code-graph index changed while compiling (another `gitnexus analyze` ran, e.g. an auto-index service); rerun when indexing has finished");
+        bail!(INDEX_CHANGED);
     }
     let snapshot = Snapshot {
         info,

@@ -113,7 +113,10 @@ in between, for example an auto-index service reacting to file changes, the
 pages mix two graphs. On the validation machine this made two identical runs
 disagree. ArchGraph compares the size and modification time of the index
 (`meta.json`, `lbug`) before and after querying and fails with "index changed
-while compiling" instead of reporting the mix. Rerun when indexing has
+while compiling" instead of reporting the mix. A half-written index can also
+return malformed rows (seen on zammad: a row with an empty source); when a
+query fails and the index changed meanwhile, the same error is reported, with
+the query failure as its cause, instead of blaming GitNexus compatibility. Rerun when indexing has
 finished. Writing `.archgraph/` inside the repository is itself a file change
 such a service may react to.
 

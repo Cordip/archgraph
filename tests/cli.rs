@@ -150,6 +150,13 @@ fn an_index_rewritten_while_compiling_fails_instead_of_mixing_graphs() {
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("index changed while compiling"));
+    // A query that breaks on a half-written index is blamed on the rewrite,
+    // not reported as an incompatible GitNexus.
+    let output = fixture.run(&["check", "--no-cache"], "index_rewrite_torn");
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("index changed while compiling"), "{stderr}");
+    assert!(stderr.contains("empty/null source or target"), "{stderr}");
 }
 
 #[test]
