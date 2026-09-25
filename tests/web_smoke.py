@@ -338,6 +338,11 @@ def main():
         world = ((px - x1) / k1, (py - y1) / k1)
         page.mouse.move(stage["x"] + px, stage["y"] + py)
         page.mouse.wheel(0, -240)
+        # During the gesture only the viewport layer moves; the drawing takes
+        # the new camera once the wheel pauses.
+        assert page.locator("#viewport").evaluate("e => e.style.transform") != ""
+        page.wait_for_timeout(300)
+        assert page.locator("#viewport").evaluate("e => e.style.transform") == ""
         x2, y2, k2 = camera(page)
         assert k2 > k1 * 1.3, (k1, k2)
         assert abs((px - x2) / k2 - world[0]) < 0.5 and abs((py - y2) / k2 - world[1]) < 0.5

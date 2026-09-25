@@ -1868,8 +1868,8 @@ function drawEdge(plan) {
   group.append(label);
   group.append(svg("title", {}, `${displayEndpoint(edge.from)} → ${displayEndpoint(edge.to)}\n${kindCounts(edge.parts).map(([kind, count]) => `${kind} × ${count}`).join(", ")}. Click for concrete evidence.`));
   group.addEventListener("click", () => showEdge(edge, group));
-  group.addEventListener("mouseenter", () => hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }));
-  group.addEventListener("mouseleave", () => hoverCanvas(null));
+  group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }); });
+  group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
   const marker = plan.trunk ? null : `url(#${ids.end})`;
   // Without colours a highlighted wire turns to ink; with them it keeps its colour.
   const litMarker = marker && !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
@@ -2265,30 +2265,58 @@ function settle(before, anchor) {
 }
 
 // ---------------------------------------------------------------- camera
+// The canvas box: #stage fills it, but while a gesture runs #stage is moved
+// with #viewport (see applyCamera), so its own box is not the canvas.
 function stageSize() {
-  const rect = $("stage").getBoundingClientRect();
+  const rect = $("canvas").getBoundingClientRect();
   return { width: rect.width || 800, height: rect.height || 600, left: rect.left, top: rect.top };
 }
-function applyCamera() {
+// Moving the camera changes the transform of the whole drawing, and the
+// browser then repaints every wire: on a level of a thousand cards that is
+// 100 ms or more a frame. During a gesture (wheel, pan, pinch, a camera
+// animation) the drawing therefore stays as it is and the compositor moves
+// #viewport, which holds it, as one picture (a CSS transform on a layer of
+// its own); the camera is committed to the drawing once the gesture pauses
+// for SETTLE_MS, or when the picture has moved or scaled too far to stand
+// in for it. Text sizes and wire widths follow the committed camera.
+const SETTLE_MS = 140;
+let drawn = null, settleTimer = 0;
+function applyCamera(live = false) {
+  $("zoom-level").textContent = `${Math.round(camera.k * 100)}%`;
+  updateMinimapView();
+  clearTimeout(settleTimer);
+  if (live && drawn) {
+    const scale = camera.k / drawn.k, size = stageSize();
+    const dx = camera.x - drawn.x * scale, dy = camera.y - drawn.y * scale;
+    if (scale > 0.6 && scale < 1.6 && Math.abs(dx) < size.width * 0.4 && Math.abs(dy) < size.height * 0.4) {
+      $("viewport").style.transform = `translate(${round(dx)}px, ${round(dy)}px) scale(${scale.toFixed(4)})`;
+      settleTimer = setTimeout(commitCamera, SETTLE_MS);
+      return;
+    }
+  }
+  commitCamera();
+}
+function commitCamera() {
+  clearTimeout(settleTimer);
   const transform = `translate(${round(camera.x)} ${round(camera.y)}) scale(${camera.k.toFixed(4)})`;
   $("graph").setAttribute("transform", transform);
   $("grid").setAttribute("patternTransform", transform);
+  $("viewport").style.transform = "";
   $("stage").classList.toggle("coarse", camera.k < 0.45);
-  $("zoom-level").textContent = `${Math.round(camera.k * 100)}%`;
+  drawn = { ...camera };
   updateText();
-  updateMinimapView();
 }
 function setCamera(target) {
   ++cameraAnimation;
   camera = { ...target };
   applyCamera();
 }
-function zoomAt(factor, px, py) {
+function zoomAt(factor, px, py, live = false) {
   ++cameraAnimation;
   const k = clamp(camera.k * factor, MIN_ZOOM, MAX_ZOOM);
   const wx = (px - camera.x) / camera.k, wy = (py - camera.y) / camera.k;
   camera = { k, x: px - wx * k, y: py - wy * k };
-  applyCamera();
+  applyCamera(live);
 }
 // The camera that shows `box` whole, clear of the floating tools.
 function cameraFor(box, { maxK = 1, minK = MIN_ZOOM, pad = 48, top = false } = {}) {
@@ -2341,7 +2369,7 @@ function animateTo(target, duration = 320) {
       const t = Math.min(1, (now - began) / duration);
       const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
       camera = { k: start.k * Math.pow(target.k / start.k, eased), x: start.x + (target.x - start.x) * eased, y: start.y + (target.y - start.y) * eased };
-      applyCamera();
+      applyCamera(t < 1);
       if (t < 1) requestAnimationFrame(step); else resolve();
     };
     requestAnimationFrame(step);
@@ -2415,9 +2443,9 @@ stage.addEventListener("pointermove", (event) => {
     const [a, b] = [...pointers.values()];
     const distance = Math.hypot(a.x - b.x, a.y - b.y), mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     const size = stageSize();
-    zoomAt(distance / (gesture.distance || distance), mid.x - size.left, mid.y - size.top);
+    zoomAt(distance / (gesture.distance || distance), mid.x - size.left, mid.y - size.top, true);
     camera = { ...camera, x: camera.x + mid.x - gesture.mid.x, y: camera.y + mid.y - gesture.mid.y };
-    applyCamera();
+    applyCamera(true);
     Object.assign(gesture, { distance, mid });
     return;
   }
@@ -2433,7 +2461,7 @@ stage.addEventListener("pointermove", (event) => {
   if (gesture.kind === "pan") {
     if (spaceHeld) spacePanned = true;
     camera = { ...camera, x: gesture.camera.x + dx, y: gesture.camera.y + dy };
-    applyCamera();
+    applyCamera(true);
   } else {
     moveEntry(gesture.id, gesture.origin.x + dx / camera.k, gesture.origin.y + dy / camera.k);
   }
@@ -2445,6 +2473,7 @@ function endGesture(event) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
     if (gesture.kind === "node") { if (scene.board) dropOnGrid(gesture.id); else saveLayout(); }
+    if (gesture.kind === "pan" || gesture.kind === "pinch") commitCamera();
   }
   $("canvas").classList.remove("dragging", "panning");
   gesture = null;
@@ -2464,8 +2493,8 @@ stage.addEventListener("wheel", (event) => {
   // A mouse wheel notch zooms; a trackpad's small, fractional or sideways
   // deltas pan; a pinch arrives as a wheel event with Ctrl held.
   const notch = event.deltaMode !== 0 || (dx === 0 && Math.abs(dy) >= 50 && Number.isInteger(dy));
-  if (event.ctrlKey || event.metaKey || notch) zoomAt(Math.exp(-dy * (event.ctrlKey ? 0.01 : 0.0015)), event.clientX - size.left, event.clientY - size.top);
-  else { ++cameraAnimation; camera = { ...camera, x: camera.x - dx, y: camera.y - dy }; applyCamera(); }
+  if (event.ctrlKey || event.metaKey || notch) zoomAt(Math.exp(-dy * (event.ctrlKey ? 0.01 : 0.0015)), event.clientX - size.left, event.clientY - size.top, true);
+  else { ++cameraAnimation; camera = { ...camera, x: camera.x - dx, y: camera.y - dy }; applyCamera(true); }
 }, { passive: false });
 // Keyboard: the canvas is one tab stop; arrow keys move between entries,
 // Enter shows details, Shift+Enter opens a node or expands a group.

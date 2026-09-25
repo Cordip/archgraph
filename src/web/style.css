@@ -176,6 +176,9 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 /* Canvas */
 .canvas { position: relative; min-width: 0; overflow: hidden; background: var(--sheet); container-type: inline-size; }
 .canvas:focus { outline: none; }
+/* During a gesture the compositor moves #viewport as one picture
+   (applyCamera); moving #stage itself would lay the whole SVG out again. */
+#viewport { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
 #stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
 .canvas.space-pan #stage { cursor: grab; }
 .canvas.panning #stage, .canvas.dragging #stage { cursor: grabbing; }
