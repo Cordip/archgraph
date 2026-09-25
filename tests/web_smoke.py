@@ -76,6 +76,11 @@ PACKAGE_ENTRY = {"id": ORTOOLS["id"], "title": "ortools", "entry_kind": "package
                  "node_kind": None, "file_path": None, "file_count": 0, "observed_file_count": None,
                  "description": "Python package imported by 2 file(s).", "interfaces": [], "outside_focus": False,
                  "violation_rule_ids": [], "package": ORTOOLS}
+# A wide name that fits a character count but not the card beside its glyph.
+FONTSOURCE = {"id": "package:npm/@fontsource/ibm-plex-sans", "name": "@fontsource/ibm-plex-sans", "ecosystem": "npm", "node": "packages",
+              "imports": [{"file": "src/api/a.rs", "line": 4, "specifier": "@fontsource/ibm-plex-sans/400.css", "type_only": False, "node": "app.api"}]}
+WIDE_PACKAGE_ENTRY = {**PACKAGE_ENTRY, "id": FONTSOURCE["id"], "title": FONTSOURCE["name"],
+                      "description": "npm package imported by 1 file(s).", "package": FONTSOURCE}
 PROJECTIONS = {
     "app": {"focus": NODES["app"], "breadcrumbs": [NODES["app"]],
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
@@ -92,9 +97,9 @@ PROJECTIONS = {
                 "edges": [edge("file:src/big/f000.rs", "file:src/big/f001.rs")],
                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
     "packages": {"focus": NODES["packages"], "breadcrumbs": [NODES["packages"]],
-                 "nodes": [PACKAGE_ENTRY, entry("app.api", True), entry("app.domain", True)],
+                 "nodes": [PACKAGE_ENTRY, WIDE_PACKAGE_ENTRY, entry("app.api", True), entry("app.domain", True)],
                  "edges": [edge("node:app.domain", ORTOOLS["id"]), edge("node:app.api", ORTOOLS["id"])],
-                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": [[ORTOOLS["id"]]]},
+                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": [[ORTOOLS["id"], FONTSOURCE["id"]]]},
 }
 PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"]}]
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
@@ -353,10 +358,17 @@ def main():
         page.locator("#search-results .result-heading", has_text="Packages").wait_for()
         page.locator("#search-results").get_by_role("button", name="ortools — Python package", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'packages'")
-        assert page.locator("#graph .node.package").count() == 1
-        assert page.locator("#graph .node.package .package-glyph").count() == 1
+        assert page.locator("#graph .node.package").count() == 2
+        assert page.locator("#graph .node.package .package-glyph").count() == 2
         assert page.locator("#graph .node.package.selected").count() == 1
-        assert "imported by 2 files" in page.locator("#graph .node.package").text_content()
+        assert "imported by 2 files" in page.locator(f"#graph .node.package[data-id='{ORTOOLS['id']}']").text_content()
+        # A long name is cut short of the corner glyph, and the tooltip keeps it whole.
+        wide = page.locator(f'#graph .node.package[data-id="{FONTSOURCE["id"]}"]')
+        title_right = wide.locator(".node-title").evaluate("e => e.getBBox().x + e.getBBox().width")
+        glyph_left = wide.locator(".package-glyph").evaluate("e => e.getBBox().x")
+        assert title_right < glyph_left, (title_right, glyph_left, wide.locator(".node-title").text_content())
+        assert wide.locator(".node-title").text_content().endswith("…")
+        assert "@fontsource/ibm-plex-sans" in wide.locator("title").first.text_content()
         details = page.locator("#details").inner_text()
         for expected in ["Python package", "package:python/ortools", "Imported by 2 files in 2 nodes. Owned by External packages (packages).",
                          "src/domain/a.rs:3", "ortools.constraint_solver", "src/api/a.rs:9", "ortools.sat (type only)", "Used by (2)"]:

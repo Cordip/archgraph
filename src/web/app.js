@@ -1173,22 +1173,39 @@ function cloudPath(x, y, width, height) {
 function nodeLines(node) {
   if (node.entry_kind === "file" && node.file_path) {
     const [directory, base] = splitPath(node.file_path);
-    return [compact(base, 26), directory ? compactStart(`${directory}/`, 30) : "", null];
+    return [base, directory ? `${directory}/` : "", null];
   }
   if (node.entry_kind === "group") {
     const flagged = node.members.filter((member) => member.violation_rule_ids.length).length;
-    return [compact(node.title, 26), compactStart(node.direct ? `files in ${node.directory || "."}/` : `${node.directory}/`, 30),
+    return [node.title, node.direct ? `files in ${node.directory || "."}/` : `${node.directory}/`,
       `${plural(node.file_count, "file")}${flagged ? `, ${flagged} in violations` : ""}`];
   }
   if (node.package) {
     const files = new Set((node.package.imports || []).map((item) => item.file)).size;
-    return [compact(node.title, 26), `${ecosystemTitle(node.package.ecosystem)} package`, `imported by ${plural(files, "file")}`];
+    return [node.title, `${ecosystemTitle(node.package.ecosystem)} package`, `imported by ${plural(files, "file")}`];
   }
   const facts = node.file_count || !node.package_count ? [plural(node.file_count, "file")] : [];
   if (hasValue(node.observed_file_count) && node.file_count) facts.push(`${node.observed_file_count} observed`);
   if (node.package_count) facts.push(plural(node.package_count, "package"));
   if (node.node_kind === "external") facts.push("external");
-  return [compact(node.title, 26), compact(node.architecture_id || ENTRY_KINDS[node.entry_kind] || node.entry_kind, 30), facts.join(", ")];
+  return [node.title, node.architecture_id || ENTRY_KINDS[node.entry_kind] || node.entry_kind, facts.join(", ")];
+}
+// Card text is cut by its drawn width, not by a character count: a wide name
+// such as `@fontsource/ibm-plex-sans` fits 26 characters but runs under the
+// glyph in the card's corner. Measuring needs the card in the document, so
+// drawNode leaves a character-count cut and a list of fits for afterwards.
+function fitText(element, full, width, fromStart) {
+  const cut = (length) => (fromStart ? compactStart(full, length) : compact(full, length));
+  element.textContent = full;
+  if (!element.getComputedTextLength()) { element.textContent = cut(fromStart ? 30 : 26); return; }
+  if (element.getComputedTextLength() <= width) return;
+  let low = 2, high = full.length - 1;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    element.textContent = cut(middle);
+    if (element.getComputedTextLength() <= width) low = middle; else high = middle - 1;
+  }
+  element.textContent = cut(low);
 }
 function drawScene() {
   const graph = $("graph");
@@ -1221,7 +1238,11 @@ function drawScene() {
   if (scene.edges.length <= LABEL_LIMIT) placeLabels(plans, positions);
   else for (const plan of plans) plan.label = bezier(plan.curves[0], 0.5);
   for (const plan of plans) graph.append(drawEdge(plan));
-  scene.entries.forEach((node, index) => graph.append(drawNode(node, positions.get(node.id), index === 0)));
+  scene.entries.forEach((node, index) => {
+    const element = drawNode(node, positions.get(node.id), index === 0);
+    graph.append(element);
+    for (const fit of element.fits) fitText(...fit);
+  });
 }
 function drawEdge(plan) {
   const edge = plan.edge;
@@ -1256,9 +1277,17 @@ function drawNode(node, box, first) {
   // A package is a bought-in part: a crate glyph in the corner.
   if (node.entry_kind === "package") group.append(svg("path", { d: `M ${box.width - 34} 16 l 10 -5 l 10 5 v 12 l -10 5 l -10 -5 z M ${box.width - 34} 16 l 10 5 l 10 -5 M ${box.width - 24} 21 v 12`, class: "package-glyph" }));
   const [title, subtitle, facts] = nodeLines(node);
-  group.append(svg("text", { x: 14, y: facts === null ? 37 : 30, class: "node-title" }, title));
-  group.append(svg("text", { x: 14, y: facts === null ? 60 : 51, class: "node-subtitle" }, subtitle));
-  if (facts) group.append(svg("text", { x: 14, y: 70, class: "node-facts" }, facts));
+  const titleText = svg("text", { x: 14, y: facts === null ? 37 : 30, class: "node-title" }, compact(title, 26));
+  const subtitleText = svg("text", { x: 14, y: facts === null ? 60 : 51, class: "node-subtitle" }, compactStart(subtitle, 30));
+  group.append(titleText, subtitleText);
+  // The corner glyph or group toggle starts 34px from the right edge.
+  const corner = node.entry_kind === "package" || node.entry_kind === "group";
+  group.fits = [[titleText, title, box.width - (corner ? 54 : 26), false], [subtitleText, subtitle, box.width - 26, node.entry_kind === "file" || node.entry_kind === "group"]];
+  if (facts) {
+    const factsText = svg("text", { x: 14, y: 70, class: "node-facts" }, compact(facts, 30));
+    group.append(factsText);
+    group.fits.push([factsText, facts, box.width - 26, false]);
+  }
   // Share of files with any observed dependency: low coverage makes a clean
   // check weak evidence, so it is shown on every architecture card.
   if (hasValue(node.observed_file_count) && node.file_count > 0) {
