@@ -408,10 +408,11 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
 
 /* Package details: importing files grouped by node */
 .package-summary { color: var(--ink-2); }
-.importers { margin: 0; padding: 0; list-style: none; }
+.importers { margin: 0; }
 .importer-group { padding: 6px 0 8px; border-top: 1px solid var(--rule); }
-.importer-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; }
-.importer-node .text-button { padding-left: 0; font-weight: 600; }
+.importer-node { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; cursor: pointer; }
+.importer-title { font-weight: 600; color: var(--ink); }
+.importer-group > .text-button { padding-left: 0; }
 .importer-lines { margin: 4px 0 0; }
 .importer-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 10px; padding: 1px 0; }
 .importer-specifier { font: 12.5px var(--font-code); color: var(--ink-3); overflow-wrap: anywhere; }

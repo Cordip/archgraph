@@ -362,7 +362,7 @@ def main():
                          "src/domain/a.rs:3", "ortools.constraint_solver", "src/api/a.rs:9", "ortools.sat (type only)", "Used by (2)"]:
             assert expected in details, (expected, details)
         # An importing node drawn in this view is selected in place.
-        page.locator("#details .importer-node .text-button", has_text="Domain").click()
+        page.locator("#details .importer-group", has_text="Domain").get_by_role("button", name="Show this node").click()
         assert page.locator("#details h2").inner_text() == "Domain"
         assert page.locator("#graph .node.selected").get_attribute("aria-label") == "Domain"
         assert page.locator("#focus-id").inner_text() == "packages"

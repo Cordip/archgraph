@@ -564,17 +564,24 @@ function packageDetails(panel, node) {
   const owner = node.package.node;
   const ownerName = !owner ? "no node (ambiguous mapping)" : tree.byId && tree.byId.has(owner) ? `${tree.byId.get(owner).title} (${owner})` : owner;
   panel.append(html("p", `Imported by ${plural(files.size, "file")} in ${plural([...byNode.keys()].filter(Boolean).length, "node")}. Owned by ${ownerName}.`, "package-summary"));
-  panel.append(html("h3", `Imported by (${imports.length})`));
-  const groups = html("ul", null, "importers");
-  for (const [importer, items] of [...byNode].sort((a, b) => a[0].localeCompare(b[0]))) {
-    const group = html("li", null, "importer-group");
-    const head = html("div", null, "importer-node");
-    if (importer && tree.byId && tree.byId.has(importer)) {
-      const link = html("button", tree.byId.get(importer).title, "text-button");
+  panel.append(html("h3", `Imports (${imports.length})`));
+  // One fold per importing node; small ones start open, big ones folded.
+  const sorted = [...byNode].sort((a, b) => a[0].localeCompare(b[0]));
+  const groups = html("div", null, "importers");
+  for (const [importer, items] of sorted) {
+    const known = importer && tree.byId && tree.byId.has(importer);
+    const group = html("details", null, "importer-group");
+    group.open = sorted.length === 1 || items.length <= 12;
+    const summary = html("summary", null, "importer-node");
+    summary.append(html("span", known ? tree.byId.get(importer).title : importer || "Unassigned files", "importer-title"),
+      html("span", `${importer ? `${importer} · ` : ""}${plural(items.length, "import")}`, "detail-id"));
+    group.append(summary);
+    if (known) {
+      const link = html("button", "Show this node", "text-button");
       link.type = "button";
       link.addEventListener("click", () => goToNode(importer));
-      head.append(link, html("span", importer, "detail-id"));
-    } else head.append(html("span", importer || "Unassigned files", "muted"));
+      group.append(link);
+    }
     const lines = html("ul", null, "plain-list importer-lines");
     for (const item of items) {
       const line = html("li", null, "importer-line");
@@ -582,7 +589,7 @@ function packageDetails(panel, node) {
       line.append(html("span", `${item.specifier}${item.type_only ? " (type only)" : ""}`, "importer-specifier"));
       lines.append(line);
     }
-    group.append(head, lines);
+    group.append(lines);
     groups.append(group);
   }
   panel.append(groups);
