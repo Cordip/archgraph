@@ -52,6 +52,23 @@ pub fn evaluate(rules: &[RuleConfig], edges: &[ResolvedEdge], limit: usize) -> V
                 });
                 violations.extend(dependency_violations(rule, forbidden, limit));
             }
+            RuleConfig::AllowOnlyFrom {
+                from,
+                to,
+                edge_types,
+                include_descendants,
+                ..
+            } => {
+                let forbidden = edges.iter().filter(|edge| {
+                    edge_types.contains(&edge.kind)
+                        && in_scope(&edge.to, to, *include_descendants)
+                        && !is_within(&edge.from, to)
+                        && !from
+                            .iter()
+                            .any(|source| in_scope(&edge.from, source, *include_descendants))
+                });
+                violations.extend(dependency_violations(rule, forbidden, limit));
+            }
             RuleConfig::Layers {
                 layers, edge_types, ..
             } => {
@@ -231,6 +248,7 @@ pub fn violation_observations<'a>(
         // violations by exactly those, so equal owners and kind means included.
         RuleConfig::DenyDependency { .. }
         | RuleConfig::AllowOnly { .. }
+        | RuleConfig::AllowOnlyFrom { .. }
         | RuleConfig::Layers { .. } => edges
             .iter()
             .filter(|edge| {
@@ -503,6 +521,28 @@ mod tests {
         let found = evaluate(&[rule], &edges, 20);
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].to.as_deref(), Some("app.sharedish"));
+    }
+    #[test]
+    fn allow_only_from_permits_listed_sources_and_the_target_itself() {
+        let rule = RuleConfig::AllowOnlyFrom {
+            id: "only-core-solves".into(),
+            from: vec!["app.core".into(), "app.tests".into()],
+            to: "libs.solver".into(),
+            edge_types: vec!["IMPORTS".into()],
+            include_descendants: true,
+        };
+        let edges = vec![
+            edge("app.core.plan", "libs.solver"),
+            edge("app.tests", "libs.solver"),
+            edge("libs.solver.cp", "libs.solver"),
+            edge("app.api", "libs.solver.cp"),
+            edge("app.coreish", "libs.solver"),
+            edge("app.api", "libs.other"),
+        ];
+        let found = evaluate(&[rule], &edges, 20);
+        let sources: Vec<&str> = found.iter().filter_map(|v| v.from.as_deref()).collect();
+        assert_eq!(sources, ["app.api", "app.coreish"]);
+        assert_eq!(found[0].kind, "allow_only_from");
     }
     #[test]
     fn cycles_are_sccs_at_immediate_child_level_with_all_edge_evidence() {

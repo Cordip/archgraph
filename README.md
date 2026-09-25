@@ -178,6 +178,7 @@ Rules evaluate observed relationships only:
 | --- | --- |
 | `deny_dependency` | Reject selected observed dependencies from the source to the target subtree. |
 | `allow_only` | Permit dependencies internal to the source subtree and to listed target subtrees; reject other selected outbound dependencies. |
+| `allow_only_from` | The inverse: permit dependencies on the `to` subtree only from listed `from` subtrees and from inside `to`; reject every other selected inbound dependency. "Only the planning core may use the solver." An empty `from` lets nothing outside use `to`. |
 | `no_cycles` | Project to immediate children of `within`; report each strongly connected component containing at least two children, with a suggested cut (below). |
 | `layers` | `layers` lists nodes from upper to lower; an entry may be a list of peer nodes sharing a layer. Reject dependencies from a layer to any layer above it. Downward dependencies, skipping layers, dependencies between peers and dependencies involving unlisted nodes are allowed. Descendants belong to their node's layer; a node may appear in one layer only. |
 
@@ -223,8 +224,10 @@ exactly one new observation for the dependency rule,
 
 `edge_types` defaults to `[IMPORTS]`. The dependency rules default
 `include_descendants` to `true`. With `false`, source selection and listed
-allow/deny targets match exact ownership nodes; dependencies internal to the
-`allow_only.from` subtree remain permitted. Empty `allow_only.to: []` permits
+allow/deny targets match exact ownership nodes (for `allow_only_from`, the
+target and the listed sources); dependencies internal to the
+`allow_only.from` subtree, or to the `allow_only_from.to` subtree, remain
+permitted. Empty `allow_only.to: []` permits
 only internal dependencies. `no_cycles` ignores self-edges at its zoom level.
 An SCC is reported as a component, not misleadingly formatted as an ordered
 cycle path. Each participating architecture edge has its own evidence sample.
@@ -584,12 +587,17 @@ ordinary `IMPORTS` observation:
 ```yaml
 nodes:
   libs: {kind: external, title: Third-party libraries}
-  libs.ortools: {kind: external, title: OR-Tools, maps: ["package:python/ortools"]}
+  libs.python: {kind: external, title: Python packages, maps: ["package:python/**"]}
+  libs.python.ortools: {kind: external, title: OR-Tools, maps: ["package:python/ortools"]}
 rules:
   # Only the planning core (and its tests) may use the solver.
-  - {id: api-solves-through-the-core, kind: deny_dependency, from: lct.backend.api, to: libs.ortools}
-  - {id: the-frontend-uses-no-solver, kind: deny_dependency, from: lct.frontend, to: libs.ortools}
+  - {id: only-the-core-solves, kind: allow_only_from, to: libs.python.ortools, from: [lct.backend.core, lct.tests]}
+  # The frontend imports no Python package.
+  - {id: frontend-imports-no-python, kind: deny_dependency, from: lct.frontend, to: libs.python}
 ```
+
+Here `ortools` belongs to `libs.python.ortools` (the deepest match), every
+other Python package to `libs.python`, and npm packages to `packages`.
 
 `allow_only` restricts packages too: its source may depend only on its
 targets, so list `packages` or the package nodes it may use in `to`.

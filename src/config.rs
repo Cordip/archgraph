@@ -238,6 +238,18 @@ pub enum RuleConfig {
         #[serde(default = "yes")]
         include_descendants: bool,
     },
+    /// The inverse of `allow_only`: only the listed sources (and the target
+    /// subtree itself) may depend on `to`, e.g. only the planning core may
+    /// use a solver library.
+    AllowOnlyFrom {
+        id: String,
+        from: Vec<String>,
+        to: String,
+        #[serde(default = "imports")]
+        edge_types: Vec<String>,
+        #[serde(default = "yes")]
+        include_descendants: bool,
+    },
     NoCycles {
         id: String,
         within: String,
@@ -276,6 +288,7 @@ impl RuleConfig {
         match self {
             Self::DenyDependency { id, .. }
             | Self::AllowOnly { id, .. }
+            | Self::AllowOnlyFrom { id, .. }
             | Self::NoCycles { id, .. }
             | Self::Layers { id, .. } => id,
         }
@@ -284,6 +297,7 @@ impl RuleConfig {
         match self {
             Self::DenyDependency { .. } => "deny_dependency",
             Self::AllowOnly { .. } => "allow_only",
+            Self::AllowOnlyFrom { .. } => "allow_only_from",
             Self::NoCycles { .. } => "no_cycles",
             Self::Layers { .. } => "layers",
         }
@@ -294,6 +308,11 @@ impl RuleConfig {
             Self::AllowOnly { from, to, .. } => {
                 let mut refs = vec![from.as_str()];
                 refs.extend(to.iter().map(String::as_str));
+                refs
+            }
+            Self::AllowOnlyFrom { from, to, .. } => {
+                let mut refs = vec![to.as_str()];
+                refs.extend(from.iter().map(String::as_str));
                 refs
             }
             Self::NoCycles { within, .. } => vec![within],
@@ -308,6 +327,7 @@ impl RuleConfig {
         match self {
             Self::DenyDependency { edge_types, .. }
             | Self::AllowOnly { edge_types, .. }
+            | Self::AllowOnlyFrom { edge_types, .. }
             | Self::NoCycles { edge_types, .. }
             | Self::Layers { edge_types, .. } => edge_types,
         }
