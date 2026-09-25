@@ -236,6 +236,11 @@ archgraph serve --reindex --port 7331 --host 127.0.0.1
 
 `compile`, `check`, `show`, `context`, and server startup all compile fresh and
 write `.archgraph/architecture.ir.json`. No command silently reuses stale IR.
+What they do reuse is the raw provider result (`.archgraph/cache/provider.json`)
+while the GitNexus index is unchanged: size and modification time of its
+`meta.json` and `lbug`, plus the exact queries. Configuration and file discovery
+are always read fresh, so edits to `architecture.yaml` apply at once. On zammad
+this takes a compile from 7 s to 0.1 s. `--no-cache` queries GitNexus anyway.
 `show` defaults to the authored project root. `show` and `context` do not reindex:
 run GitNexus first when code has changed. The `--reindex` convenience belongs to
 `compile`, `check`, `baseline` and `serve` only. Plain `--reindex` is incremental;

@@ -127,3 +127,7 @@ Add new entries at the end: what happened, why, and what to do.
 15. **`cargo test` does not rebuild `target/release`.** Real-repository checks
     use the release binary; run `cargo build --release` after every change, or
     an old binary rejects new config fields or shows old behavior.
+16. **Provider results are cached per index fingerprint.** A test whose fake
+    provider changes its answers (a different `ARCHGRAPH_FAKE_MODE`) while
+    `.gitnexus/meta.json` stays the same gets the previous run's cached
+    result. Pass `--no-cache`, or change `meta.json` as a real reindex would.

@@ -131,6 +131,39 @@ async fn an_index_rewritten_during_compilation_is_rejected() {
 }
 
 #[tokio::test]
+async fn cached_provider_results_give_the_same_ir_until_the_index_changes() {
+    let temp = repository();
+    let provider = InMemoryProvider {
+        edges: imports(),
+        fingerprints: std::sync::Arc::new(std::sync::Mutex::new(vec!["index-1".into()])),
+        ..Default::default()
+    };
+    let validated = config::parse(CONFIG).unwrap();
+    let options = compiler::CompileOptions {
+        reindex: None,
+        cache: Some(temp.path().join(".archgraph/cache/provider.json")),
+    };
+    let run = || compiler::compile_with(temp.path(), &validated, &provider, &options);
+    let queries = || provider.queries.load(std::sync::atomic::Ordering::Relaxed);
+    let fresh = run().await.unwrap();
+    let cached = run().await.unwrap();
+    assert!(!fresh.cached && cached.cached);
+    assert_eq!(queries(), 1);
+    assert_eq!(
+        serde_json::to_value(&fresh.ir).unwrap(),
+        serde_json::to_value(&cached.ir).unwrap()
+    );
+    *provider.fingerprints.lock().unwrap() = vec!["index-2".into()];
+    assert!(!run().await.unwrap().cached);
+    assert_eq!(queries(), 2);
+    // A provider that cannot identify its index is never cached.
+    provider.fingerprints.lock().unwrap().clear();
+    assert!(!run().await.unwrap().cached);
+    assert!(!run().await.unwrap().cached);
+    assert_eq!(queries(), 4);
+}
+
+#[tokio::test]
 async fn provider_failure_is_not_a_clean_graph() {
     let temp = repository();
     let provider = InMemoryProvider {

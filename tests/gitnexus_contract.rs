@@ -131,4 +131,23 @@ fn archgraph_reads_a_real_gitnexus_index() {
                 .ends_with(".md")),
         "a Markdown link survived as a dependency"
     );
+
+    // Queries must leave the index fingerprint alone, or the cache never hits.
+    let again = Command::new(env!("CARGO_BIN_EXE_archgraph"))
+        .args(["--root"])
+        .arg(&repo)
+        .arg("compile")
+        .env("HOME", &home)
+        .output()
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&again.stdout).contains("(cached: index unchanged)"),
+        "{}",
+        String::from_utf8_lossy(&again.stdout)
+    );
+    let cached_ir: Value = serde_json::from_str(
+        &std::fs::read_to_string(repo.join(".archgraph/architecture.ir.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ir, cached_ir, "the cache changed the IR");
 }

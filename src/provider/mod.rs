@@ -33,6 +33,12 @@ pub trait CodeGraphProvider: Send + Sync {
     async fn fingerprint(&self) -> Result<Option<String>> {
         Ok(None)
     }
+    /// What `info`, `dependency_edges` and `indexed_files` depend on besides
+    /// the index itself: queries, their parameters, the executable. With
+    /// `fingerprint` it keys the result cache; `None` disables caching.
+    fn query_identity(&self) -> Option<String> {
+        None
+    }
     async fn reindex(&self, _mode: ReindexMode) -> Result<()> {
         bail!("this code-graph provider does not support reindexing; index it externally before compiling")
     }
@@ -48,6 +54,8 @@ pub struct InMemoryProvider {
     pub fingerprints: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Files reported as indexed; `None` means the provider cannot list them.
     pub indexed: Option<Vec<String>>,
+    /// Number of `dependency_edges` calls, shared between clones.
+    pub queries: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 }
 #[async_trait]
 impl CodeGraphProvider for InMemoryProvider {
@@ -65,6 +73,8 @@ impl CodeGraphProvider for InMemoryProvider {
         if let Some(message) = &self.failure {
             bail!("{message}");
         }
+        self.queries
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(self.edges.clone())
     }
     async fn indexed_files(&self) -> Result<Option<Vec<String>>> {
@@ -77,6 +87,9 @@ impl CodeGraphProvider for InMemoryProvider {
             1 => sequence.first().cloned(),
             _ => Some(sequence.remove(0)),
         })
+    }
+    fn query_identity(&self) -> Option<String> {
+        Some("in-memory".into())
     }
     async fn reindex(&self, _mode: ReindexMode) -> Result<()> {
         if let Some(message) = &self.failure {

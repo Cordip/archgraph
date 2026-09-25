@@ -1,4 +1,5 @@
 use crate::{
+    cache::{self, Snapshot},
     config::{parent_id, ProviderConfig, ValidatedConfig},
     discovery, mapping,
     model::*,
@@ -14,6 +15,21 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
+#[derive(Debug, Default)]
+pub struct CompileOptions {
+    pub reindex: Option<ReindexMode>,
+    /// File for provider results kept between runs (see `cache`); `None`
+    /// always queries the provider.
+    pub cache: Option<PathBuf>,
+}
+
+#[derive(Debug)]
+pub struct Compiled {
+    pub ir: ArchitectureIr,
+    /// Provider results came from the cache: the index had not changed.
+    pub cached: bool,
+}
+
 /// No process APIs live here. Even reindexing goes through the provider contract.
 pub async fn compile(
     root: &Path,
@@ -21,15 +37,20 @@ pub async fn compile(
     provider: &dyn CodeGraphProvider,
     reindex: Option<ReindexMode>,
 ) -> Result<ArchitectureIr> {
-    let root = root
-        .canonicalize()
-        .context("cannot resolve repository root")?;
-    let discovered = discovery::discover(&root, validated)?;
-    let mapping::Memberships {
-        files,
-        mut diagnostics,
-    } = mapping::resolve(&discovered, validated)?;
-    if let Some(mode) = reindex {
+    let options = CompileOptions {
+        reindex,
+        cache: None,
+    };
+    Ok(compile_with(root, validated, provider, &options).await?.ir)
+}
+
+/// Reads everything the compiler needs from the provider, from the cache when
+/// the index is unchanged since it was written.
+async fn observe(
+    provider: &dyn CodeGraphProvider,
+    options: &CompileOptions,
+) -> Result<(Snapshot, bool)> {
+    if let Some(mode) = options.reindex {
         provider
             .reindex(mode)
             .await
@@ -39,15 +60,27 @@ pub async fn compile(
         .fingerprint()
         .await
         .context("cannot read the code-graph index identity")?;
-    let provider_info = provider
+    let cache_entry = options.cache.as_deref().and_then(|path| {
+        let key = cache::key(
+            index_before.as_deref(),
+            provider.query_identity().as_deref(),
+        )?;
+        Some((path, key))
+    });
+    if let Some((path, key)) = &cache_entry {
+        if let Some(snapshot) = cache::load(path, key) {
+            return Ok((snapshot, true));
+        }
+    }
+    let info = provider
         .info()
         .await
         .context("code-graph provider probe failed")?;
-    let provided = provider
+    let edges = provider
         .dependency_edges()
         .await
         .context("code-graph dependency query failed")?;
-    let indexed_paths = provider
+    let indexed_files = provider
         .indexed_files()
         .await
         .context("code-graph file query failed")?;
@@ -60,6 +93,42 @@ pub async fn compile(
     if index_before != index_after {
         bail!("the code-graph index changed while compiling (another `gitnexus analyze` ran, e.g. an auto-index service); rerun when indexing has finished");
     }
+    let snapshot = Snapshot {
+        info,
+        edges,
+        indexed_files,
+    };
+    if let Some((path, key)) = &cache_entry {
+        // A cache that cannot be written only costs speed on the next run.
+        if let Err(error) = cache::store(path, key, &snapshot) {
+            eprintln!("warning: {error:#}");
+        }
+    }
+    Ok((snapshot, false))
+}
+
+pub async fn compile_with(
+    root: &Path,
+    validated: &ValidatedConfig,
+    provider: &dyn CodeGraphProvider,
+    options: &CompileOptions,
+) -> Result<Compiled> {
+    let root = root
+        .canonicalize()
+        .context("cannot resolve repository root")?;
+    let discovered = discovery::discover(&root, validated)?;
+    let mapping::Memberships {
+        files,
+        mut diagnostics,
+    } = mapping::resolve(&discovered, validated)?;
+    let (
+        Snapshot {
+            info: provider_info,
+            edges: provided,
+            indexed_files: indexed_paths,
+        },
+        cached,
+    ) = observe(provider, options).await?;
     let provider_row_count = provided.len();
     let (observed, filtered_edge_count) =
         select_observations(provided, &validated.config.provider)?;
@@ -283,7 +352,7 @@ pub async fn compile(
         aggregated_architecture_edge_count: edges.len(),
         violation_count: violations.len(),
     };
-    Ok(ArchitectureIr {
+    let ir = ArchitectureIr {
         schema_version: 1,
         project: config.project.clone(),
         provider: provider_info,
@@ -296,7 +365,8 @@ pub async fn compile(
         diagnostics,
         stats,
         evidence_notice: EVIDENCE_NOTICE.into(),
-    })
+    };
+    Ok(Compiled { ir, cached })
 }
 
 /// Rule nodes that are mostly invisible to the provider, e.g. an unparsed
@@ -382,34 +452,41 @@ pub fn persist(root: &Path, ir: &ArchitectureIr) -> Result<PathBuf> {
     let destination = directory.join("architecture.ir.json");
     let mut bytes = serde_json::to_vec_pretty(ir).context("cannot serialize architecture IR")?;
     bytes.push(b'\n');
+    write_atomically(&destination, &bytes)?;
+    Ok(destination)
+}
+
+/// Readers never see a partial file: write a sibling temporary, then rename.
+pub fn write_atomically(destination: &Path, bytes: &[u8]) -> Result<()> {
     static NEXT_TEMPORARY: AtomicU64 = AtomicU64::new(0);
     let sequence = NEXT_TEMPORARY.fetch_add(1, Ordering::Relaxed);
-    let temporary = directory.join(format!(
-        "architecture.ir.{}.{sequence}.tmp",
-        std::process::id()
-    ));
+    let name = destination
+        .file_stem()
+        .context("destination has no file name")?
+        .to_string_lossy();
+    let temporary =
+        destination.with_file_name(format!("{name}.{}.{sequence}.tmp", std::process::id()));
     let mut created = false;
     let result = (|| -> Result<()> {
         let mut file = std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary)
             .with_context(|| format!("cannot create {}; remove a stale temporary file after checking no compile is running", temporary.display()))?;
         created = true;
-        file.write_all(&bytes)?;
+        file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
         // Windows rename cannot overwrite an existing file. Remove only after
         // complete serialization/write; a subsequent rename failure still errors.
         #[cfg(windows)]
         if destination.exists() {
-            std::fs::remove_file(&destination)?;
+            std::fs::remove_file(destination)?;
         }
-        std::fs::rename(&temporary, &destination)?;
+        std::fs::rename(&temporary, destination)?;
         Ok(())
     })();
     if result.is_err() && created {
         let _ = std::fs::remove_file(&temporary);
     }
-    result.with_context(|| format!("failed to persist {}", destination.display()))?;
-    Ok(destination)
+    result.with_context(|| format!("failed to persist {}", destination.display()))
 }
 
 #[cfg(test)]

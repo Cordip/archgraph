@@ -394,6 +394,17 @@ impl CodeGraphProvider for GitNexusCliProvider {
         Ok(Some(parts.join(";")))
     }
 
+    fn query_identity(&self) -> Option<String> {
+        // The query texts change whenever ArchGraph changes what it asks.
+        Some(format!(
+            "{}\n{PROBE}\n{}\n{}\n{:?}",
+            self.executable.to_string_lossy(),
+            edge_query(&self.edge_types, 0, self.page_size),
+            file_query(0, self.page_size),
+            self.repository
+        ))
+    }
+
     async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {
         self.paged(
             "dependency",

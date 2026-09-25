@@ -50,6 +50,10 @@ pub struct Cli {
     /// Architecture YAML, relative to repository root unless absolute.
     #[arg(long, global = true, default_value = "architecture.yaml")]
     pub config: PathBuf,
+    /// Query the provider even if its index is unchanged since the last run.
+    /// Results are otherwise reused from `.archgraph/cache/`.
+    #[arg(long, global = true)]
+    pub no_cache: bool,
     #[command(subcommand)]
     pub command: Commands,
 }
@@ -196,7 +200,12 @@ pub async fn run(cli: Cli) -> Result<u8> {
         | Commands::Serve { reindex, .. } => *reindex,
         _ => None,
     };
-    let ir = compiler::compile(&root, &validated, &provider, reindex).await?;
+    let options = compiler::CompileOptions {
+        reindex,
+        cache: (!cli.no_cache).then(|| root.join(".archgraph/cache/provider.json")),
+    };
+    let compiler::Compiled { ir, cached } =
+        compiler::compile_with(&root, &validated, &provider, &options).await?;
     let ir_path = compiler::persist(&root, &ir)?;
     for warning in &ir.diagnostics.warnings {
         eprintln!("warning: {warning}");
@@ -207,18 +216,19 @@ pub async fn run(cli: Cli) -> Result<u8> {
                 outln!(
                     "{}",
                     render::json::render(&serde_json::json!({
-                        "stats": ir.stats, "diagnostics": ir.diagnostics,
+                        "stats": ir.stats, "diagnostics": ir.diagnostics, "provider_cached": cached,
                         "ir_path": ir_path.to_string_lossy().replace('\\', "/"), "evidence_notice": ir.evidence_notice
                     }))?
                 );
             } else {
                 outln!(
-                    "Architecture compiled\n  architecture nodes:  {}\n  mapped files:        {}\n  unassigned files:    {}\n  ambiguous files:     {}\n  provider rows:       {}\n  filtered out:        {}\n  observed edges:      {}\n  resolved edges:      {}\n  architecture edges:  {}\n  violations:          {}\n\nIR: {}",
+                    "Architecture compiled\n  architecture nodes:  {}\n  mapped files:        {}\n  unassigned files:    {}\n  ambiguous files:     {}\n  provider rows:       {}{}\n  filtered out:        {}\n  observed edges:      {}\n  resolved edges:      {}\n  architecture edges:  {}\n  violations:          {}\n\nIR: {}",
                     ir.stats.architecture_node_count,
                     ir.stats.mapped_file_count,
                     ir.stats.unassigned_file_count,
                     ir.stats.ambiguous_file_count,
                     ir.stats.provider_row_count,
+                    if cached { " (cached: index unchanged)" } else { "" },
                     ir.stats.filtered_edge_count,
                     ir.stats.observed_edge_count,
                     ir.stats.resolved_edge_count,

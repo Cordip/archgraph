@@ -144,10 +144,69 @@ fn an_index_rewritten_while_compiling_fails_instead_of_mixing_graphs() {
     std::fs::create_dir(&index).unwrap();
     std::fs::write(index.join("meta.json"), "{}").unwrap();
     assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(2));
-    let output = fixture.run(&["check", "--json"], "index_rewrite");
+    // The fixture changes its answers without changing the index; a cached
+    // result would hide the rewrite.
+    let output = fixture.run(&["check", "--json", "--no-cache"], "index_rewrite");
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(String::from_utf8_lossy(&output.stderr).contains("index changed while compiling"));
+}
+
+#[test]
+fn provider_results_are_reused_until_the_index_changes() {
+    let fixture = Fixture::new();
+    let index = fixture.root.path().join(".gitnexus");
+    std::fs::create_dir(&index).unwrap();
+    std::fs::write(index.join("meta.json"), "{}").unwrap();
+    let queries = || {
+        fixture
+            .logs()
+            .iter()
+            .filter(|entry| entry["args"][0] == "cypher")
+            .count()
+    };
+    let first = fixture.run(&["compile"], "violation");
+    assert!(first.status.success());
+    let after_first = queries();
+    assert!(after_first > 0);
+    assert!(!String::from_utf8_lossy(&first.stdout).contains("cached"));
+    let ir = std::fs::read(fixture.root.path().join(".archgraph/architecture.ir.json")).unwrap();
+
+    let second = fixture.run(&["compile"], "violation");
+    assert!(String::from_utf8_lossy(&second.stdout).contains("(cached: index unchanged)"));
+    assert_eq!(
+        queries(),
+        after_first,
+        "an unchanged index was queried again"
+    );
+    let cached_ir =
+        std::fs::read(fixture.root.path().join(".archgraph/architecture.ir.json")).unwrap();
+    assert_eq!(ir, cached_ir, "the cache changed the IR");
+    // Configuration is not cached: a new rule applies to cached observations.
+    std::fs::write(
+        fixture.root.path().join("architecture.yaml"),
+        YAML.replace("to: app.b}", "to: app.c}"),
+    )
+    .unwrap();
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(0));
+    assert_eq!(queries(), after_first);
+    std::fs::write(fixture.root.path().join("architecture.yaml"), YAML).unwrap();
+
+    assert_eq!(
+        fixture
+            .run(&["check", "--no-cache"], "violation")
+            .status
+            .code(),
+        Some(2)
+    );
+    assert!(queries() > after_first);
+    let before_reindex = queries();
+    std::fs::write(index.join("meta.json"), "{\"reindexed\": true}").unwrap();
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(2));
+    assert!(
+        queries() > before_reindex,
+        "a changed index was not queried"
+    );
 }
 
 #[test]
