@@ -118,3 +118,6 @@ Add new entries at the end: what happened, why, and what to do.
     `journalctl --user -u gitnexus-auto-index` before blaming ArchGraph for
     nondeterminism. Registering a test clone (`gitnexus analyze`) puts it
     under the service's watch.
+15. **`cargo test` does not rebuild `target/release`.** Real-repository checks
+    use the release binary; run `cargo build --release` after every change, or
+    an old binary rejects new config fields or shows old behavior.

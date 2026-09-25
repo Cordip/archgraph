@@ -3,9 +3,6 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::BTreeMap};
 
 pub const EVIDENCE_LIMIT: usize = 20;
-/// Rules over subtrees where fewer files than this have any observed
-/// dependency get a coverage warning.
-pub const COVERAGE_WARNING_RATIO: f64 = 0.5;
 pub const EVIDENCE_NOTICE: &str = "Only observed dependencies are checked. No observed edge is not proof that no runtime dependency exists.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -211,10 +208,36 @@ pub struct CycleCut {
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Diagnostics {
+    /// Rule nodes below `policies.min_observed_ratio`.
+    #[serde(default)]
+    pub low_coverage: Vec<CoverageIssue>,
     pub unassigned_files: Vec<String>,
     pub ambiguous_files: BTreeMap<String, Vec<String>>,
     pub provider_anomalies: Vec<ProviderAnomaly>,
     pub warnings: Vec<String>,
+}
+
+/// A rule refers to a node whose files are mostly invisible to the provider.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct CoverageIssue {
+    pub rule_id: String,
+    pub node: String,
+    pub observed_files: usize,
+    pub total_files: usize,
+}
+
+impl std::fmt::Display for CoverageIssue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "rule `{}`: only {} of {} files under `{}` ({:.0}%) have any observed dependency; a passing check there is weak evidence",
+            self.rule_id,
+            self.observed_files,
+            self.total_files,
+            self.node,
+            100.0 * self.observed_files as f64 / self.total_files as f64
+        )
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

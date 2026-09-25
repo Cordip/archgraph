@@ -215,9 +215,13 @@ pub async fn compile(
         (&a.from, &a.to, &a.kind, a.origin).cmp(&(&b.from, &b.to, &b.kind, b.origin))
     });
     let violations = rules::evaluate(&config.rules, &resolved, EVIDENCE_LIMIT);
-    diagnostics
-        .warnings
-        .extend(coverage_warnings(&config.rules, &nodes));
+    diagnostics.low_coverage =
+        coverage_issues(&config.rules, &nodes, config.policies.min_observed_ratio);
+    if config.policies.low_coverage != crate::config::FilePolicy::Ignore {
+        diagnostics
+            .warnings
+            .extend(diagnostics.low_coverage.iter().map(ToString::to_string));
+    }
     diagnostics.warnings.sort();
     let stats = CompileStats {
         architecture_node_count: nodes.len(),
@@ -247,32 +251,32 @@ pub async fn compile(
     })
 }
 
-/// Warn when a rule's source or scope node is mostly invisible to the provider,
-/// e.g. an unparsed language or an unresolved import alias.
-fn coverage_warnings(
+/// Rule nodes that are mostly invisible to the provider, e.g. an unparsed
+/// language or unresolved import aliases.
+fn coverage_issues(
     rules: &[crate::config::RuleConfig],
     nodes: &BTreeMap<String, CompiledNode>,
-) -> Vec<String> {
-    let mut warnings = BTreeSet::new();
+    min_ratio: f64,
+) -> Vec<CoverageIssue> {
+    let mut issues = BTreeSet::new();
     for rule in rules {
         for reference in rule.references() {
             let Some(node) = nodes.get(reference) else {
                 continue;
             };
             let total = node.descendant_file_count;
-            if total == 0
-                || (node.observed_file_count as f64) >= COVERAGE_WARNING_RATIO * total as f64
-            {
+            if total == 0 || (node.observed_file_count as f64) >= min_ratio * total as f64 {
                 continue;
             }
-            warnings.insert(format!(
-                "rule `{}`: only {} of {} files under `{}` ({:.0}%) have any observed dependency; a passing check there is weak evidence",
-                rule.id(), node.observed_file_count, total, node.id,
-                100.0 * node.observed_file_count as f64 / total as f64
-            ));
+            issues.insert(CoverageIssue {
+                rule_id: rule.id().into(),
+                node: node.id.clone(),
+                observed_files: node.observed_file_count,
+                total_files: total,
+            });
         }
     }
-    warnings.into_iter().collect()
+    issues.into_iter().collect()
 }
 
 type FilePairKind = (String, String, String);
@@ -425,8 +429,11 @@ mod tests {
             node("app.a", 10, 1),
             node("app.b", 10, 10),
         ]);
-        let warnings = coverage_warnings(&config.config.rules, &nodes);
-        assert_eq!(warnings.len(), 1, "{warnings:?}");
-        assert!(warnings[0].contains("only 1 of 10 files under `app.a`"));
+        let issues = coverage_issues(&config.config.rules, &nodes, 0.5);
+        assert_eq!(issues.len(), 1, "{issues:?}");
+        assert!(issues[0]
+            .to_string()
+            .contains("only 1 of 10 files under `app.a`"));
+        assert_eq!(coverage_issues(&config.config.rules, &nodes, 0.05).len(), 0);
     }
 }

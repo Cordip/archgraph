@@ -151,6 +151,36 @@ fn an_index_rewritten_while_compiling_fails_instead_of_mixing_graphs() {
 }
 
 #[test]
+fn low_coverage_policy_error_makes_check_unverified() {
+    let fixture = Fixture::new();
+    let with_policy = |policy: &str| {
+        let yaml = YAML.replace(
+            "nodes:\n",
+            &format!("policies: {{low_coverage: {policy}, min_observed_ratio: 0.9}}\nnodes:\n"),
+        );
+        std::fs::write(fixture.root.path().join("architecture.yaml"), yaml).unwrap();
+    };
+    // app.a maps src/a.rs and src/a2.rs; only a.rs has an observed dependency.
+    with_policy("error");
+    let output = fixture.run(&["check"], "violation");
+    assert_eq!(output.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Not verified") && stdout.contains("only 1 of 2 files under `app.a`"),
+        "{stdout}"
+    );
+    let json: Value =
+        serde_json::from_slice(&fixture.run(&["check", "--json"], "violation").stdout).unwrap();
+    assert_eq!(json["coverage_failures"][0]["node"], "app.a");
+    assert_eq!(
+        fixture.run(&["check", "app.c"], "violation").status.code(),
+        Some(0)
+    );
+    with_policy("warn");
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(2));
+}
+
+#[test]
 fn closed_stdout_exits_quietly_instead_of_panicking() {
     let fixture = Fixture::new();
     let mut child = Command::new(env!("CARGO_BIN_EXE_archgraph"))

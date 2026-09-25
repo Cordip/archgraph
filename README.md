@@ -300,9 +300,14 @@ rows, observations and resolved observations.
 ### Observation coverage
 
 Every node records `observed_file_count`: descendant files with at least one
-resolved dependency. `show`, `context` and the UI display it. When fewer than
-half the files under a rule's node are observed, compilation warns that a
-passing check there is weak evidence. In zammad, 99% of the CoffeeScript UI
+resolved dependency. `show`, `context` and the UI display it. When a rule's
+node has fewer observed files than `policies.min_observed_ratio` (default
+0.5), the IR lists it in `diagnostics.low_coverage` and, by default
+(`policies.low_coverage: warn`), compilation warns that a passing check there
+is weak evidence. With `low_coverage: error`, `check` exits 1: unverified,
+which is neither clean nor a violation. Use it in CI once the provider sees
+the code well enough; on stock zammad it fails for six rule nodes. `ignore`
+silences the warning. In zammad, 99% of the CoffeeScript UI
 (a language GitNexus does not parse) and 96% of the Ruby GraphQL layer
 (constant references GitNexus could not resolve) had no observed dependency.
 Known provider gaps, their causes and workarounds are collected in

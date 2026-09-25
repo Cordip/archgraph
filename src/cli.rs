@@ -244,7 +244,26 @@ pub async fn run(cli: Cli) -> Result<u8> {
                 Some(comparison) => comparison.new.iter().map(|new| new.violation).collect(),
                 None => violations.clone(),
             };
-            let exit = check_exit_code(failing.len());
+            let coverage_failures: Vec<&crate::model::CoverageIssue> =
+                if validated.config.policies.low_coverage == config::FilePolicy::Error {
+                    ir.diagnostics
+                        .low_coverage
+                        .iter()
+                        .filter(|issue| {
+                            node.as_deref()
+                                .is_none_or(|id| config::overlaps(&issue.node, id))
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+            // Unverified is not clean: coverage failures take precedence over
+            // both a clean result and violations (exit 1, like other failures).
+            let exit = if coverage_failures.is_empty() {
+                check_exit_code(failing.len())
+            } else {
+                1
+            };
             let new_entries = |violation: &Violation| -> Option<&[BaselineEntry]> {
                 comparison.as_ref().and_then(|comparison| {
                     comparison
@@ -275,7 +294,8 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     "{}",
                     render::json::render(
                         &serde_json::json!({"node": node, "violation_count": failing.len(),
-                    "violations": reported, "baseline": baseline_json, "diagnostics": ir.diagnostics,
+                    "violations": reported, "baseline": baseline_json, "coverage_failures": coverage_failures,
+                    "diagnostics": ir.diagnostics,
                     "evidence_notice": ir.evidence_notice,
                     "ir_path": ir_path.to_string_lossy().replace('\\', "/")})
                     )?
@@ -302,7 +322,22 @@ pub async fn run(cli: Cli) -> Result<u8> {
                         None => print_violation(violation),
                     }
                 }
+                if !coverage_failures.is_empty() {
+                    outln!(
+                        "\nNot verified: coverage below policies.min_observed_ratio ({}):",
+                        validated.config.policies.min_observed_ratio
+                    );
+                    for issue in &coverage_failures {
+                        outln!("  {issue}");
+                    }
+                }
                 outln!("\n{}", ir.evidence_notice);
+            }
+            if !coverage_failures.is_empty() {
+                eprintln!(
+                    "error: {} rule node(s) are too sparsely observed to verify (policies.low_coverage: error)",
+                    coverage_failures.len()
+                );
             }
             Ok(exit)
         }

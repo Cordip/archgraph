@@ -115,13 +115,36 @@ pub enum AmbiguityPolicy {
     Error,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Policies {
     #[serde(default)]
     pub unassigned_files: FilePolicy,
     #[serde(default)]
     pub ambiguous_mapping: AmbiguityPolicy,
+    /// What to do when a rule's node has too few observed files: `warn`
+    /// (default), `ignore`, or `error` (check exits 1: unverified, not clean).
+    #[serde(default)]
+    pub low_coverage: FilePolicy,
+    /// Minimum share of a rule node's files that must have an observed
+    /// dependency for a passing check there to count.
+    #[serde(default = "default_min_observed_ratio")]
+    pub min_observed_ratio: f64,
+}
+
+fn default_min_observed_ratio() -> f64 {
+    0.5
+}
+
+impl Default for Policies {
+    fn default() -> Self {
+        Self {
+            unassigned_files: FilePolicy::default(),
+            ambiguous_mapping: AmbiguityPolicy::default(),
+            low_coverage: FilePolicy::default(),
+            min_observed_ratio: default_min_observed_ratio(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -335,6 +358,9 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     }
     if config.provider.page_size == 0 {
         bail!("provider.page_size must be greater than zero");
+    }
+    if !(0.0..=1.0).contains(&config.policies.min_observed_ratio) {
+        bail!("policies.min_observed_ratio must be between 0 and 1");
     }
     if config.provider.edge_types.is_empty() {
         bail!("provider.edge_types must list at least one relation type, e.g. [IMPORTS]");
