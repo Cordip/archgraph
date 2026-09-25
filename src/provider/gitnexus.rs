@@ -1,6 +1,6 @@
 use super::{
     markdown_table::{self, Table},
-    CodeGraphProvider,
+    CodeGraphProvider, ReindexMode,
 };
 use crate::{
     config::ProviderConfig,
@@ -413,9 +413,13 @@ impl CodeGraphProvider for GitNexusCliProvider {
         .map(Some)
     }
 
-    async fn reindex(&self) -> Result<()> {
+    async fn reindex(&self, mode: ReindexMode) -> Result<()> {
         let mut command = self.command();
         command.arg("analyze").arg(&self.root).arg("--index-only");
+        if mode == ReindexMode::Full {
+            // The parse cache replays import resolution for unchanged files.
+            command.args(["--force", "--no-parse-cache"]);
+        }
         // Indexing progress goes to stderr so --json stdout stays machine-readable.
         command
             .stdout(Stdio::from(std::io::stderr()))

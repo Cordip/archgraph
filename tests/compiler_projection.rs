@@ -58,7 +58,7 @@ async fn compile(root: &Path, edges: Vec<CodeEdge>) -> ArchitectureIr {
             failure: None,
             ..Default::default()
         },
-        false,
+        None,
     )
     .await
     .unwrap()
@@ -111,7 +111,7 @@ async fn an_index_rewritten_during_compilation_is_rejected() {
         temp.path(),
         &config::parse(CONFIG).unwrap(),
         &provider,
-        false,
+        None,
     )
     .await
     .unwrap_err();
@@ -124,7 +124,7 @@ async fn an_index_rewritten_during_compilation_is_rejected() {
         ..Default::default()
     };
     assert!(
-        compiler::compile(temp.path(), &config::parse(CONFIG).unwrap(), &stable, false)
+        compiler::compile(temp.path(), &config::parse(CONFIG).unwrap(), &stable, None)
             .await
             .is_ok()
     );
@@ -142,7 +142,7 @@ async fn provider_failure_is_not_a_clean_graph() {
         temp.path(),
         &config::parse(CONFIG).unwrap(),
         &provider,
-        false,
+        None,
     )
     .await;
     assert!(result.is_err());
@@ -289,7 +289,7 @@ async fn manual_edges_do_not_trigger_rules_even_with_imports_kind() {
     validated.config.edges[0].from = "app.domain".into();
     validated.config.edges[0].to = "app.persistence".into();
     validated.config.edges[0].kind = "IMPORTS".into();
-    let ir = compiler::compile(temp.path(), &validated, &InMemoryProvider::default(), false)
+    let ir = compiler::compile(temp.path(), &validated, &InMemoryProvider::default(), None)
         .await
         .unwrap();
     assert!(ir.violations.is_empty());
@@ -310,14 +310,9 @@ async fn scoped_check_matches_actual_owners_not_similarly_named_or_unaffected_de
         failure: None,
         ..Default::default()
     };
-    let ir = compiler::compile(
-        temp.path(),
-        &config::parse(&yaml).unwrap(),
-        &provider,
-        false,
-    )
-    .await
-    .unwrap();
+    let ir = compiler::compile(temp.path(), &config::parse(&yaml).unwrap(), &provider, None)
+        .await
+        .unwrap();
     assert_eq!(
         cli::matching_violations(&ir, Some("app.api"))
             .unwrap()

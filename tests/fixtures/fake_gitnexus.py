@@ -15,8 +15,10 @@ if args == ["--version"]:
     print("fixture-1.0")
     sys.exit(0)
 if args and args[0] == "analyze":
-    if len(args) != 3 or args[2] != "--index-only" or args[1] != os.getcwd():
+    if len(args) < 3 or args[2] != "--index-only" or args[1] != os.getcwd():
         sys.exit("unexpected analyze argv")
+    if args[3:] not in ([], ["--force", "--no-parse-cache"]):
+        sys.exit("unexpected analyze flags")
     print("fixture-index-progress")
     sys.exit(0)
 if not args or args[0] != "cypher" or len(args) not in (2, 4):

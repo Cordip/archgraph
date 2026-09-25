@@ -238,7 +238,10 @@ archgraph serve --reindex --port 7331 --host 127.0.0.1
 write `.archgraph/architecture.ir.json`. No command silently reuses stale IR.
 `show` defaults to the authored project root. `show` and `context` do not reindex:
 run GitNexus first when code has changed. The `--reindex` convenience belongs to
-`compile`, `check`, and `serve` only, and never requests a forced full rebuild.
+`compile`, `check`, `baseline` and `serve` only. Plain `--reindex` is incremental;
+`--reindex=full` forces a rebuild without the parse cache, which is needed after
+changing resolver configuration such as `package.json`, `tsconfig*.json` or
+workspace files (see [docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)).
 `serve` keeps an immutable snapshot until restarted.
 
 `compile` succeeds even when it finds violations. `check` exit codes are:
@@ -273,6 +276,7 @@ when null, the flag is omitted. Reindexing is precisely:
 
 ```text
 <configured executable> analyze <repository root> --index-only
+<configured executable> analyze <repository root> --index-only --force --no-parse-cache   # --reindex=full
 ```
 
 The adapter captures optional `--version` metadata, then probes

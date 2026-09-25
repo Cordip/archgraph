@@ -28,7 +28,9 @@ archgraph check <relevant-node>
 ```
 
 `archgraph check <relevant-node> --reindex` combines these operations and respects
-`GITNEXUS_BIN` / `provider.command`. It never forces a full rebuild.
+`GITNEXUS_BIN` / `provider.command`. It is incremental. After editing
+`package.json`, `tsconfig*.json` or workspace files, use `--reindex=full`:
+the incremental index keeps the old import resolution.
 
 Exit codes are part of the verification contract:
 

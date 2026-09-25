@@ -4,7 +4,7 @@ use crate::{
     model::{ArchitectureIr, Violation, EVIDENCE_LIMIT},
     paths::locate_repository,
     projection,
-    provider::gitnexus::GitNexusCliProvider,
+    provider::{gitnexus::GitNexusCliProvider, ReindexMode},
     render,
     rules::violation_touches,
     server,
@@ -66,9 +66,10 @@ pub enum Commands {
     },
     /// Compile fresh, write deterministic IR, and report counts (violations do not fail compile).
     Compile {
-        /// Run the configured provider's incremental analyze --index-only first.
-        #[arg(long)]
-        reindex: bool,
+        /// Refresh the provider index first: `--reindex` (incremental) or
+        /// `--reindex=full` (after package.json/tsconfig changes).
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "incremental")]
+        reindex: Option<ReindexMode>,
         #[arg(long)]
         json: bool,
     },
@@ -78,8 +79,10 @@ pub enum Commands {
     /// it count as violations.
     Check {
         node: Option<String>,
-        #[arg(long)]
-        reindex: bool,
+        /// Refresh the provider index first: `--reindex` (incremental) or
+        /// `--reindex=full` (after package.json/tsconfig changes).
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "incremental")]
+        reindex: Option<ReindexMode>,
         #[arg(long)]
         json: bool,
         /// Baseline file; default `<config stem>.baseline.json` next to the config.
@@ -92,8 +95,10 @@ pub enum Commands {
     /// Accept all current violations: write them to the baseline file so that
     /// `check` fails only on new ones. Commit the file; regenerate deliberately.
     Baseline {
-        #[arg(long)]
-        reindex: bool,
+        /// Refresh the provider index first: `--reindex` (incremental) or
+        /// `--reindex=full` (after package.json/tsconfig changes).
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "incremental")]
+        reindex: Option<ReindexMode>,
         #[arg(long)]
         baseline: Option<PathBuf>,
     },
@@ -113,8 +118,10 @@ pub enum Commands {
     },
     /// Compile once and serve a read-only focus UI. Restart to reload after edits.
     Serve {
-        #[arg(long)]
-        reindex: bool,
+        /// Refresh the provider index first: `--reindex` (incremental) or
+        /// `--reindex=full` (after package.json/tsconfig changes).
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "incremental")]
+        reindex: Option<ReindexMode>,
         /// Binding beyond loopback is explicit and exposes architecture metadata.
         #[arg(long, default_value = "127.0.0.1")]
         host: IpAddr,
@@ -187,7 +194,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
         | Commands::Check { reindex, .. }
         | Commands::Baseline { reindex, .. }
         | Commands::Serve { reindex, .. } => *reindex,
-        _ => false,
+        _ => None,
     };
     let ir = compiler::compile(&root, &validated, &provider, reindex).await?;
     let ir_path = compiler::persist(&root, &ir)?;

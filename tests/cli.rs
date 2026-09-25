@@ -388,3 +388,40 @@ fn reindex_is_incremental_repo_is_optional_and_progress_does_not_corrupt_json() 
         assert_eq!(query["args"][3], "repo with spaces; data not shell");
     }
 }
+
+#[test]
+fn full_reindex_rebuilds_and_the_flag_does_not_swallow_the_node() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["compile", "--reindex=full"], "clean");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let analyze = |logs: &[Value]| {
+        logs.iter()
+            .filter(|log| log["args"][0] == "analyze")
+            .map(|log| log["args"].as_array().unwrap()[3..].to_vec())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        analyze(&fixture.logs()),
+        vec![vec![
+            Value::from("--force"),
+            Value::from("--no-parse-cache")
+        ]]
+    );
+    // `--reindex` takes its value only with `=`, so `app.a` stays the node.
+    let scoped = fixture.run(&["check", "--reindex", "app.c"], "violation");
+    assert_eq!(
+        scoped.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&scoped.stderr)
+    );
+    assert_eq!(
+        analyze(&fixture.logs()).last().unwrap(),
+        &Vec::<Value>::new()
+    );
+}

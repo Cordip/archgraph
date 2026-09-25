@@ -61,8 +61,9 @@ resolution, when source files are unchanged. Changes to `package.json`,
 `tsconfig*.json` or workspace files do not invalidate it.
 
 **What to do.** After changing any resolver configuration, run
-`gitnexus analyze --index-only --force --no-parse-cache`. `archgraph --reindex`
-runs a plain incremental `analyze` and does not help here.
+`archgraph compile --reindex=full` (or `gitnexus analyze --index-only --force
+--no-parse-cache`). Plain `--reindex` runs the incremental `analyze` and does
+not help here.
 
 ## 3. Rails autoloading: Ruby dependencies are mostly not `IMPORTS`
 

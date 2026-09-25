@@ -6,6 +6,16 @@ use crate::model::{CodeEdge, ProviderInfo};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
 
+/// How to refresh the provider's index before compiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ReindexMode {
+    /// Reuse cached analysis for unchanged files (fast; the default).
+    Incremental,
+    /// Rebuild from scratch. Needed after changing resolver configuration
+    /// (package.json, tsconfig, workspace files), which the cache ignores.
+    Full,
+}
+
 #[async_trait]
 pub trait CodeGraphProvider: Send + Sync {
     /// Verify availability, indexing, and the expected query schema.
@@ -23,7 +33,7 @@ pub trait CodeGraphProvider: Send + Sync {
     async fn fingerprint(&self) -> Result<Option<String>> {
         Ok(None)
     }
-    async fn reindex(&self) -> Result<()> {
+    async fn reindex(&self, _mode: ReindexMode) -> Result<()> {
         bail!("this code-graph provider does not support reindexing; index it externally before compiling")
     }
 }
@@ -68,7 +78,7 @@ impl CodeGraphProvider for InMemoryProvider {
             _ => Some(sequence.remove(0)),
         })
     }
-    async fn reindex(&self) -> Result<()> {
+    async fn reindex(&self, _mode: ReindexMode) -> Result<()> {
         if let Some(message) = &self.failure {
             bail!("{message}");
         }

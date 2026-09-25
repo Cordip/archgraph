@@ -103,7 +103,8 @@ Add new entries at the end: what happened, why, and what to do.
 10. **Incremental `gitnexus analyze` ignores resolver configuration changes.**
     Its parse cache replays import resolution for unchanged source files, so
     edits to `package.json`, `tsconfig*.json` or workspace files have no effect.
-    Use `gitnexus analyze --index-only --force --no-parse-cache`.
+    Use `archgraph compile --reindex=full` (it runs
+    `gitnexus analyze --index-only --force --no-parse-cache`).
 11. **GitNexus resolves `#` imports only via a named, workspace-admitted
     package.** It never falls back to `tsconfig` `paths` for them. Read the
     GitNexus `dist/` source to find causes like this; do not guess from the

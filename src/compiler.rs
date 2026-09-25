@@ -3,7 +3,7 @@ use crate::{
     discovery, mapping,
     model::*,
     paths::provider_path,
-    provider::CodeGraphProvider,
+    provider::{CodeGraphProvider, ReindexMode},
     rules,
 };
 use anyhow::{bail, Context, Result};
@@ -19,7 +19,7 @@ pub async fn compile(
     root: &Path,
     validated: &ValidatedConfig,
     provider: &dyn CodeGraphProvider,
-    reindex: bool,
+    reindex: Option<ReindexMode>,
 ) -> Result<ArchitectureIr> {
     let root = root
         .canonicalize()
@@ -29,9 +29,9 @@ pub async fn compile(
         files,
         mut diagnostics,
     } = mapping::resolve(&discovered, validated)?;
-    if reindex {
+    if let Some(mode) = reindex {
         provider
-            .reindex()
+            .reindex(mode)
             .await
             .context("code-graph reindex failed")?;
     }
