@@ -721,6 +721,17 @@ infinite canvas, drawn like a drawing sheet:
   evidence. Both side panels collapse; on narrow screens they are drawers.
 - **Table** lists the level's entries file by file, grouped by directory, with
   dependency counts, a filter and other orders.
+- **Matrix** is a dependency structure matrix of the level: one row and one
+  column per entry, in the same order on both axes (the canvas's bands,
+  then its layers from upper to lower, by name within each, with a header
+  band for each), and in each cell the number of dependencies of the row's
+  entry on the column's. The tooltip lists the relation kinds; a violating
+  cell is red, and a cell below the diagonal (a dependency against the
+  layer order) has an amber corner. It uses the canvas's filters and
+  directory groups (double-click a group row to expand it). Hovering a
+  cell lights its row and column and the matching rows of the details
+  panel; clicking it shows the evidence. The matrix scrolls in its own
+  pane with sticky headers, so levels of a thousand entries stay usable.
 
 Selecting a node, edge or violation dims everything it is not connected to.
 Entries that take part in a violation get a red revision cloud, and each
@@ -782,6 +793,34 @@ browser; dragging a card on a board drops it into the nearest grid cell
 (swapping with the card there) and re-routes, and each mode remembers its
 own positions. The same input always gives the same routing.
 
+**Trunks.** Wires from several sibling entries (those inside the focus, or
+those outside it) into the same target merge into a trunk, like a cable
+harness, once three or more head the same way. Each source keeps a short
+branch in its own colour; the branches join the trunk near their sources (a
+dot marks each join), and the trunk carries them to the target with one
+arrowhead, wider where more wires share it. Its tag names the count and the
+target (`×27 → External packages`); zoomed far out it shows only the count.
+Hovering a trunk lights its wires and their entries, and clicking it lists
+them, each opening its evidence. If any of its wires violates a rule the
+trunk gets the red casing and the tag the number of violating wires. A
+trunk takes its wires' colour when they share one (always when colouring by
+target); otherwise it is neutral ink, and its tag carries a strip of the
+colours it carries. The boards keep their angles and track pitch: a trunk's
+wires share one port, one channel and one track per channel. Manual
+dependencies never merge.
+
+**Focus** (the button next to Colour, on by default): on a level with more
+than 60 drawn wires, every wire is faint until an entry, a wire or a legend
+row is pointed at or selected, and then only its wires are drawn at full
+strength. Violations stay strong. The setting is remembered with the mode
+and colouring.
+
+**Text size.** Card titles and wire labels keep a readable size on screen:
+below 100% they grow as the view zooms out, up to what a card can hold, and
+are refitted so that long names never overflow. Below 60% a card shows only
+its title, on up to two lines, and wire labels appear only on highlighted
+wires.
+
 Levels with more than 120 entries (zammad's leaves have up to 2,577 files)
 show their files as **directory groups**, about 30 per level: double-click a
 group (or its + button) to expand it in place into subdirectories and files,
@@ -802,7 +841,8 @@ frame; outside entries that only depend on it are drawn above the frame,
 others below. Levels with more than 60 entries, and directory groups, have
 no layers from the server; the UI layers them itself (cycles broken in entry
 order, then longest paths), with unconnected entries in a last row. Above 40
-edges, labels appear only on highlighted edges.
+edges, labels appear only on highlighted edges. Work planned for the UI is
+listed in [docs/ui-backlog.md](docs/ui-backlog.md).
 Mermaid is another renderer of the same projection,
 never an architecture source format.
 
