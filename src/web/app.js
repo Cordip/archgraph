@@ -1522,13 +1522,15 @@ function fitText(element, full, width, fromStart) {
   element.textContent = fitLine(element, full, width, fromStart);
 }
 // A title on up to two lines. It breaks after a separator (or before a
-// capital): where both lines fit, at the most even such break; otherwise
-// at the last one that fits, and the second line is cut to fit.
+// capital), leaving at least three characters on each line: where both
+// lines fit, at the most even such break; otherwise at the last one whose
+// first line fits, with the second cut to fit. Without such a break it
+// stays on one line, cut to fit.
 function twoLines(element, full, width, size) {
   const fits = (text) => { const measured = textWidth(element, text, size); return measured === null || measured <= width; };
   if (fits(full)) return [full];
   const breaks = [];
-  for (let at = 1; at < full.length; at++) {
+  for (let at = 3; at <= full.length - 3; at++) {
     if (/[_./\-\s]/.test(full[at - 1]) || (/[a-z0-9]/.test(full[at - 1]) && /[A-Z]/.test(full[at]))) breaks.push(at);
   }
   const both = breaks.filter((at) => fits(full.slice(0, at)) && fits(full.slice(at)));
@@ -1536,10 +1538,9 @@ function twoLines(element, full, width, size) {
     const at = both.reduce((best, at) => (Math.min(at, full.length - at) > Math.min(best, full.length - best) ? at : best));
     return [full.slice(0, at), full.slice(at)];
   }
-  let end = 1;
-  while (end < full.length && fits(full.slice(0, end + 1))) end++;
-  const at = breaks.filter((at) => at <= end && at > end * 0.55).pop() || end;
-  return [full.slice(0, at), fitLine(element, full.slice(at), width, false, size)];
+  const at = breaks.filter((at) => fits(full.slice(0, at))).pop();
+  if (at) return [full.slice(0, at), fitLine(element, full.slice(at), width, false, size)];
+  return [fitLine(element, full, width, false, size)];
 }
 
 // ---------------------------------------------------------------- text size

@@ -736,6 +736,12 @@ def main():
                 assert state["label"] >= 10.99 and state["labelShown"], (k, state)
             else:
                 assert not state["labelShown"], (k, state)
+        # A two-line title never strands a character or two on a line of its
+        # own: "composables/" one character too wide stays on one line, cut.
+        lines = page.evaluate("""() => { const t = document.querySelector('#graph .node-title');
+            return ['composables/', 'authentication/', 'test_solver_progress.py'].map((name) => twoLines(t, name, textWidth(t, name.slice(0, -1), 30) + 0.5, 30)); }""")
+        assert all(len(line) >= 3 for group in lines for line in group), lines
+        assert len(lines[0]) == 1 and lines[0][0].endswith("…") and lines[2] == ["test_solver_", "progress.py"], lines
         page.locator("#graph .node[data-id='file:w/a.ts']").hover()
         assert page.locator("#graph .edge.hover .edge-label").first.evaluate("e => getComputedStyle(e).display") != "none"
         page.mouse.move(0, 0)
