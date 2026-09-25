@@ -150,7 +150,19 @@ Rules evaluate observed relationships only:
 | --- | --- |
 | `deny_dependency` | Reject selected observed dependencies from the source to the target subtree. |
 | `allow_only` | Permit dependencies internal to the source subtree and to listed target subtrees; reject other selected outbound dependencies. |
-| `no_cycles` | Project to immediate children of `within`; report each strongly connected component containing at least two children. |
+| `no_cycles` | Project to immediate children of `within`; report each strongly connected component containing at least two children, with a suggested cut (below). |
+
+A cycle report alone does not say where to intervene, so each `no_cycles`
+violation also carries `layer_order` and `suggested_cuts`. The layer order puts
+the component's members from upper to lower so that as few observed
+dependencies as possible point upwards: a minimum-weight feedback arc set,
+weighted by observation count. It is exact for up to 16 members and uses the
+greedy Eades-Lin-Smyth heuristic above that. The upward dependencies are the
+suggested cut. `check` and `context` show evidence for the cut and summarize the
+other edges, and the UI draws cut edges dashed. On zammad's backend the cut is
+44 of 202 observations, mostly `lib -> models`. It is a starting point for
+review, not a verdict: the cheapest cut can be the wrong one if the authored
+layering intends otherwise.
 
 `edge_types` defaults to `[IMPORTS]`. The dependency rules default
 `include_descendants` to `true`. With `false`, source selection and listed

@@ -71,6 +71,9 @@ pub struct ProjectionEdge {
     #[serde(flatten)]
     pub edge: CompiledEdge,
     pub violation_rule_ids: Vec<String>,
+    /// `no_cycles` rules whose cheapest cut includes this dependency.
+    #[serde(default)]
+    pub suggested_cut_rule_ids: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +180,14 @@ type EdgeKey = (String, String, String);
 struct ViolationIndex {
     exact: BTreeMap<EdgeKey, BTreeSet<String>>,
     subtrees: BTreeMap<EdgeKey, BTreeSet<String>>,
+    cuts: BTreeMap<EdgeKey, BTreeSet<String>>,
+}
+
+/// Rules an observation violates, and rules whose suggested cut contains it.
+#[derive(Clone, Default)]
+struct EdgeMarks {
+    violations: BTreeSet<String>,
+    cuts: BTreeSet<String>,
 }
 impl ViolationIndex {
     fn new(violations: &[Violation]) -> Self {
@@ -188,23 +199,42 @@ impl ViolationIndex {
                 &mut result.exact
             };
             for edge in &violation.architecture_edges {
+                let key = (edge.from.clone(), edge.to.clone(), edge.kind.clone());
+                let cut = violation
+                    .suggested_cuts
+                    .iter()
+                    .any(|cut| cut.from == edge.from && cut.to == edge.to);
+                if cut {
+                    result
+                        .cuts
+                        .entry(key.clone())
+                        .or_default()
+                        .insert(violation.rule_id.clone());
+                }
                 table
-                    .entry((edge.from.clone(), edge.to.clone(), edge.kind.clone()))
+                    .entry(key)
                     .or_default()
                     .insert(violation.rule_id.clone());
             }
         }
         result
     }
-    fn matching(&self, edge: &ResolvedEdge) -> BTreeSet<String> {
+    fn matching(&self, edge: &ResolvedEdge) -> EdgeMarks {
         let key = (edge.from.clone(), edge.to.clone(), edge.kind.clone());
-        let mut found = self.exact.get(&key).cloned().unwrap_or_default();
+        let mut found = EdgeMarks {
+            violations: self.exact.get(&key).cloned().unwrap_or_default(),
+            cuts: BTreeSet::new(),
+        };
         let mut from = Some(edge.from.as_str());
         while let Some(a) = from {
             let mut to = Some(edge.to.as_str());
             while let Some(b) = to {
-                if let Some(ids) = self.subtrees.get(&(a.into(), b.into(), edge.kind.clone())) {
-                    found.extend(ids.iter().cloned());
+                let key = (a.to_owned(), b.to_owned(), edge.kind.clone());
+                if let Some(ids) = self.subtrees.get(&key) {
+                    found.violations.extend(ids.iter().cloned());
+                }
+                if let Some(ids) = self.cuts.get(&key) {
+                    found.cuts.extend(ids.iter().cloned());
                 }
                 to = parent_id(b);
             }
@@ -219,6 +249,7 @@ struct ProjectedAccumulator {
     observed: EvidenceAccumulator,
     manual: Vec<crate::config::ManualEdgeConfig>,
     violations: BTreeSet<String>,
+    cuts: BTreeSet<String>,
 }
 
 pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Result<Projection> {
@@ -231,7 +262,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         rules::evaluate(&ir.rules, &ir.resolved_edges, evidence_limit)
     };
     let index = ViolationIndex::new(&all_violations);
-    let mut rule_cache: BTreeMap<EdgeKey, BTreeSet<String>> = BTreeMap::new();
+    let mut rule_cache: BTreeMap<EdgeKey, EdgeMarks> = BTreeMap::new();
     let mut entries: BTreeMap<String, ProjectionNode> = BTreeMap::new();
     if focus.children.is_empty() {
         for path in &focus.direct_files {
@@ -261,12 +292,14 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         let to = representative(ir, focus, &edge.to, Some(&edge.evidence.to_file))?;
         let from_id = from.id.clone();
         let to_id = to.id.clone();
-        let rule_ids = rule_cache
+        let marks = rule_cache
             .entry((edge.from.clone(), edge.to.clone(), edge.kind.clone()))
             .or_insert_with(|| index.matching(edge));
         for entry in [from, to] {
             let entry = entries.entry(entry.id.clone()).or_insert(entry);
-            entry.violation_rule_ids.extend(rule_ids.iter().cloned());
+            entry
+                .violation_rule_ids
+                .extend(marks.violations.iter().cloned());
         }
         if from_id == to_id {
             continue;
@@ -275,7 +308,10 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
             .entry((from_id, to_id, edge.kind.clone(), EdgeOrigin::Observed))
             .or_default();
         accumulator.observed.add(&edge.evidence, evidence_limit);
-        accumulator.violations.extend(rule_ids.iter().cloned());
+        accumulator
+            .violations
+            .extend(marks.violations.iter().cloned());
+        accumulator.cuts.extend(marks.cuts.iter().cloned());
     }
     for edge in ir
         .edges
@@ -338,6 +374,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
             ProjectionEdge {
                 edge,
                 violation_rule_ids: aggregate.violations.into_iter().collect(),
+                suggested_cut_rule_ids: aggregate.cuts.into_iter().collect(),
             }
         })
         .collect();

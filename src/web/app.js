@@ -99,6 +99,7 @@ function showEdge(edge, element) {
   panel.append(html("p", edge.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence." : "Observed file dependencies from GitNexus."));
   if (edge.confidence_min !== null && edge.confidence_min !== undefined) panel.append(html("p", `Confidence range: ${edge.confidence_min}–${edge.confidence_max}`));
   if (edge.violation_rule_ids.length) panel.append(html("p", `⚠ ${edge.violation_rule_ids.join(", ")}`, "violation-badge"));
+  if ((edge.suggested_cut_rule_ids || []).length) panel.append(html("p", `✂ Suggested cut for ${edge.suggested_cut_rule_ids.join(", ")}: removing this upward dependency helps break the cycle at the lowest observed cost.`, "cut-badge"));
   for (const manual of edge.manual_edges || []) {
     panel.append(html("h3", manual.label || manual.id));
     panel.append(html("p", `${manual.from} → ${manual.to}`, "detail-id"));
@@ -111,10 +112,22 @@ function showViolation(violation) {
   const panel = detailsTitle(`⚠ ${violation.rule_id}`);
   panel.append(html("p", violation.message));
   if (violation.kind === "no_cycles") panel.append(html("p", "These nodes form a strongly connected component, not necessarily a cycle in the displayed order."));
-  for (const edge of violation.architecture_edges) {
+  const cuts = violation.suggested_cuts || [];
+  const isCut = (edge) => cuts.some((cut) => cut.from === edge.from && cut.to === edge.to);
+  if (cuts.length) {
+    panel.append(html("h3", "✂ Suggested cut"));
+    panel.append(html("p", `Layers, upper to lower: ${violation.layer_order.join(" > ")}`, "detail-id"));
+    for (const cut of cuts) panel.append(html("p", `${cut.from} → ${cut.to} × ${cut.count}`, "cut-badge"));
+  }
+  for (const edge of violation.architecture_edges.filter((edge) => !cuts.length || isCut(edge))) {
     panel.append(html("h3", `${edge.from} → ${edge.to}`));
     panel.append(html("p", `${edge.kind} × ${edge.count}`));
     addEvidence(panel, edge.evidence, edge.count);
+  }
+  const others = violation.architecture_edges.filter((edge) => cuts.length && !isCut(edge));
+  if (others.length) {
+    panel.append(html("h3", "Other dependencies in the cycle"));
+    for (const edge of others) panel.append(html("p", `${edge.from} → ${edge.to} · ${edge.kind} × ${edge.count}`, "detail-id"));
   }
 }
 function compact(value, length) {
@@ -183,13 +196,14 @@ function drawGraph(projection) {
     const start = boundaryPoint(from, control), end = boundaryPoint(to, control);
     const path = `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`;
     const violating = edge.violation_rule_ids.length > 0;
-    const group = svg("g", { class: `edge ${edge.origin}${violating ? " violating" : ""}`, tabindex: 0, role: "button",
+    const cut = (edge.suggested_cut_rule_ids || []).length > 0;
+    const group = svg("g", { class: `edge ${edge.origin}${violating ? " violating" : ""}${cut ? " cut" : ""}`, tabindex: 0, role: "button",
       "aria-label": `${displayEndpoint(edge.from)} to ${displayEndpoint(edge.to)}, ${edge.kind}, ${edge.count} ${edge.origin} relationships` });
     group.append(svg("path", { d: path, class: "edge-hit" }));
     group.append(svg("path", { d: path, class: "edge-line", "marker-end": `url(#${violating ? "arrow-error" : "arrow"})` }));
     const labelX = .25 * start.x + .5 * control.x + .25 * end.x;
     const labelY = .25 * start.y + .5 * control.y + .25 * end.y - 7;
-    const label = `${compact(edge.kind, 22)} × ${edge.count}${edge.origin === "manual" ? " manual" : ""}${violating ? " ⚠" : ""}`;
+    const label = `${compact(edge.kind, 22)} × ${edge.count}${edge.origin === "manual" ? " manual" : ""}${cut ? " ✂" : violating ? " ⚠" : ""}`;
     group.append(svg("text", { x: labelX, y: labelY, class: "edge-label" }, label));
     group.append(svg("title", {}, `${edge.kind} × ${edge.count}. Click for concrete evidence.`));
     group.addEventListener("click", () => showEdge(edge, group));

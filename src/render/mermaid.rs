@@ -39,6 +39,9 @@ pub fn render(projection: &Projection) -> String {
         if edge.origin == EdgeOrigin::Manual {
             text.push_str(" manual");
         }
+        if !projected.suggested_cut_rule_ids.is_empty() {
+            text.push_str(" CUT");
+        }
         if !projected.violation_rule_ids.is_empty() {
             text.push_str(" VIOLATION");
         }

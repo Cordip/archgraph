@@ -112,6 +112,20 @@ pub fn evaluate(rules: &[RuleConfig], edges: &[ResolvedEdge], limit: usize) -> V
                     }
                 }
                 for (index, participating) in groups {
+                    let mut weights: BTreeMap<(String, String), usize> = BTreeMap::new();
+                    for edge in &participating {
+                        *weights
+                            .entry((edge.from.clone(), edge.to.clone()))
+                            .or_default() += 1;
+                    }
+                    let layer_order = cheapest_layer_order(&components[index], &weights);
+                    let suggested_cuts = upward_dependencies(&layer_order, &weights);
+                    let cut_count: usize = suggested_cuts.iter().map(|cut| cut.count).sum();
+                    let cut_text = suggested_cuts
+                        .iter()
+                        .map(|cut| format!("{} -> {} x{}", cut.from, cut.to, cut.count))
+                        .collect::<Vec<_>>()
+                        .join(", ");
                     let architecture_edges =
                         aggregate_observed(participating.iter().copied(), limit);
                     let mut evidence = EvidenceAccumulator::default();
@@ -130,8 +144,8 @@ pub fn evaluate(rules: &[RuleConfig], edges: &[ResolvedEdge], limit: usize) -> V
                         rule_id: rule.id().into(), kind: rule.kind().into(), from: Some(within.clone()), to: None,
                         edge_kind: if edge_types.len() == 1 { Some(edge_types[0].clone()) } else { None },
                         nodes: components[index].clone(), affected_nodes: affected_nodes.into_iter().collect(), count: evidence.count,
-                        message: format!("cycle among immediate children of `{within}`: {}; {} observed dependencies participate (SCC, not an ordered cycle path)", components[index].join(", "), evidence.count),
-                        evidence: evidence.evidence, architecture_edges,
+                        message: format!("cycle among immediate children of `{within}`: {}; {} observed dependencies participate (SCC, not an ordered cycle path). Cheapest cut ({cut_count} of {}): {cut_text}; resulting layers, upper to lower: {}", components[index].join(", "), evidence.count, evidence.count, layer_order.join(" > ")),
+                        evidence: evidence.evidence, architecture_edges, layer_order, suggested_cuts,
                     });
                 }
             }
@@ -179,9 +193,138 @@ fn dependency_violations<'a>(
                 ),
                 evidence: edge.evidence.clone(),
                 architecture_edges: vec![edge],
+                layer_order: Vec::new(),
+                suggested_cuts: Vec::new(),
             }
         })
         .collect()
+}
+
+/// Orders SCC members from upper to lower layer, minimizing the observations
+/// that point upwards (a minimum-weight feedback arc set). Exact by dynamic
+/// programming over subsets up to `EXACT_ORDER_LIMIT` members, else the greedy
+/// Eades-Lin-Smyth heuristic. Ties resolve by node ID, so output is stable.
+pub fn cheapest_layer_order(
+    nodes: &[String],
+    weights: &BTreeMap<(String, String), usize>,
+) -> Vec<String> {
+    const EXACT_ORDER_LIMIT: usize = 16;
+    let mut nodes = nodes.to_vec();
+    nodes.sort();
+    let n = nodes.len();
+    let matrix: Vec<Vec<usize>> = (0..n)
+        .map(|a| {
+            (0..n)
+                .map(|b| {
+                    weights
+                        .get(&(nodes[a].clone(), nodes[b].clone()))
+                        .copied()
+                        .unwrap_or(0)
+                })
+                .collect()
+        })
+        .collect();
+    let order = if n <= EXACT_ORDER_LIMIT {
+        exact_order(&matrix)
+    } else {
+        greedy_order(&matrix)
+    };
+    order
+        .into_iter()
+        .map(|index| nodes[index].clone())
+        .collect()
+}
+
+fn exact_order(matrix: &[Vec<usize>]) -> Vec<usize> {
+    let n = matrix.len();
+    // best[mask]: cheapest cost of placing exactly `mask` as the upper layers.
+    // Appending v below them costs every dependency from v up into `mask`.
+    let full = (1usize << n) - 1;
+    let mut best = vec![usize::MAX; full + 1];
+    let mut last = vec![0usize; full + 1];
+    best[0] = 0;
+    for mask in 0..full {
+        if best[mask] == usize::MAX {
+            continue;
+        }
+        for v in (0..n).filter(|v| mask & (1 << v) == 0) {
+            let upward: usize = (0..n)
+                .filter(|u| mask & (1 << u) != 0)
+                .map(|u| matrix[v][u])
+                .sum();
+            let next = mask | (1 << v);
+            if best[mask] + upward < best[next] {
+                best[next] = best[mask] + upward;
+                last[next] = v;
+            }
+        }
+    }
+    let mut order = Vec::with_capacity(n);
+    let mut mask = full;
+    while mask != 0 {
+        order.push(last[mask]);
+        mask &= !(1 << last[mask]);
+    }
+    order.reverse();
+    order
+}
+
+fn greedy_order(matrix: &[Vec<usize>]) -> Vec<usize> {
+    let mut remaining: BTreeSet<usize> = (0..matrix.len()).collect();
+    let (mut upper, mut lower) = (Vec::new(), Vec::new());
+    let out = |v: usize, rest: &BTreeSet<usize>| rest.iter().map(|&u| matrix[v][u]).sum::<usize>();
+    let inn = |v: usize, rest: &BTreeSet<usize>| rest.iter().map(|&u| matrix[u][v]).sum::<usize>();
+    while !remaining.is_empty() {
+        let next = if let Some(&sink) = remaining.iter().find(|&&v| out(v, &remaining) == 0) {
+            lower.push(sink);
+            sink
+        } else if let Some(&source) = remaining.iter().find(|&&v| inn(v, &remaining) == 0) {
+            upper.push(source);
+            source
+        } else {
+            let pick = *remaining
+                .iter()
+                .max_by_key(|&&v| {
+                    let delta = out(v, &remaining) as i64 - inn(v, &remaining) as i64;
+                    (delta, std::cmp::Reverse(v))
+                })
+                .expect("remaining is nonempty");
+            upper.push(pick);
+            pick
+        };
+        remaining.remove(&next);
+    }
+    upper.extend(lower.into_iter().rev());
+    upper
+}
+
+/// Dependencies pointing from a lower to an upper layer of `order`.
+pub fn upward_dependencies(
+    order: &[String],
+    weights: &BTreeMap<(String, String), usize>,
+) -> Vec<CycleCut> {
+    let position: BTreeMap<&str, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect();
+    let mut cuts: Vec<CycleCut> = weights
+        .iter()
+        .filter(|((from, to), &count)| {
+            count > 0 && position.get(from.as_str()) > position.get(to.as_str())
+        })
+        .map(|((from, to), &count)| CycleCut {
+            from: from.clone(),
+            to: to.clone(),
+            count,
+        })
+        .collect();
+    cuts.sort_by(|a, b| {
+        b.count
+            .cmp(&a.count)
+            .then_with(|| (&a.from, &a.to).cmp(&(&b.from, &b.to)))
+    });
+    cuts
 }
 
 /// Iterative Kosaraju: O(V+E) traversal, no call-stack depth limit. Sorted input
@@ -357,5 +500,149 @@ mod tests {
             20
         )
         .is_empty());
+    }
+    fn weights(pairs: &[(&str, &str, usize)]) -> BTreeMap<(String, String), usize> {
+        pairs
+            .iter()
+            .map(|(a, b, w)| ((a.to_string(), b.to_string()), *w))
+            .collect()
+    }
+    fn upward_cost(order: &[String], weights: &BTreeMap<(String, String), usize>) -> usize {
+        upward_dependencies(order, weights)
+            .iter()
+            .map(|cut| cut.count)
+            .sum()
+    }
+    fn permutations(items: Vec<String>) -> Vec<Vec<String>> {
+        if items.len() <= 1 {
+            return vec![items];
+        }
+        let mut result = Vec::new();
+        for i in 0..items.len() {
+            let mut rest = items.clone();
+            let head = rest.remove(i);
+            for mut tail in permutations(rest) {
+                tail.insert(0, head.clone());
+                result.push(tail);
+            }
+        }
+        result
+    }
+    #[test]
+    fn cheapest_cut_keeps_the_heavy_direction() {
+        // Shaped like zammad's backend: models use lib heavily, lib uses models less.
+        let w = weights(&[
+            ("jobs", "lib", 13),
+            ("jobs", "models", 1),
+            ("lib", "models", 42),
+            ("models", "lib", 114),
+            ("models", "jobs", 1),
+            ("services", "lib", 24),
+            ("lib", "services", 1),
+        ]);
+        let nodes: Vec<String> = ["jobs", "lib", "models", "services"]
+            .map(String::from)
+            .to_vec();
+        let order = cheapest_layer_order(&nodes, &w);
+        let cuts = upward_dependencies(&order, &w);
+        assert_eq!(
+            cuts[0],
+            CycleCut {
+                from: "lib".into(),
+                to: "models".into(),
+                count: 42
+            }
+        );
+        assert_eq!(upward_cost(&order, &w), 44);
+    }
+    #[test]
+    fn exact_order_is_optimal_and_greedy_order_is_acyclic() {
+        // Deterministic pseudo-random dense graphs, checked against brute force.
+        let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
+        for size in 2..=6 {
+            let nodes: Vec<String> = (0..size).map(|i| format!("n{i}")).collect();
+            let mut pairs = Vec::new();
+            for a in &nodes {
+                for b in &nodes {
+                    if a != b {
+                        seed ^= seed << 13;
+                        seed ^= seed >> 7;
+                        seed ^= seed << 17;
+                        if !seed.is_multiple_of(3) {
+                            pairs.push((a.clone(), b.clone(), (seed % 50) as usize + 1));
+                        }
+                    }
+                }
+            }
+            let w: BTreeMap<_, _> = pairs.into_iter().map(|(a, b, c)| ((a, b), c)).collect();
+            let optimum = permutations(nodes.clone())
+                .iter()
+                .map(|order| upward_cost(order, &w))
+                .min()
+                .unwrap();
+            assert_eq!(
+                upward_cost(&cheapest_layer_order(&nodes, &w), &w),
+                optimum,
+                "size {size}"
+            );
+            let order: Vec<String> = greedy_order(
+                &(0..size)
+                    .map(|a| {
+                        (0..size)
+                            .map(|b| {
+                                w.get(&(nodes[a].clone(), nodes[b].clone()))
+                                    .copied()
+                                    .unwrap_or(0)
+                            })
+                            .collect()
+                    })
+                    .collect::<Vec<Vec<usize>>>(),
+            )
+            .into_iter()
+            .map(|i| nodes[i].clone())
+            .collect();
+            let mut rest = w.clone();
+            for cut in upward_dependencies(&order, &w) {
+                rest.remove(&(cut.from, cut.to));
+            }
+            let mut graph: BTreeMap<String, Vec<String>> =
+                nodes.iter().map(|n| (n.clone(), Vec::new())).collect();
+            for (a, b) in rest.keys() {
+                graph.get_mut(a).unwrap().push(b.clone());
+            }
+            assert!(strongly_connected_components(&graph)
+                .iter()
+                .all(|c| c.len() == 1));
+        }
+    }
+    #[test]
+    fn cycle_violation_names_the_cheapest_cut() {
+        let rule = RuleConfig::NoCycles {
+            id: "cycles".into(),
+            within: "app".into(),
+            edge_types: vec!["IMPORTS".into()],
+        };
+        let edges = vec![
+            edge("app.a.x", "app.b.y"),
+            edge("app.a.z", "app.b.y"),
+            edge("app.b.z", "app.a.y"),
+        ];
+        let found = evaluate(&[rule], &edges, 20);
+        assert_eq!(found[0].layer_order, ["app.a", "app.b"]);
+        assert_eq!(
+            found[0].suggested_cuts,
+            [CycleCut {
+                from: "app.b".into(),
+                to: "app.a".into(),
+                count: 1
+            }]
+        );
+        assert!(
+            found[0]
+                .message
+                .contains("Cheapest cut (1 of 3): app.b -> app.a x1"),
+            "{}",
+            found[0].message
+        );
     }
 }

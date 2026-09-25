@@ -49,6 +49,8 @@ p { line-height: 1.55; }
 .edge:hover .edge-line, .edge:focus .edge-line, .edge.selected .edge-line { stroke: #087d99; stroke-width: 3; }
 .edge-label { fill: #47627b; font-size: 10px; text-anchor: middle; paint-order: stroke; stroke: white; stroke-width: 5; stroke-linejoin: round; }
 .edge.violating .edge-label { fill: #ac3039; font-weight: 700; }
+.edge.cut .edge-line { stroke-width: 3.5; stroke-dasharray: 7 4; }
+.cut-badge { color: #8a1c22; background: #fde8e8; border-left: 3px solid #c84145; padding: 4px 8px; font-weight: 600; }
 .arrow { fill: #839aaf; }
 .arrow-error { fill: #c84145; }
 .graph-note { fill: #63768a; font-size: 12px; }

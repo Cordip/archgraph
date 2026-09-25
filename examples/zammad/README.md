@@ -59,7 +59,9 @@ code confirm the edges:
   and jobs call models back.
 
 `lib/` is therefore not a lower layer under `app/`; it is entangled with the
-domain model. `models-do-not-know-delivery` and `lib-does-not-know-delivery`
+domain model. The suggested cut makes this concrete. Removing 44 of the 202
+observations, `lib -> models` (42), `lib -> services` (1) and
+`models -> jobs` (1), leaves the layers `jobs > services > policies > models > lib`. `models-do-not-know-delivery` and `lib-does-not-know-delivery`
 pass, so no observed model or `lib` code calls REST controllers.
 
 One class of evidence is imprecise: `lib/knowledge_base/category/permission.rb`

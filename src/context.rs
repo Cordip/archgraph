@@ -200,7 +200,25 @@ pub fn markdown(context: &AgentContext) -> String {
             "### `{}`\n\n{}\n",
             violation.rule_id, violation.message
         );
+        if !violation.suggested_cuts.is_empty() {
+            let _ = writeln!(
+                out,
+                "Layers, upper to lower: {}. Removing these upward dependencies breaks the cycle with the fewest observed changes:\n",
+                violation.layer_order.join(" > ")
+            );
+            for cut in &violation.suggested_cuts {
+                let _ = writeln!(out, "- `{}` → `{}` × {}", cut.from, cut.to, cut.count);
+            }
+            out.push_str("\nEvidence for the suggested cut:\n\n");
+        }
         for edge in &violation.architecture_edges {
+            let is_cut = violation
+                .suggested_cuts
+                .iter()
+                .any(|cut| cut.from == edge.from && cut.to == edge.to);
+            if !violation.suggested_cuts.is_empty() && !is_cut {
+                continue;
+            }
             let _ = writeln!(
                 out,
                 "- `{}` → `{}` [{}] × {}",
@@ -226,7 +244,7 @@ fn append_edge(out: &mut String, projected: &ProjectionEdge) {
     let edge = &projected.edge;
     let _ = writeln!(
         out,
-        "- `{}` → `{}` [{}] × {}{}",
+        "- `{}` → `{}` [{}] × {}{}{}",
         edge.from,
         edge.to,
         edge.kind,
@@ -235,6 +253,14 @@ fn append_edge(out: &mut String, projected: &ProjectionEdge) {
             String::new()
         } else {
             format!(" [VIOLATION: {}]", projected.violation_rule_ids.join(", "))
+        },
+        if projected.suggested_cut_rule_ids.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " [SUGGESTED CUT: {}]",
+                projected.suggested_cut_rule_ids.join(", ")
+            )
         }
     );
     if edge.origin == crate::model::EdgeOrigin::Observed {

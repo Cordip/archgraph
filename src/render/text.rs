@@ -39,11 +39,16 @@ pub fn render(projection: &Projection) -> String {
         let edge = &projected.edge;
         let _ = writeln!(
             out,
-            "  {} -> {}  {} × {}{}{}",
+            "  {} -> {}  {} × {}{}{}{}",
             edge.from,
             edge.to,
             edge.kind,
             edge.count,
+            if projected.suggested_cut_rule_ids.is_empty() {
+                ""
+            } else {
+                " [SUGGESTED CUT]"
+            },
             if edge.origin == EdgeOrigin::Manual {
                 " [manual]"
             } else {

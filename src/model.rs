@@ -191,6 +191,22 @@ pub struct Violation {
     pub evidence: Vec<EdgeEvidence>,
     /// Every participating architecture edge, each with its own bounded sample.
     pub architecture_edges: Vec<CompiledEdge>,
+    /// `no_cycles` only: SCC members ordered from upper to lower layer so that
+    /// the fewest observations point upwards.
+    #[serde(default)]
+    pub layer_order: Vec<String>,
+    /// `no_cycles` only: the upward dependencies in `layer_order`. Removing them
+    /// breaks the cycle at the lowest observed cost; most significant first.
+    #[serde(default)]
+    pub suggested_cuts: Vec<CycleCut>,
+}
+
+/// One architecture-level dependency (all participating relation kinds).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CycleCut {
+    pub from: String,
+    pub to: String,
+    pub count: usize,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

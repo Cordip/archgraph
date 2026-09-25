@@ -200,11 +200,34 @@ pub async fn run(cli: Cli) -> Result<u8> {
                 println!("{} matching architecture violation(s)", violations.len());
                 for violation in violations {
                     println!("\n[{}] {}", violation.rule_id, violation.message);
-                    for edge in &violation.architecture_edges {
+                    let is_cut = |from: &str, to: &str| {
+                        violation
+                            .suggested_cuts
+                            .iter()
+                            .any(|cut| cut.from == from && cut.to == to)
+                    };
+                    if !violation.suggested_cuts.is_empty() {
+                        println!("  Suggested cut, most significant first:");
+                        for cut in &violation.suggested_cuts {
+                            println!("    {} -> {} × {}", cut.from, cut.to, cut.count);
+                        }
                         println!(
-                            "  {} -> {} [{}] × {}",
-                            edge.from, edge.to, edge.kind, edge.count
+                            "  Evidence for the suggested cut; other cycle edges are summarized:"
                         );
+                    }
+                    for edge in &violation.architecture_edges {
+                        let cut = is_cut(&edge.from, &edge.to);
+                        println!(
+                            "  {} -> {} [{}] × {}{}",
+                            edge.from,
+                            edge.to,
+                            edge.kind,
+                            edge.count,
+                            if cut { " [CUT]" } else { "" }
+                        );
+                        if !violation.suggested_cuts.is_empty() && !cut {
+                            continue;
+                        }
                         for evidence in &edge.evidence {
                             println!("    {} -> {}", evidence.from_file, evidence.to_file);
                         }
