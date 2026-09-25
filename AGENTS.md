@@ -131,3 +131,10 @@ Add new entries at the end: what happened, why, and what to do.
     provider changes its answers (a different `ARCHGRAPH_FAKE_MODE`) while
     `.gitnexus/meta.json` stays the same gets the previous run's cached
     result. Pass `--no-cache`, or change `meta.json` as a real reindex would.
+17. **Reproduce a provider failure before explaining it.** A zammad compile
+    failed with "row 2056 has empty/null source or target" while the
+    auto-index service happened to be running, and was first blamed on a
+    torn read. The same row failed again with the service idle: GitNexus had
+    stored symbols without a file path (docs, section 9). Rerun the failing
+    query directly with `gitnexus cypher` when indexing is idle, and look at
+    the offending rows, before writing down a cause.

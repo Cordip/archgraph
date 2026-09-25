@@ -75,9 +75,15 @@ pub fn parse_edge_page(stdout: &str) -> Result<Vec<CodeEdge>> {
     let reason = page.table.optional_column("reason");
     let mut edges = Vec::with_capacity(page.row_count);
     for (index, row) in page.table.rows.iter().enumerate() {
-        if !present(&row[source]) || !present(&row[target]) {
+        // `IS NOT NULL` in the query rules out nulls. An empty path is a
+        // symbol GitNexus stored without a file (seen in zammad); the compiler
+        // reports such an edge as an anomaly instead of failing the whole run.
+        if [source, target]
+            .iter()
+            .any(|&column| row[column].eq_ignore_ascii_case("null"))
+        {
             return Err(compatibility(format!(
-                "row {} has empty/null source or target",
+                "row {} has a null source or target",
                 index + 1
             )));
         }
@@ -477,6 +483,15 @@ mod tests {
         ] {
             assert!(parse_edge_page(output).is_err(), "accepted {output:?}");
         }
+    }
+    #[test]
+    fn an_empty_endpoint_is_passed_on_for_the_compiler_to_report() {
+        let output = serde_json::json!({"markdown":"| source | target |\n| --- | --- |\n| a.ts |  |", "row_count": 1});
+        let edges = parse_edge_page(&output.to_string()).unwrap();
+        assert_eq!(
+            (edges[0].from_file.as_str(), edges[0].to_file.as_str()),
+            ("a.ts", "")
+        );
     }
     #[test]
     fn columns_can_be_reordered_and_optional_columns_omitted() {

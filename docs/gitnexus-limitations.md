@@ -113,10 +113,11 @@ in between, for example an auto-index service reacting to file changes, the
 pages mix two graphs. On the validation machine this made two identical runs
 disagree. ArchGraph compares the size and modification time of the index
 (`meta.json`, `lbug`) before and after querying and fails with "index changed
-while compiling" instead of reporting the mix. A half-written index can also
-return malformed rows (seen on zammad: a row with an empty source); when a
-query fails and the index changed meanwhile, the same error is reported, with
-the query failure as its cause, instead of blaming GitNexus compatibility. Rerun when indexing has
+while compiling" instead of reporting the mix. When a query fails outright and
+the index changed meanwhile, the same error is reported, with the query
+failure as its cause, instead of blaming GitNexus compatibility. This is a
+precaution; it has not been observed. (An empty-path failure on zammad first
+looked like such a torn read, but was the defect in section 9.) Rerun when indexing has
 finished. Writing `.archgraph/` inside the repository is itself a file change
 such a service may react to.
 
@@ -136,6 +137,27 @@ files without dependencies. A source directory that happens to be called
 `cache` or `log` disappears the same way. To index such a directory, add a
 negation to `.gitnexusignore` in the analyzed repository, e.g. `!__tests__/`,
 and reindex with `--force`.
+
+## 9. Incremental indexing can leave symbols without a file path
+
+**Symptom.** After a few incremental `analyze` runs on zammad in which files
+had changed (a file moved and moved back), dependency queries returned rows
+with an empty target, and ArchGraph failed with "row 2056 has empty/null
+source or target".
+
+**Cause.** The index then held nodes whose `filePath` is the empty string
+(not null), although their ID still names the file, e.g.
+`Const:app/frontend/.../KnowledgeBaseAnswerTopBarHeader.vue:router`. At worst
+about 1,600 relations touched such nodes, five of them `CALLS` between
+different files. `WHERE ... IS NOT NULL` does not exclude an empty string.
+A forced rebuild (`--force --no-parse-cache`) left zero such nodes, and a
+later incremental sweep that changed nothing kept it at zero; moving one file
+and back with plain incremental `analyze` produced one again.
+
+**What ArchGraph does.** Such an edge is reported as a provider anomaly
+("provider returned an empty file path") with a warning pointing here, and
+the rest of the graph compiles. The file is not guessed from the node ID.
+Run `archgraph compile --reindex=full` to clear them.
 
 ## ArchGraph-side limitations
 

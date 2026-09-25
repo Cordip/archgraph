@@ -156,7 +156,10 @@ fn an_index_rewritten_while_compiling_fails_instead_of_mixing_graphs() {
     assert_eq!(output.status.code(), Some(1));
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("index changed while compiling"), "{stderr}");
-    assert!(stderr.contains("empty/null source or target"), "{stderr}");
+    assert!(
+        stderr.contains("unsupported GitNexus cypher output"),
+        "{stderr}"
+    );
 }
 
 #[test]

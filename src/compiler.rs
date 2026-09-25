@@ -233,6 +233,15 @@ pub async fn compile_with(
     if !diagnostics.provider_anomalies.is_empty() {
         let count: usize = diagnostics.provider_anomalies.iter().map(|a| a.count).sum();
         diagnostics.warnings.push(format!("{count} provider edge(s) could not be mapped; inspect diagnostics.provider_anomalies in the IR"));
+        let fileless: usize = diagnostics
+            .provider_anomalies
+            .iter()
+            .filter(|anomaly| anomaly.from_file.is_empty() || anomaly.to_file.is_empty())
+            .map(|anomaly| anomaly.count)
+            .sum();
+        if fileless > 0 {
+            diagnostics.warnings.push(format!("{fileless} provider edge(s) involve symbols stored without a file path, which incremental GitNexus indexing can leave behind; `--reindex=full` rebuilds the index (see docs/gitnexus-limitations.md)"));
+        }
     }
     diagnostics.warnings.sort();
     let config = &validated.config;
