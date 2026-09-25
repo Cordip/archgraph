@@ -751,6 +751,37 @@ with some such files shows the ring with their number, and its details offer
 Search results, the table (a Usage column, "No observed users first") and
 the level's facts show the same status.
 
+**Wires.** The tools next to Filters choose how dependencies are drawn:
+
+- **Curves** (the default): smooth curves between rows, as described below.
+- **PCB**: a circuit board. Cards sit on a grid; traces run only
+  horizontally, vertically or at 45° (chamfered corners), each on its own
+  track at a 12 px pitch in the channels between rows and columns, ordered
+  to avoid crossings. Ports are spread along the card edges, a channel
+  widens when it needs more tracks, and where a crossing is unavoidable the
+  horizontal trace hops over the other; every trace also cuts a small gap
+  into the traces it crosses. A via marks where each trace starts.
+- **Hex**: a hexagonal board. Cards are hexagonal plates (the text stays
+  horizontal) in rows offset by half a slot, like honeycomb cells; traces run
+  at 0°, 60° and 120° along the horizontal channels and through the 60° gaps
+  between plates, with the same tracks, hops and gaps. A level where more
+  than 40 traces would cross one gap is drawn as the PCB board instead, and
+  the legend says so.
+
+**Colour** gives each wire a colour: by **source** (the default: every entry
+with outgoing dependencies is a net, and all its wires share its colour,
+also shown as a tab on its card), by **relation kind** (an edge of several
+kinds is drawn as a bus of strands, one per kind), by **target**, or
+**none**. The six hues are the colour-blind-safe Okabe–Ito set, tuned for
+the light sheet and the dark blueprint; past six nets they repeat with a
+dash pattern. Violations keep a red casing around the wire's colour and
+suggested cuts stay dashed. A legend in the top-right corner lists the
+colours (hovering a row lights its wires), and the details panel shows each
+dependency's wire sample. The mode and colouring are remembered in the
+browser; dragging a card on a board drops it into the nearest grid cell
+(swapping with the card there) and re-routes, and each mode remembers its
+own positions. The same input always gives the same routing.
+
 Levels with more than 120 entries (zammad's leaves have up to 2,577 files)
 show their files as **directory groups**, about 30 per level: double-click a
 group (or its + button) to expand it in place into subdirectories and files,

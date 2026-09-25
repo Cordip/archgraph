@@ -11,6 +11,7 @@ Playwright's own Chromium is used.
 from copy import deepcopy
 import json
 import os
+import math
 from pathlib import Path
 import re
 
@@ -137,6 +138,62 @@ META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"pro
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
 
+def wires_projection():
+    """A level with fan-out, skipped rows, an upward edge and two kinds on one edge."""
+    files = [f"w/{name}.ts" for name in "abcdefg"]
+    pairs = [("a", "b"), ("a", "c"), ("a", "d"), ("a", "g"), ("b", "e"), ("c", "e"), ("c", "f"),
+             ("d", "f"), ("e", "g"), ("f", "g"), ("g", "a"), ("d", "e")]
+    edges = [{**edge(f"file:w/{a}.ts", f"file:w/{b}.ts"), "violation_rule_ids": []} for a, b in pairs]
+    edges.append({**edge("file:w/a.ts", "file:w/b.ts", kind="CALLS"), "violation_rule_ids": []})
+    return {"focus": {**NODES["app.big"], "id": "app.wires", "title": "Wires"}, "breadcrumbs": [NODES["app"]],
+            "nodes": [{**entry("app.big", file=f), "violation_rule_ids": []} for f in files],
+            "edges": edges, "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []}
+
+
+# Segments of every drawn wire, from the path data (boards draw only M and L).
+SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line')].map((line) => {
+    const numbers = line.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
+    const points = [];
+    for (let i = 0; i + 1 < numbers.length; i += 2) points.push([numbers[i], numbers[i + 1]]);
+    return points;
+})"""
+
+
+def angles_ok(page, step):
+    bad = []
+    for points in page.evaluate(SEGMENTS):
+        for (x1, y1), (x2, y2) in zip(points, points[1:]):
+            if abs(x2 - x1) + abs(y2 - y1) < 0.5:
+                continue
+            angle = math.degrees(math.atan2(y2 - y1, x2 - x1)) % 180
+            off = min(angle % step, step - angle % step)
+            # Points are rounded to 0.1 px: short hop ramps may be off by a degree.
+            if off > (2.5 if math.hypot(x2 - x1, y2 - y1) < 12 else 0.6):
+                bad.append(((x1, y1), (x2, y2), angle))
+    return bad
+
+
+def spacing_problems(page, pitch):
+    """Pairs of parallel horizontal or vertical runs of different wires closer than the pitch."""
+    cores = page.evaluate("() => scene.edgeEls.map((item) => item.core)")
+    runs = []
+    for index, core in enumerate(cores):
+        for (x1, y1), (x2, y2) in zip([(p["x"], p["y"]) for p in core], [(p["x"], p["y"]) for p in core[1:]]):
+            if abs(y1 - y2) < 0.01 and abs(x2 - x1) > 0.5:
+                runs.append((index, "h", y1, min(x1, x2), max(x1, x2)))
+            elif abs(x1 - x2) < 0.01 and abs(y2 - y1) > 0.5:
+                runs.append((index, "v", x1, min(y1, y2), max(y1, y2)))
+    problems = []
+    for i, a in enumerate(runs):
+        for b in runs[i + 1:]:
+            if a[0] == b[0] or a[1] != b[1]:
+                continue
+            overlap = min(a[4], b[4]) - max(a[3], b[3])
+            if overlap > 1 and abs(a[2] - b[2]) < pitch - 0.5:
+                problems.append((a, b))
+    return problems
+
+
 def camera(page):
     """The canvas camera as (x, y, k), parsed from the #graph transform."""
     numbers = [float(n) for n in re.findall(r"-?[\d.]+", page.locator("#graph").get_attribute("transform"))]
@@ -181,6 +238,7 @@ def main():
             };
         })()
         """)
+        page.add_script_tag(content=(ROOT / "src/web/board.js").read_text())
         page.add_script_tag(content=(ROOT / "src/web/app.js").read_text())
         page.wait_for_function("document.getElementById('focus-title').textContent === 'Application'")
         assert page.locator("#graph .node").count() == 3
@@ -207,7 +265,7 @@ def main():
         assert "<img src=x" in page.locator("#details").inner_text()
         assert page.locator("#details img").count() == 0
         assert page.evaluate("window.__injected") is None
-        assert page.locator("script").count() == 1
+        assert page.locator("script").count() == 2
         checks.append("edge evidence and hostile provider text rendered without HTML execution")
 
         # The canvas is one tab stop: arrow keys move between entries, Enter
@@ -510,6 +568,82 @@ def main():
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         checks.append("usage: entry-point and no-observed-users marks on cards (calm, not red, in light and dark), details notes, node-level candidate, filter, table column and sort, search status")
+
+        # Wires: colours, a bus of strands per relation kind, and the two
+        # board modes with their angles, tracks and re-routing after a drag.
+        page.evaluate("(p) => { window.__fixture.projections['app.wires'] = p; }", wires_projection())
+        page.evaluate("loadFocus('app.wires')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.wires'")
+        strokes = page.evaluate("() => scene.edgeEls.map((item) => [item.edge.from, item.edge.to, getComputedStyle(item.line).stroke + ' ' + getComputedStyle(item.line).strokeDasharray])")
+        # Seven sources on six hues: the seventh repeats a hue with a dash pattern.
+        by_source = {}
+        for source, _, stroke in strokes:
+            by_source.setdefault(source, set()).add(stroke)
+        assert all(len(colours) == 1 for colours in by_source.values()), by_source
+        firsts = [next(iter(colours)) for colours in by_source.values()]
+        assert len(set(firsts)) == len(firsts) == 7, by_source
+        assert page.locator("#legend .legend-row").count() == 7
+        assert page.locator("#legend .legend-row").first.get_attribute("aria-label").startswith("Wires from ")
+        page.locator("#graph .node[data-id='file:w/a.ts']").click()
+        assert page.locator("#details .dependency .swatch").count() == 5
+        page.keyboard.press("Escape")
+        page.locator("#colour-by").select_option("kind")
+        strands = page.evaluate("() => scene.edgeEls.filter((item) => item.strands.length).map((item) => [item.edge.from, item.strands.map((s) => getComputedStyle(s).stroke)])")
+        assert len(strands) == 1 and strands[0][0] == "file:w/a.ts" and len(set(strands[0][1])) == 2, strands
+        page.locator("#colour-by").select_option("target")
+        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1'))") == {"mode": "curves", "colour": "target"}
+        page.locator("#colour-by").select_option("source")
+        checks.append("wires coloured by source (one colour per entry, all its outgoing wires share it), legend and details swatches, kind colouring with a bus of strands")
+
+        page.locator("#mode-pcb").click()
+        assert page.locator("#mode-pcb").get_attribute("aria-pressed") == "true"
+        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1')).mode") == "pcb"
+        assert page.locator("#graph.mode-pcb").count() == 1
+        assert not angles_ok(page, 45), angles_ok(page, 45)
+        assert not spacing_problems(page, 12), spacing_problems(page, 12)
+        # Deterministic: drawing again gives the same traces.
+        first = page.evaluate(SEGMENTS)
+        page.evaluate("redraw()")
+        assert page.evaluate(SEGMENTS) == first
+        # Dragging a card one column over drops it on the grid and re-routes.
+        card = page.locator("#graph .node[data-id='file:w/d.ts']")
+        before = card.get_attribute("transform")
+        box = card.bounding_box()
+        page.mouse.move(box["x"] + 30, box["y"] + 20)
+        page.mouse.down()
+        page.mouse.move(box["x"] + 30 + box["width"] * 1.2, box["y"] + 20, steps=8)
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        assert card.get_attribute("transform") != before
+        assert page.evaluate(SEGMENTS) != first
+        assert not angles_ok(page, 45) and not spacing_problems(page, 12)
+        assert page.evaluate("Object.keys(localStorage).some(k => k.startsWith('archgraph.layout-pcb.v1:Browser fixture:app.wires'))")
+        page.locator("#reset-layout").click()
+        page.wait_for_timeout(500)
+        assert page.evaluate(SEGMENTS) == first
+        checks.append("PCB mode: every segment at a multiple of 45°, parallel traces at least a pitch apart, deterministic routing, a dragged card snaps to the grid and re-routes, positions stored per mode")
+
+        page.locator("#mode-hex").click()
+        assert page.locator("#graph.mode-hex").count() == 1
+        assert not angles_ok(page, 60), angles_ok(page, 60)
+        assert page.locator("#graph .node .box").first.evaluate("e => e.tagName") == "path"
+        checks.append("Hex mode: hexagonal cards, every segment at a multiple of 60°")
+
+        # A violation stays red over any wire colour, in every mode.
+        page.evaluate("loadFocus('app')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
+        for mode in ("curves", "pcb", "hex"):
+            page.locator(f"#mode-{mode}").click()
+            casing = page.locator("#graph .edge.violating .edge-casing").first.evaluate("e => getComputedStyle(e).stroke")
+            core = page.locator("#graph .edge.violating .edge-line").first.evaluate("e => getComputedStyle(e).stroke")
+            assert casing == "rgb(196, 34, 27)" and core != casing, (mode, casing, core)
+        page.locator("#colour-by").select_option("none")
+        assert page.locator("#graph .edge.violating .edge-line").first.evaluate("e => getComputedStyle(e).stroke") == "rgb(196, 34, 27)"
+        page.locator("#colour-by").select_option("source")
+        page.locator("#mode-curves").click()
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
+        checks.append("violations keep a red casing over the wire colour in curves, PCB and Hex, and turn red with colouring off")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.

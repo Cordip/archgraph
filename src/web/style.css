@@ -35,6 +35,14 @@
   --idle-soft: #f1ecf8;
   --outside: #f1f4f6;
   --shadow: #c9d2da;
+  /* Wire nets: Okabe–Ito hues, darkened to 3:1 or more on the light sheet.
+     Vermillion is left out (red means a violation), black too (the ink). */
+  --n0: #0072b2;
+  --n1: #c47a00;
+  --n2: #008f68;
+  --n3: #b8568f;
+  --n4: #2b8fcc;
+  --n5: #8a7c00;
   --side-w: 272px;
   --insp-w: 360px;
 }
@@ -66,6 +74,13 @@
     --idle-soft: #251c3b;
     --outside: #0c1a29;
     --shadow: #030a12;
+    /* The same hues, lightened for the blueprint. */
+    --n0: #6f95ff;
+    --n1: #e69f00;
+    --n2: #2dbe8c;
+    --n3: #e48cc2;
+    --n4: #56ccf2;
+    --n5: #eee04a;
   }
 }
 * { box-sizing: border-box; }
@@ -167,7 +182,7 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .grid-minor { fill: none; stroke: var(--grid); stroke-width: 1; }
 .grid-major { fill: none; stroke: var(--grid-major); stroke-width: 1.2; }
 #stage.coarse .grid-minor { display: none; }
-.canvas.table-mode #stage, .canvas.table-mode .tools-bottom, .canvas.table-mode .tool-row, .canvas.table-mode #filters-panel, .canvas.table-mode .canvas-notice { display: none; }
+.canvas.table-mode #stage, .canvas.table-mode .tools-bottom, .canvas.table-mode .wiring, .canvas.table-mode .legend, .canvas.table-mode .tool-row, .canvas.table-mode #filters-panel, .canvas.table-mode .canvas-notice { display: none; }
 #loading { position: absolute; inset: 0 0 auto; z-index: 6; height: 3px; overflow: hidden; }
 #loading::before { content: ""; position: absolute; top: 0; bottom: 0; left: -35%; width: 35%; background: var(--pencil); animation: loading 1s ease-in-out infinite; }
 @keyframes loading { to { left: 100%; } }
@@ -203,6 +218,30 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .tool-row button + button { border-left: 1px solid var(--rule); }
 .tool-row button:hover { background: var(--pencil-soft); }
 .tool-row button:focus-visible { outline-offset: -3px; }
+/* Wire tools: routing mode and colouring */
+.mode-switch { display: flex; }
+.mode-switch button { display: inline-flex; align-items: center; gap: 6px; }
+.mode-switch button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.mode-switch button[aria-pressed="true"] { color: var(--sheet); background: var(--ink); }
+.mode-switch button[aria-pressed="true"]:hover { background: var(--ink); }
+.colour-pick { display: inline-flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; font-size: 14px; color: var(--ink-2); border-left: 1px solid var(--rule); }
+#colour-by { padding: 4px 6px; font-size: 14px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; }
+/* The key to the wire colours, like a drawing's legend block. */
+.legend { width: 220px; max-height: min(36vh, max(120px, calc(100vh - 420px))); margin-left: auto; overflow: auto; }
+.legend summary { position: sticky; top: 0; padding: 8px 12px; font: 600 14px var(--font-tech); background: var(--sheet); border-bottom: 1px solid var(--rule); cursor: pointer; }
+.legend:not([open]) summary { border-bottom: 0; }
+.legend-body { padding: 4px 0 6px; }
+.legend-notice { margin: 4px 12px 6px; padding: 6px 8px; font-size: 12.5px; color: var(--amber); background: var(--amber-soft); border-left: 3px solid var(--amber); }
+.legend-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 28px; padding: 2px 12px; text-align: left; font-size: 13.5px; background: none; border: 0; }
+.legend-row:hover, .legend-row:focus-visible { background: var(--pencil-soft); outline-offset: -2px; }
+.legend-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend-marks { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 4px; padding: 6px 12px 0; font-size: 12.5px; color: var(--ink-2); border-top: 1px solid var(--rule); }
+.legend-marks:empty { display: none; }
+.legend-mark { display: inline-flex; align-items: center; gap: 5px; }
+.swatch { flex: none; overflow: visible; }
+.swatch .edge-casing { stroke-width: 6; }
+.swatch .edge-line { stroke-width: 2; }
+.swatch .edge-strand { stroke-width: 1.5; }
 #filters-button.active { color: var(--pencil); font-weight: 600; }
 .badge { margin-left: 7px; padding: 0 7px; font-size: 12px; font-weight: 600; color: var(--sheet); background: var(--pencil); border-radius: 999px; }
 .popover { z-index: 5; width: min(330px, calc(100vw - 40px)); max-height: 70vh; overflow: auto; padding: 14px 16px; }
@@ -298,18 +337,56 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .group-toggle path { fill: none; stroke: var(--ink); stroke-width: 1.8; }
 .group-toggle:hover rect { stroke: var(--pencil); fill: var(--pencil-soft); }
 .edge { cursor: pointer; }
-.edge-line { fill: none; stroke: var(--line); }
+.n0 { --net: var(--n0); }
+.n1 { --net: var(--n1); }
+.n2 { --net: var(--n2); }
+.n3 { --net: var(--n3); }
+.n4 { --net: var(--n4); }
+.n5 { --net: var(--n5); }
+.edge-line { fill: none; stroke: var(--net, var(--line)); }
+.edge-strand { fill: none; stroke: var(--net, var(--line)); stroke-width: 1.7; }
+.edge.bus > .edge-line { stroke: none; }
+/* Past six nets the hues repeat with a dash pattern. */
+.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: 6 3; }
+.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: 1.6 3; }
+.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: 10 3 2 3; }
+.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: 2 5; }
+/* A violation keeps the wire's own colour inside a red casing. */
+.edge-casing { fill: none; stroke: var(--red); stroke-width: 8; stroke-linejoin: round; }
+.w3 .edge-casing { stroke-width: 9; }
+.w4 .edge-casing { stroke-width: 10; }
+.edge.violating .edge-gap { stroke-width: 4.5; }
+.w3.violating .edge-gap { stroke-width: 5.5; }
+.w4.violating .edge-gap { stroke-width: 6.5; }
+.edge-gap { fill: none; stroke: var(--sheet); stroke-width: 6; }
+.edge.rubber .edge-gap { display: none; }
+.arrow-net { fill: var(--net); }
+.via { fill: var(--sheet); stroke: var(--net, var(--line)); stroke-width: 1.6; }
+.net-tab { fill: var(--net); }
+.drop-slot { fill: color-mix(in srgb, var(--pencil) 10%, transparent); stroke: var(--pencil); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.edge.rubber .edge-line, .edge.rubber .edge-strand { stroke-dasharray: 4 4; opacity: .7; }
+/* Boards: traces on tracks meet at chamfered or 60° corners. */
+#graph.mode-pcb .edge-line, #graph.mode-pcb .edge-strand, #graph.mode-pcb .edge-casing,
+#graph.mode-hex .edge-line, #graph.mode-hex .edge-strand, #graph.mode-hex .edge-casing { stroke-linejoin: miter; }
+#graph.mode-pcb .edge-label, #graph.mode-hex .edge-label { font-size: 12.5px; stroke-width: 4px; }
 .w1 .edge-line { stroke-width: 1.3; }
 .w2 .edge-line { stroke-width: 1.8; }
 .w3 .edge-line { stroke-width: 2.5; }
 .w4 .edge-line { stroke-width: 3.3; }
 .edge-hit { fill: none; stroke: transparent; stroke-width: 16; }
 .edge.manual .edge-line { stroke-dasharray: 7 5; }
-.edge.violating .edge-line { stroke: var(--red); }
 .edge.cut .edge-line { stroke-width: 3.4; stroke-dasharray: 9 5; }
-.edge.lit .edge-line, .edge.hover .edge-line { stroke: var(--ink); }
-.edge.violating.lit .edge-line, .edge.violating.hover .edge-line { stroke: var(--red); }
-.edge.selected .edge-line { stroke-width: 3.8; }
+.edge.cut .edge-casing { stroke-width: 10; }
+.edge.cut .edge-gap { stroke-width: 6; }
+/* One colour: violations are red and highlighted wires turn to ink. */
+.colour-none .edge.violating .edge-line { stroke: var(--red); }
+.colour-none .edge.violating .edge-casing, #graph:not(.mode-pcb):not(.mode-hex).colour-none .edge-gap { display: none; }
+.colour-none .edge.lit .edge-line, .colour-none .edge.hover .edge-line { stroke: var(--ink); }
+.colour-none .edge.violating.lit .edge-line, .colour-none .edge.violating.hover .edge-line { stroke: var(--red); }
+/* Coloured: a highlighted wire keeps its colour and gets heavier. */
+#graph:not(.colour-none) .edge.lit:not(.bus) .edge-line, #graph:not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: 3.2; }
+#graph:not(.colour-none) .edge.lit .edge-strand, #graph:not(.colour-none) .edge.hover .edge-strand { stroke-width: 2.3; }
+.edge.selected:not(.bus) .edge-line { stroke-width: 3.8; }
 .arrow { fill: var(--line); }
 .arrow-error { fill: var(--red); }
 .arrow-lit { fill: var(--ink); }
@@ -387,7 +464,8 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
 .dependency:hover, .dependency.linked { background: var(--pencil-soft); }
 .dependency.linked { box-shadow: inset 3px 0 0 var(--pencil); }
 .dependency:focus-visible { outline-offset: -2px; }
-.dependency-name { min-width: 0; font: 13px/1.5 var(--font-code); overflow-wrap: break-word; }
+.dependency .swatch { flex: none; align-self: center; margin-right: -4px; }
+.dependency-name { flex: 1; min-width: 0; font: 13px/1.5 var(--font-code); overflow-wrap: break-word; }
 .dependency-count { flex: none; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
 .dependency.violating .dependency-count { color: var(--red); }
 .violation-badge { font: 600 14px var(--font-code); color: var(--red); }
@@ -434,6 +512,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
   .search { width: 100%; }
   #filters-panel { top: 104px; }
   .minimap { display: none; }
+  .legend { width: auto; max-height: 30vh; }
   .tools-bottom { left: 12px; align-items: stretch; }
   .zoom { justify-content: space-between; }
   .zoom button { flex: 1; padding: 6px 4px; }

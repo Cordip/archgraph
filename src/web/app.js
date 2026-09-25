@@ -449,7 +449,7 @@ function paint(lit, className, rootClass) {
   for (const item of scene.edgeEls) {
     item.element.classList.toggle(className, Boolean(lit) && lit.edges.has(item.edge));
     const strong = item.element.classList.contains("lit") || item.element.classList.contains("hover");
-    item.line.setAttribute("marker-end", strong && !item.violating ? "url(#arrow-lit)" : item.marker);
+    item.line.setAttribute("marker-end", strong ? item.litMarker : item.marker);
   }
 }
 // Hovering an entry or edge on the canvas marks the rows naming it in the
@@ -699,6 +699,10 @@ function dependencyList(panel, heading, edges, other) {
   for (const edge of sorted.slice(0, limit)) {
     const button = html("button", null, `dependency${edge.violation_rule_ids.length ? " violating" : ""}`);
     button.type = "button";
+    // The wire's colour, as drawn on the canvas.
+    if (scene && scene.colours && scene.colours.mode !== "none") {
+      button.append(wireSample(edgeLook(edge), { violating: edge.violation_rule_ids.length > 0, manual: edge.origin === "manual", cut: edge.suggested_cut_rule_ids.length > 0 }));
+    }
     button.append(pathText(displayEndpoint(other(edge)), "dependency-name"));
     button.edge = edge;
     button.otherId = other(edge);
@@ -1076,7 +1080,8 @@ function clientLayers(ids, edges) {
 // entries that only depend on this focus get a band above the focus frame;
 // all other outside entries a band below. Within a row, entries are ordered
 // by the mean position of their neighbours (deterministic barycentre sweeps).
-function layout(list, edges, serverLayers) {
+// Every display mode starts from this arrangement.
+function arrange(list, edges, serverLayers) {
   const chunk = (ids, size) => { const rows = []; for (let i = 0; i < ids.length; i += size) rows.push(ids.slice(i, i + size)); return rows; };
   const inside = list.filter((node) => !node.outside_focus).map((node) => node.id);
   const outside = list.filter((node) => node.outside_focus);
@@ -1113,6 +1118,10 @@ function layout(list, edges, serverLayers) {
       }
     }
   }
+  return { rows, centre, innerWidth, rowWidth, order: rows.flatMap((row) => row.ids) };
+}
+// Curves mode: the arrangement's rows, centred, at a fixed gap.
+function layout({ rows, innerWidth, rowWidth }) {
   const left = PAD + 24;
   const positions = new Map(), notes = [];
   let y = PAD, bottom = PAD, band = null;
@@ -1130,15 +1139,20 @@ function layout(list, edges, serverLayers) {
   });
   return { positions, notes, left };
 }
-// The focus frame follows its entries, also while they are dragged.
+// The focus frame follows its entries, also while they are dragged. On a
+// board it also takes in the traces between inside entries, which run in
+// channels around the cards.
 function frameBox() {
   let box = null;
+  const add = (x1, y1, x2, y2) => {
+    box = box ? { x1: Math.min(box.x1, x1), y1: Math.min(box.y1, y1), x2: Math.max(box.x2, x2), y2: Math.max(box.y2, y2) } : { x1, y1, x2, y2 };
+  };
   for (const node of scene.entries) {
     if (node.outside_focus) continue;
-    const p = scene.positions.get(node.id);
-    box = box ? { x1: Math.min(box.x1, p.x), y1: Math.min(box.y1, p.y), x2: Math.max(box.x2, p.x + p.width), y2: Math.max(box.y2, p.y + p.height) }
-      : { x1: p.x, y1: p.y, x2: p.x + p.width, y2: p.y + p.height };
+    const p = scene.positions.get(node.id), ear = p.hex || 0;
+    add(p.x - ear, p.y, p.x + p.width + ear, p.y + p.height);
   }
+  if (box) for (const point of scene.frameTraces || []) add(point.x, point.y, point.x, point.y);
   return box && { x: box.x1 - 28, y: box.y1 - 52, width: box.x2 - box.x1 + 56, height: box.y2 - box.y1 + 80 };
 }
 function contentBounds() {
@@ -1147,7 +1161,8 @@ function contentBounds() {
     box = box ? { x1: Math.min(box.x1, b.x), y1: Math.min(box.y1, b.y), x2: Math.max(box.x2, b.x + b.width), y2: Math.max(box.y2, b.y + b.height) }
       : { x1: b.x, y1: b.y, x2: b.x + b.width, y2: b.y + b.height };
   };
-  for (const box2 of scene.positions.values()) add(box2);
+  for (const box2 of scene.positions.values()) add({ ...box2, x: box2.x - (box2.hex || 0), width: box2.width + 2 * (box2.hex || 0) });
+  if (scene.board) { const e = scene.board.extent; add({ x: e.x1, y: e.y1, width: e.x2 - e.x1, height: e.y2 - e.y1 }); }
   const frame = frameBox();
   if (frame) add(frame);
   if (!box) return { x: 0, y: 0, width: 600, height: 400 };
@@ -1263,6 +1278,17 @@ function freeRoute(plan) {
   plan.d = `M ${round(s.x)} ${round(s.y)} ${curveTo(plan.curves[0])}`;
   return plan;
 }
+// A bus strand beside a chain of curves: each curve's ends and control
+// points move along the normal at its ends (a close, cheap approximation).
+function offsetCurves(curves, offset) {
+  const normal = (a, b) => { const length = Math.hypot(b.x - a.x, b.y - a.y) || 1; return { x: -(b.y - a.y) / length, y: (b.x - a.x) / length }; };
+  const move = (p, n) => ({ x: p.x + n.x * offset, y: p.y + n.y * offset });
+  return curves.map(([p, c1, c2, q], index) => {
+    const n0 = normal(p, Math.hypot(c1.x - p.x, c1.y - p.y) > 0.5 ? c1 : q), n3 = normal(Math.hypot(q.x - c2.x, q.y - c2.y) > 0.5 ? c2 : p, q);
+    const curve = [move(p, n0), move(c1, n0), move(c2, n3), move(q, n3)];
+    return `${index ? "L" : "M"} ${round(curve[0].x)} ${round(curve[0].y)} ${curveTo(curve)}`;
+  }).join(" ");
+}
 function curveTo([, c1, c2, q]) {
   return `C ${round(c1.x)} ${round(c1.y)} ${round(c2.x)} ${round(c2.y)} ${round(q.x)} ${round(q.y)}`;
 }
@@ -1354,62 +1380,209 @@ function fitText(element, full, width, fromStart) {
   }
   element.textContent = cut(low);
 }
+// ---------------------------------------------------------------- wires
+// How the canvas draws wires: the routing mode (curves, a PCB board with
+// 0°/45°/90° traces, or a hexagonal board with 0°/60°/120° traces) and what
+// gives a wire its colour. Remembered in the browser like the other views.
+const MODES = ["curves", "pcb", "hex"], COLOURINGS = ["source", "kind", "target", "none"];
+const display = (() => {
+  const saved = stored("archgraph.view.v1", {}) || {};
+  return { mode: MODES.includes(saved.mode) ? saved.mode : "curves", colour: COLOURINGS.includes(saved.colour) ? saved.colour : "source" };
+})();
+const layoutKind = () => (display.mode === "curves" ? "layout" : `layout-${display.mode}`);
+// Six colour-blind-safe hues (Okabe–Ito, without its vermillion, which is
+// kept for violations, and its black, which is the ink). Past six, the hues
+// repeat with a dash pattern: 30 distinct looks.
+const PALETTE = 6, DASHES = 5;
+const KIND_ORDER = ["IMPORTS", "CALLS", "USES_CLASS", "FETCHES", "EXTENDS", "IMPLEMENTS"];
+function netClass(index) {
+  const cycle = Math.floor(index / PALETTE) % DASHES;
+  return `n${index % PALETTE}${cycle ? ` c${cycle}` : ""}`;
+}
+// Source and target colourings give each entry with such edges a net, in
+// the arrangement's reading order (so neighbours differ). The kind colouring
+// takes the hues in a fixed order of kinds, so a level with few kinds gets
+// the most distinct hues and the common kinds keep theirs across levels.
+function assignColours(order) {
+  const colours = { mode: display.colour, nets: new Map(), kinds: new Map() };
+  if (display.colour === "source" || display.colour === "target") {
+    const end = display.colour === "source" ? "from" : "to";
+    const used = new Set(scene.layoutEdges.map((edge) => edge[end]));
+    for (const id of order) if (used.has(id)) colours.nets.set(id, colours.nets.size);
+  } else if (display.colour === "kind") {
+    const rank = (kind) => (KIND_ORDER.includes(kind) ? KIND_ORDER.indexOf(kind) : KIND_ORDER.length);
+    const kinds = [...new Set(scene.layoutEdges.flatMap((edge) => edge.parts.map((part) => part.kind)))].sort((a, b) => rank(a) - rank(b) || a.localeCompare(b));
+    kinds.forEach((kind, index) => colours.kinds.set(kind, index));
+  }
+  return colours;
+}
+// The colour of one edge: a net index, or strands (one per relation kind)
+// for an edge of several kinds in the kind colouring.
+function edgeLook(edge) {
+  const colours = scene && scene.colours;
+  if (!colours || colours.mode === "none") return { net: null };
+  if (colours.mode === "kind") {
+    const kinds = kindCounts(edge.parts).map(([kind]) => kind);
+    if (kinds.length === 1) return { net: colours.kinds.has(kinds[0]) ? colours.kinds.get(kinds[0]) : null };
+    return { net: null, strands: kinds.map((kind) => ({ kind, net: colours.kinds.get(kind) ?? null })) };
+  }
+  const net = colours.nets.get(colours.mode === "source" ? edge.from : edge.to);
+  return { net: net === undefined ? null : net };
+}
+const strandSpacing = (count) => (count <= 3 ? 3 : 8 / (count - 1));
+function busHalfWidth(edge) {
+  const look = edgeLook(edge);
+  return look.strands ? (look.strands.length - 1) / 2 * strandSpacing(look.strands.length) + 1 : 0;
+}
+function labelText(edge) {
+  return `${edgeSummary(edge)}${edge.origin === "manual" ? " manual" : ""}${edge.suggested_cut_rule_ids.length ? " ✂" : edge.violation_rule_ids.length ? " ⚠" : ""}`;
+}
+// A short sample of an edge's wire, for the legend and the details panel.
+function wireSample(look, { violating = false, manual = false, cut = false } = {}) {
+  const sample = svg("svg", { viewBox: "0 0 30 12", width: 30, height: 12, "aria-hidden": "true",
+    class: `swatch edge w2${manual ? " manual" : ""}${cut ? " cut" : ""}${violating ? " violating" : ""}${look.net !== null && look.net !== undefined ? ` ${netClass(look.net)}` : ""}${look.strands ? " bus" : ""}` });
+  if (violating) sample.append(svg("path", { d: "M 2 6 H 28", class: "edge-casing" }), svg("path", { d: "M 2 6 H 28", class: "edge-gap" }));
+  if (look.strands) {
+    const spacing = strandSpacing(look.strands.length);
+    look.strands.forEach((strand, i) => {
+      const y = round(6 + (i - (look.strands.length - 1) / 2) * spacing);
+      sample.append(svg("path", { d: `M 2 ${y} H 28`, class: `edge-strand ${strand.net === null ? "" : netClass(strand.net)}` }));
+    });
+  } else sample.append(svg("path", { d: "M 2 6 H 28", class: "edge-line" }));
+  return sample;
+}
+
+// ---------------------------------------------------------------- drawing
 function drawScene() {
   const graph = $("graph");
   graph.replaceChildren();
-  const { positions, notes, left } = layout(scene.entries, scene.layoutEdges, scene.layers);
-  // Entries the user moved keep their place.
-  const saved = stored(storageKey("layout", scene.focusId), {});
+  const arrangement = arrange(scene.entries, scene.layoutEdges, scene.layers);
+  scene.colours = assignColours(arrangement.order);
+  const board = display.mode !== "curves" && scene.entries.length > 0;
+  // Entries the user moved keep their place: a point on curves, a grid cell
+  // on a board (each mode remembers its own).
+  const saved = stored(storageKey(layoutKind(), scene.focusId), {}) || {};
   const moved = new Set();
-  for (const [id, box] of positions) {
-    const place = saved && saved[id];
-    if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
+  let positions, notes, left, plans;
+  Object.assign(scene, { board: null, frameTraces: null, dropCell: null, ghost: null });
+  if (board) {
+    const fixed = new Map();
+    for (const [id, place] of Object.entries(saved)) if (Array.isArray(place) && place.length === 2 && place.every(Number.isInteger)) fixed.set(id, place);
+    const started = performance.now();
+    const result = Board.route({ mode: display.mode, rows: arrangement.rows, centre: arrangement.centre, unit: CARD.width + GAP_X, card: CARD, fixed,
+      edges: scene.edges.map((edge) => ({ from: edge.from, to: edge.to, halfWidth: busHalfWidth(edge) })),
+      labels: scene.edges.length <= LABEL_LIMIT ? scene.edges.map((edge) => ({ width: labelText(edge).length * 6.6 + 10, height: 16,
+        priority: (edge.violation_rule_ids.length ? 1e9 : 0) + edge.count })) : null });
+    scene.routeTime = performance.now() - started;
+    ({ positions, notes } = result);
+    left = PAD + 24;
+    scene.board = result;
+    plans = result.traces.map((trace, order) => ({ edge: scene.edges[order], order, dir: trace.dir, points: trace.points, core: trace.core,
+      d: Board.pathData(trace.points), label: trace.label, crowded: trace.label.crowded }));
+    const inside = new Set(scene.entries.filter((node) => !node.outside_focus).map((node) => node.id));
+    scene.frameTraces = plans.filter((plan) => inside.has(plan.edge.from) && inside.has(plan.edge.to)).flatMap((plan) => plan.points);
+  } else {
+    ({ positions, notes, left } = layout(arrangement));
+    for (const [id, box] of positions) {
+      const place = saved[id];
+      if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
+    }
   }
   Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [] });
-  graph.setAttribute("class", `${scene.edges.length > LABEL_LIMIT ? "quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
+  graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
   const frame = frameBox();
   if (frame) {
-    scene.frameRect = svg("rect", { x: frame.x, y: frame.y, width: frame.width, height: frame.height, class: "frame" });
-    scene.frameLabel = svg("text", { x: frame.x + 16, y: frame.y + 30, class: "frame-label" }, compact(currentProjection.focus.title, 60));
+    scene.frameRect = svg("rect", { x: round(frame.x), y: round(frame.y), width: round(frame.width), height: round(frame.height), class: "frame" });
+    scene.frameLabel = svg("text", { x: round(frame.x + 16), y: round(frame.y + 30), class: "frame-label" }, compact(currentProjection.focus.title, 60));
     graph.append(scene.frameRect, scene.frameLabel);
   }
   for (const note of notes) graph.append(svg("text", { x: left - 24, y: note.y, class: "graph-note" }, note.band === "callers" ? "Outside this focus, depending on it" : "Outside this focus"));
-  // Violating edges are drawn last, on top of the others.
-  const plans = route(scene.edges, positions, moved).sort((a, b) => (a.edge.violation_rule_ids.length > 0) - (b.edge.violation_rule_ids.length > 0) || a.order - b.order);
-  for (const plan of plans) {
-    const edge = plan.edge;
-    plan.text = `${edgeSummary(edge)}${edge.origin === "manual" ? " manual" : ""}${edge.suggested_cut_rule_ids.length ? " ✂" : edge.violation_rule_ids.length ? " ⚠" : ""}`;
+  if (!board) {
+    plans = route(scene.edges, positions, moved);
+    for (const plan of plans) plan.text = labelText(plan.edge);
+    if (scene.edges.length <= LABEL_LIMIT) placeLabels(plans, positions);
+    else for (const plan of plans) plan.label = bezier(plan.curves[0], 0.5);
   }
-  if (scene.edges.length <= LABEL_LIMIT) placeLabels(plans, positions);
-  else for (const plan of plans) plan.label = bezier(plan.curves[0], 0.5);
+  for (const plan of plans) plan.text = labelText(plan.edge);
+  // Violating edges are drawn last, on top of the others.
+  plans.sort((a, b) => (a.edge.violation_rule_ids.length > 0) - (b.edge.violation_rule_ids.length > 0) || a.order - b.order);
   for (const plan of plans) graph.append(drawEdge(plan));
   scene.entries.forEach((node, index) => {
     const element = drawNode(node, positions.get(node.id), index === 0);
     graph.append(element);
     for (const fit of element.fits) fitText(...fit);
   });
+  drawLegend();
+}
+// Marker ids: arrowheads (and vias on a board) take the wire's colour.
+function markers(look, violating) {
+  const coloured = look.net !== null && look.net !== undefined;
+  return { end: violating ? "arrow-error" : coloured ? `arrow-n${look.net % PALETTE}` : "arrow", start: coloured ? `via-n${look.net % PALETTE}` : "via" };
+}
+// A bus: one strand per relation kind, side by side along the edge's course.
+function strandPaths(plan, count) {
+  const spacing = strandSpacing(count), paths = [];
+  for (let i = 0; i < count; i++) {
+    const offset = (i - (count - 1) / 2) * spacing;
+    paths.push(plan.points ? Board.pathData(Board.offsetPolyline(plan.points, offset)) : offsetCurves(plan.curves, offset));
+  }
+  return paths;
 }
 function drawEdge(plan) {
   const edge = plan.edge;
   const violating = edge.violation_rule_ids.length > 0;
   const cut = edge.suggested_cut_rule_ids.length > 0;
   const weight = edge.count > 50 ? 4 : edge.count > 10 ? 3 : edge.count > 2 ? 2 : 1;
+  const look = edgeLook(edge);
+  const net = look.net !== null && look.net !== undefined ? ` ${netClass(look.net)}` : "";
   // Edges are not tab stops (a level can have hundreds); the keyboard
   // reaches them through the selected entry's dependency list.
-  const group = svg("g", { class: `edge ${edge.origin} w${weight}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true" });
+  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true" });
   const hit = svg("path", { d: plan.d, class: "edge-hit" });
-  const marker = `url(#${violating ? "arrow-error" : "arrow"})`;
-  const line = svg("path", { d: plan.d, class: "edge-line", "marker-end": marker });
-  const label = svg("text", { x: round(plan.label.x), y: round(plan.label.y + 5), class: "edge-label" }, plan.text);
-  group.append(hit, line, label);
+  group.append(hit);
+  // A violation keeps the wire's own colour inside a red casing.
+  const casing = violating ? svg("path", { d: plan.d, class: "edge-casing" }) : null;
+  if (casing) group.append(casing);
+  // On a board, a casing of the sheet's colour cuts a gap where a later
+  // trace crosses this one; inside a violation's red casing it separates the
+  // red from the wire's own colour, so the outline reads as red on any hue.
+  const gap = plan.points || violating ? svg("path", { d: plan.d, class: "edge-gap" }) : null;
+  if (gap) group.append(gap);
+  const ids = markers(look, violating);
+  const line = svg("path", { d: plan.d, class: "edge-line", "marker-end": `url(#${ids.end})` });
+  if (plan.points) line.setAttribute("marker-start", `url(#${ids.start})`);
+  group.append(line);
+  const strands = [];
+  if (look.strands) {
+    strandPaths(plan, look.strands.length).forEach((d, i) => {
+      const strand = look.strands[i];
+      strands.push(svg("path", { d, class: `edge-strand${strand.net === null ? "" : ` ${netClass(strand.net)}`}` }));
+    });
+    group.append(...strands);
+    if (casing) casing.style.strokeWidth = `${round(2 * busHalfWidth(edge) + 8)}px`;
+    if (gap) gap.style.strokeWidth = `${round(2 * busHalfWidth(edge) + (violating ? 4 : 5))}px`;
+  }
+  const label = svg("text", { x: round(plan.label.x), y: round(plan.label.y + 4.5), class: "edge-label" }, plan.text);
+  group.append(label);
   group.append(svg("title", {}, `${displayEndpoint(edge.from)} → ${displayEndpoint(edge.to)}\n${kindCounts(edge.parts).map(([kind, count]) => `${kind} × ${count}`).join(", ")}. Click for concrete evidence.`));
   group.addEventListener("click", () => showEdge(edge, group));
   group.addEventListener("mouseenter", () => hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }));
   group.addEventListener("mouseleave", () => hoverCanvas(null));
-  scene.edgeEls.push({ edge, element: group, line, hit, label, marker, violating });
+  const marker = `url(#${ids.end})`;
+  // Without colours a highlighted wire turns to ink; with them it keeps its colour.
+  const litMarker = !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
+  scene.edgeEls.push({ edge, core: plan.core || null, element: group, line, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
   return group;
+}
+// Puts an edge on a new course (a dragged entry's rubber band).
+function reshapeEdge(item, plan) {
+  for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
+  if (item.strands.length) strandPaths(plan, item.count).forEach((d, i) => item.strands[i].setAttribute("d", d));
+  const point = bezier(plan.curves[0], 0.5);
+  item.label.setAttribute("x", round(point.x));
+  item.label.setAttribute("y", round(point.y + 4.5));
 }
 function usageMark(node, box) {
   const entries = usageCount(node, "entry_point"), idle = usageCount(node, "no_observed_users");
@@ -1434,11 +1607,18 @@ function drawNode(node, box, first) {
   const entryPoint = usageCount(node, "entry_point") > 0;
   const group = svg("g", { class: `node ${node.entry_kind}${node.outside_focus ? " outside" : ""}${node.node_kind === "external" ? " external" : ""}${violating ? " violating" : ""}${isIdle(node) ? " idle" : ""}${entryPoint ? " entry-point" : ""}${node.usage === "not_indexed" ? " unknown" : ""}`,
     transform: `translate(${round(box.x)}, ${round(box.y)})`, tabindex: first ? 0 : -1, role: "button", "aria-label": status ? `${node.title}, ${status}` : node.title, "data-id": node.id });
-  if (node.entry_kind === "group") {
-    group.append(svg("rect", { x: 8, y: 8, width: box.width, height: box.height, class: "sheet-back" }), svg("rect", { x: 4, y: 4, width: box.width, height: box.height, class: "sheet-back" }));
-  }
-  if (violating) group.append(svg("path", { d: cloudPath(-8, -8, box.width + 16 + (node.entry_kind === "group" ? 8 : 0), box.height + 16 + (node.entry_kind === "group" ? 8 : 0)), class: "cloud" }));
-  group.append(svg("rect", { width: box.width, height: box.height, class: "box" }));
+  // On the hexagonal board a card is a plate with pointed ends; its text
+  // stays horizontal inside the rectangle between them.
+  const ear = box.hex || 0;
+  const shape = (x, y, className) => (ear
+    ? svg("path", { d: Board.hexOutline(box.width, box.height), transform: `translate(${x}, ${y})`, class: className })
+    : svg("rect", { x, y, width: box.width, height: box.height, class: className }));
+  if (node.entry_kind === "group") group.append(shape(8, 8, "sheet-back"), shape(4, 4, "sheet-back"));
+  if (violating) group.append(svg("path", { d: cloudPath(-8 - ear, -8, box.width + 16 + 2 * ear + (node.entry_kind === "group" ? 8 : 0), box.height + 16 + (node.entry_kind === "group" ? 8 : 0)), class: "cloud" }));
+  group.append(shape(0, 0, "box"));
+  // The entry's net colour, when wires are coloured by source or target.
+  const net = scene && scene.colours && scene.colours.nets.get(node.id);
+  if (net !== undefined && net !== null) group.append(svg("rect", { x: 0, y: 0, width: 5, height: box.height, class: `net-tab ${netClass(net)}` }));
   if (node.entry_kind === "architecture") group.append(svg("rect", { x: 4, y: 4, width: box.width - 8, height: box.height - 8, class: "box-inner" }));
   // A package is a bought-in part: a crate glyph in the corner.
   if (node.entry_kind === "package") group.append(svg("path", { d: `M ${box.width - 34} 16 l 10 -5 l 10 5 v 12 l -10 5 l -10 -5 z M ${box.width - 34} 16 l 10 5 l 10 -5 M ${box.width - 24} 21 v 12`, class: "package-glyph" }));
@@ -1489,22 +1669,32 @@ function drawNode(node, box, first) {
   scene.nodeEls.set(node.id, group);
   return group;
 }
-// Moves an entry while it is dragged; its edges are routed afresh.
+// Moves an entry while it is dragged; its edges follow as curves. On a
+// board they are rubber bands until the drop, and a ghost shows the grid
+// cell the entry will snap to.
 function moveEntry(id, x, y) {
   const box = scene.positions.get(id);
   box.x = x;
   box.y = y;
-  scene.moved.add(id);
+  if (!scene.board) scene.moved.add(id);
   scene.nodeEls.get(id).setAttribute("transform", `translate(${round(x)}, ${round(y)})`);
   for (const item of scene.edgeEls) {
     if (item.edge.from !== id && item.edge.to !== id) continue;
-    const plan = freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) });
-    item.line.setAttribute("d", plan.d);
-    item.hit.setAttribute("d", plan.d);
-    const point = bezier(plan.curves[0], 0.5);
-    item.label.setAttribute("x", round(point.x));
-    item.label.setAttribute("y", round(point.y + 5));
+    reshapeEdge(item, freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) }));
+    item.line.removeAttribute("marker-start");
     item.element.classList.remove("crowded");
+    if (scene.board) item.element.classList.add("rubber");
+  }
+  if (scene.board) {
+    const cell = Board.snap(scene.board.grid, x + box.width / 2, y + box.height / 2);
+    const slot = Board.slotBox(scene.board.grid, cell.row, cell.col);
+    if (!scene.ghost) {
+      scene.ghost = svg("path", { class: "drop-slot" });
+      $("graph").insertBefore(scene.ghost, $("graph").firstChild);
+    }
+    scene.ghost.setAttribute("transform", `translate(${round(slot.x)}, ${round(slot.y)})`);
+    scene.ghost.setAttribute("d", slot.hex ? Board.hexOutline(slot.width, slot.height) : `M 0 0 H ${round(slot.width)} V ${slot.height} H 0 Z`);
+    scene.dropCell = cell;
   }
   const frame = frameBox();
   if (frame && scene.frameRect) {
@@ -1522,6 +1712,22 @@ function saveLayout() {
     if (box) saved[id] = [round(box.x), round(box.y)];
   }
   store(storageKey("layout", scene.focusId), saved);
+}
+// A board drop: the entry takes the cell under it, an entry already there
+// takes the cell it left, and the whole board is routed again.
+function dropOnGrid(id) {
+  const cell = scene.dropCell, box = scene.positions.get(id);
+  if (!cell || !box) { redraw(); return; }
+  const key = storageKey(layoutKind(), scene.focusId);
+  const saved = { ...(stored(key, {}) || {}) };
+  for (const [other, place] of scene.positions) {
+    if (other !== id && place.row === cell.row && place.col === cell.col) saved[other] = [box.row, box.col];
+  }
+  saved[id] = [cell.row, cell.col];
+  store(key, Object.fromEntries(Object.keys(saved).sort().map((other) => [other, saved[other]])));
+  const before = new Map([...scene.positions].map(([other, place]) => [other, { ...place }]));
+  redraw();
+  settle(before, null);
 }
 function redraw() {
   if (!currentProjection || view !== "diagram") return;
@@ -1581,7 +1787,11 @@ function zoomAt(factor, px, py) {
 }
 // The camera that shows `box` whole, clear of the floating tools.
 function cameraFor(box, { maxK = 1, minK = MIN_ZOOM, pad = 48, top = false } = {}) {
-  const size = stageSize(), padTop = pad + 36;
+  const stage = stageSize(), padTop = pad + 84; // clear of the two rows of tools
+  // An open legend keeps its corner: the view is fitted beside it.
+  const legend = $("legend");
+  const reserve = pad > 0 && !legend.hidden && legend.open ? legend.offsetWidth + 12 : 0;
+  const size = { ...stage, width: Math.max(stage.width / 2, stage.width - reserve) };
   const k = clamp(Math.min((size.width - 2 * pad) / box.width, (size.height - padTop - pad) / box.height), minK, maxK);
   let x = (size.width - box.width * k) / 2 - box.x * k;
   // Too wide to show whole: start at its left edge, where the labels are.
@@ -1729,7 +1939,7 @@ function endGesture(event) {
   if (gesture.moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
-    if (gesture.kind === "node") saveLayout();
+    if (gesture.kind === "node") { if (scene.board) dropOnGrid(gesture.id); else saveLayout(); }
   }
   $("canvas").classList.remove("dragging", "panning");
   gesture = null;
@@ -1849,6 +2059,7 @@ function renderView() {
     scene = null;
     $("graph").replaceChildren();
     $("minimap").replaceChildren();
+    $("legend").hidden = true;
     drawTable(currentProjection);
   }
   updateFilterUI();
@@ -2104,7 +2315,7 @@ document.addEventListener("click", (event) => {
 $("reset-layout").addEventListener("click", () => {
   if (!scene) return;
   const before = new Map([...scene.positions].map(([id, box]) => [id, { ...box }]));
-  store(storageKey("layout", scene.focusId), null);
+  store(storageKey(layoutKind(), scene.focusId), null);
   redraw();
   settle(before, null);
 });
@@ -2115,6 +2326,76 @@ $("collapse-groups").addEventListener("click", () => {
   redraw();
   settle(before, null);
 });
+
+// ---------------------------------------------------------------- wiring tools
+const COLOUR_TITLES = { source: "Wires take their source's colour", kind: "Wires take their relation kind's colour", target: "Wires take their target's colour", none: "Wires in one colour" };
+// The key to the active colouring. Hovering or focusing a row lights its
+// wires; a source or target row selects its entry.
+function drawLegend() {
+  const legend = $("legend"), body = $("legend-body");
+  body.replaceChildren();
+  const colours = scene && scene.colours;
+  legend.hidden = view !== "diagram" || !colours || !scene.edges.length;
+  if (legend.hidden) return;
+  $("legend-title").textContent = COLOUR_TITLES[colours.mode];
+  if (scene.board && scene.board.fallback) body.append(html("p", scene.board.fallback, "legend-notice"));
+  const row = (sample, text, lit, action, title, label) => {
+    const button = html("button", null, "legend-row");
+    button.type = "button";
+    button.setAttribute("aria-label", label || `${text} wires`);
+    button.append(sample, html("span", text, "legend-name"));
+    if (title) button.title = title;
+    const light = () => hoverCanvas(lit(), {});
+    button.addEventListener("mouseenter", light);
+    button.addEventListener("focus", light);
+    button.addEventListener("mouseleave", () => hoverCanvas(null));
+    button.addEventListener("blur", () => hoverCanvas(null));
+    if (action) button.addEventListener("click", action);
+    body.append(button);
+  };
+  const litBy = (test) => () => {
+    const lit = { nodes: new Set(), edges: new Set() };
+    for (const edge of scene.edges) if (test(edge)) { lit.edges.add(edge); lit.nodes.add(edge.from); lit.nodes.add(edge.to); }
+    return lit;
+  };
+  if (colours.mode === "source" || colours.mode === "target") {
+    const end = colours.mode === "source" ? "from" : "to";
+    for (const [id, net] of colours.nets) {
+      const node = scene.byId.get(id);
+      if (!node) continue;
+      row(wireSample({ net }), compact(entryTitle(node), 30), litBy((edge) => edge[end] === id), () => selectEntry(id, { centre: true }), displayEndpoint(id),
+        `Wires ${end === "from" ? "from" : "into"} ${entryTitle(node)}`);
+    }
+  } else if (colours.mode === "kind") {
+    for (const [kind, net] of colours.kinds) row(wireSample({ net }), kind, litBy((edge) => edge.parts.some((part) => part.kind === kind)));
+    if (scene.edges.some((edge) => new Set(edge.parts.map((part) => part.kind)).size > 1)) {
+      row(wireSample({ net: null, strands: [{ net: 0 }, { net: 1 }] }), "Mixed: a strand per kind", litBy((edge) => new Set(edge.parts.map((part) => part.kind)).size > 1));
+    }
+  }
+  const marks = html("div", null, "legend-marks");
+  body.append(marks);
+  const mark = (sample, text, test) => { if (scene.edges.some(test)) { const item = html("span", null, "legend-mark"); item.append(sample, html("span", text)); marks.append(item); } };
+  mark(wireSample({ net: null }, { violating: true }), "violation", (edge) => edge.violation_rule_ids.length > 0);
+  mark(wireSample({ net: null }, { violating: true, cut: true }), "suggested cut", (edge) => edge.suggested_cut_rule_ids.length > 0);
+  mark(wireSample({ net: null }, { manual: true }), "manual", (edge) => edge.origin === "manual");
+}
+function updateDisplayUI() {
+  for (const mode of MODES) $(`mode-${mode}`).setAttribute("aria-pressed", String(display.mode === mode));
+  $("colour-by").value = display.colour;
+}
+function setDisplay(change) {
+  const modeChanged = change.mode && change.mode !== display.mode;
+  Object.assign(display, change);
+  store("archgraph.view.v1", display);
+  updateDisplayUI();
+  if (view !== "diagram" || !scene || !scene.positions) return;
+  const before = new Map([...scene.positions].map(([id, box]) => [id, { ...box }]));
+  redraw();
+  if (modeChanged) { settle(before, null); animateTo(initialCamera()); }
+}
+for (const mode of MODES) $(`mode-${mode}`).addEventListener("click", () => setDisplay({ mode }));
+$("colour-by").addEventListener("change", () => setDisplay({ colour: $("colour-by").value }));
+updateDisplayUI();
 
 // ---------------------------------------------------------------- navigation
 async function loadFocus(id, pushHistory = true, options = {}) {

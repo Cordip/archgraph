@@ -64,6 +64,20 @@
           <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker>
           <marker id="arrow-error" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-error"/></marker>
           <marker id="arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-lit"/></marker>
+          <!-- Wires coloured by net: an arrowhead and a via (a board's pad) per hue. -->
+          <marker id="arrow-n0" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n0"/></marker>
+          <marker id="arrow-n1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n1"/></marker>
+          <marker id="arrow-n2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n2"/></marker>
+          <marker id="arrow-n3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n3"/></marker>
+          <marker id="arrow-n4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n4"/></marker>
+          <marker id="arrow-n5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-net n5"/></marker>
+          <marker id="via-n0" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n0"/></marker>
+          <marker id="via-n1" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n1"/></marker>
+          <marker id="via-n2" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n2"/></marker>
+          <marker id="via-n3" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n3"/></marker>
+          <marker id="via-n4" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n4"/></marker>
+          <marker id="via-n5" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n5"/></marker>
+          <marker id="via" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via"/></marker>
         </defs>
         <rect id="grid-bg" class="grid-bg" width="100%" height="100%" fill="url(#grid)"/>
         <g id="graph" role="group" aria-label="Focused architecture dependency graph"></g>
@@ -82,6 +96,28 @@
           <button type="button" id="reset-layout" title="Put every entry back where the layout placed it">Reset layout</button>
           <button type="button" id="collapse-groups" hidden>Collapse groups</button>
         </div>
+        <div class="tool-card tool-row wiring" role="group" aria-label="Wires">
+          <div class="mode-switch" role="group" aria-label="Wire routing">
+            <button type="button" id="mode-curves" aria-pressed="true" title="Curved wires">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 4c0 7 14 5 14 12"/></svg>Curves</button>
+            <button type="button" id="mode-pcb" aria-pressed="false" title="Circuit board: traces at 0°, 45° and 90°, each on its own track">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M3 4v5l4 4h10"/><circle cx="3" cy="4" r="1.6"/></svg>PCB</button>
+            <button type="button" id="mode-hex" aria-pressed="false" title="Hexagonal board: traces at 0°, 60° and 120°, each on its own track">
+              <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M6 3.5h8l4 6.5-4 6.5h-8l-4-6.5z"/></svg>Hex</button>
+          </div>
+          <label class="colour-pick" for="colour-by">Colour
+            <select id="colour-by">
+              <option value="source">by source</option>
+              <option value="kind">by relation kind</option>
+              <option value="target">by target</option>
+              <option value="none">none</option>
+            </select>
+          </label>
+        </div>
+        <details id="legend" class="tool-card legend" open hidden>
+          <summary id="legend-title">Wires</summary>
+          <div id="legend-body" class="legend-body"></div>
+        </details>
         <div id="filters-panel" class="tool-card popover" role="group" aria-label="Filters" hidden>
           <fieldset>
             <legend>Show</legend>
