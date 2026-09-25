@@ -262,6 +262,7 @@ def main():
         })()
         """)
         page.add_script_tag(content=(ROOT / "src/web/board.js").read_text())
+        page.add_script_tag(content=(ROOT / "src/web/dsm.js").read_text())
         page.add_script_tag(content=(ROOT / "src/web/app.js").read_text())
         page.wait_for_function("document.getElementById('focus-title').textContent === 'Application'")
         assert page.locator("#graph .node").count() == 3
@@ -288,7 +289,7 @@ def main():
         assert "<img src=x" in page.locator("#details").inner_text()
         assert page.locator("#details img").count() == 0
         assert page.evaluate("window.__injected") is None
-        assert page.locator("script").count() == 2
+        assert page.locator("script").count() == 3
         checks.append("edge evidence and hostile provider text rendered without HTML execution")
 
         # The canvas is one tab stop: arrow keys move between entries, Enter
@@ -429,6 +430,44 @@ def main():
         assert page.locator("#graph .node").count() == 3
         checks.append("table view with filter and row details, switching back to the canvas")
 
+        # The matrix: rows depend on columns, in the canvas's layer order,
+        # counts from the same merged and filtered edges, violations red.
+        page.locator("#view-dsm").click()
+        assert page.locator("#stage").is_hidden() and page.locator("#dsm-wrap").is_visible()
+        rows = page.locator("#dsm-wrap .dsm-row-label .dsm-name").all_text_contents()
+        assert rows.index("API") < rows.index("Domain") and len(rows) == 3, rows
+        assert page.locator("#dsm-wrap .dsm-group-label").all_text_contents() == ["Application, layer 1 of 2", "Application, layer 2 of 2", "Outside this focus"]
+        cell = page.locator("#dsm-wrap .dsm-cell[data-from='node:app.api'][data-to='node:app.domain']")
+        assert cell.text_content() == "50" and "CALLS × 25, IMPORTS × 25" in cell.get_attribute("title")
+        assert "violating" in cell.get_attribute("class") and cell.evaluate("e => getComputedStyle(e).backgroundColor") == "rgb(196, 34, 27)"
+        assert page.locator("#dsm-wrap .dsm-cell").count() == page.evaluate("scene.edges.length") == 2
+        manual = page.locator("#dsm-wrap .dsm-cell[data-to='node:external.service']")
+        assert "violating" not in manual.get_attribute("class") and manual.text_content() == "1"
+        # The diagonal is marked; no entry depends on itself.
+        assert page.locator("#dsm-wrap .dsm-diag").count() == 3
+        cell.hover()
+        assert page.locator("#dsm-wrap .dsm-hl-row").is_visible() and page.locator("#dsm-wrap .dsm-hl-col").is_visible()
+        assert page.locator("#dsm-wrap .dsm-row-label.hot .dsm-name").text_content() == "API"
+        cell.click()
+        assert "CALLS × 25" in page.locator("#details").inner_text() and "selected" in cell.get_attribute("class")
+        # Hovering a cell marks its row in the details panel (hover linking).
+        page.locator("#dsm-wrap .dsm-row-label", has_text="API").click()
+        assert page.locator("#details h2").inner_text() == "API"
+        page.locator("#dsm-wrap .dsm-cell[data-to='node:external.service']").hover()
+        assert page.locator("#details .dependency.linked").count() == 1
+        # The same filters as the canvas.
+        page.locator("#filters-button").click()
+        page.locator('#filter-kinds input[data-kind="CALLS"]').uncheck()
+        assert page.locator("#dsm-wrap .dsm-cell[data-to='node:app.domain']").text_content() == "25"
+        page.locator("#filter-manual").uncheck()
+        assert page.locator("#dsm-wrap .dsm-cell").count() == 1
+        page.locator("#filters-reset").click()
+        page.keyboard.press("Escape")
+        assert page.locator("#dsm-wrap .dsm-cell").count() == 2
+        page.locator("#view-diagram").click()
+        assert page.locator("#graph .node").count() == 3
+        checks.append("matrix view: rows and columns in layer order with the canvas's groups, counts of merged kinds, violating cell red, diagonal marked, row and column lit on hover, click shows the evidence, same filters as the canvas")
+
         page.get_by_role("button", name="Domain", exact=True).dblclick()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         assert page.locator("#graph .file").count() == 2
@@ -451,6 +490,29 @@ def main():
         assert page.locator("#table-wrap .entry-row").count() == 200
         page.locator("#view-diagram").click()
         checks.append("large levels as expandable directory groups; the table lists every file")
+
+        # A matrix of 200 files scrolls in its own pane with sticky headers
+        # and never scrolls the page sideways; double-clicking a group row
+        # expands it, as on the canvas.
+        page.locator("#view-dsm").click()
+        assert page.locator("#dsm-wrap .dsm-row-label").count() == 1
+        page.locator("#dsm-wrap .dsm-row-label").dblclick()
+        page.wait_for_function("() => document.querySelectorAll('#dsm-wrap .dsm-row-label').length === 200")
+        scroller = page.locator("#dsm-wrap .dsm")
+        assert scroller.evaluate("e => e.scrollWidth > e.clientWidth && e.scrollHeight > e.clientHeight")
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth && document.body.scrollWidth <= window.innerWidth")
+        head_top = page.locator("#dsm-wrap .dsm-cols").bounding_box()["y"]
+        row_left = page.locator("#dsm-wrap .dsm-rows").bounding_box()["x"]
+        scroller.evaluate("e => { e.scrollTop = 2500; e.scrollLeft = 2500; }")
+        page.wait_for_timeout(100)
+        assert abs(page.locator("#dsm-wrap .dsm-cols").bounding_box()["y"] - head_top) < 1
+        assert abs(page.locator("#dsm-wrap .dsm-rows").bounding_box()["x"] - row_left) < 1
+        # Long names are cut in the headers and whole in their tooltips.
+        assert page.locator("#dsm-wrap .dsm-col-label[title$='src/big/f004.rs']").count() == 1
+        page.locator("#collapse-groups").click()
+        assert page.locator("#dsm-wrap .dsm-row-label").count() == 1
+        page.locator("#view-diagram").click()
+        checks.append("matrix of 200 entries: own scroll pane, sticky row and column headers, no sideways page scroll, full names in tooltips, group rows expand and collapse")
 
         page.locator("#breadcrumbs").get_by_role("link", name="Application", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")

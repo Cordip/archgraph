@@ -441,7 +441,7 @@ function summaryList(projection) {
 // `lit`: { nodes: Set of entry ids, edges: Set of edges } to keep at full
 // strength while everything else on the canvas is dimmed.
 function select(element, lit) {
-  for (const previous of document.querySelectorAll("#graph .selected, #table-wrap .selected, #violations .selected, #details .selected")) previous.classList.remove("selected");
+  for (const previous of document.querySelectorAll("#graph .selected, #table-wrap .selected, #dsm-wrap .selected, #violations .selected, #details .selected")) previous.classList.remove("selected");
   if (element) element.classList.add("selected");
   selection = lit || null;
   paint(selection, "lit", "has-selection");
@@ -744,16 +744,19 @@ function dependencyList(panel, heading, edges, other) {
     button.addEventListener("focus", light);
     button.addEventListener("blur", unlight);
     button.append(html("span", `${edgeSummary(edge)}${edge.origin === "manual" ? " manual" : ""}${edge.violation_rule_ids.length ? " ⚠" : ""}`, "dependency-count"));
-    button.addEventListener("click", () => {
-      const drawn = scene && scene.edgeEls && scene.edgeEls.find((item) => item.edge === edge);
-      showEdge(edge, drawn ? drawn.element : null);
-    });
+    button.addEventListener("click", () => showEdge(edge, drawnEdge(edge)));
     const item = html("li");
     item.append(button);
     list.append(item);
   }
   panel.append(list);
   if (edges.length > limit) panel.append(html("p", `${edges.length - limit} more not listed.`, "notice"));
+}
+// Where an edge is drawn in the current view: its wire, or its matrix cell.
+function drawnEdge(edge) {
+  if (scene && scene.dsm) return scene.dsm.cellFor(edge);
+  const drawn = scene && scene.edgeEls && scene.edgeEls.find((item) => item.edge === edge);
+  return drawn ? drawn.element : null;
 }
 function displayEndpoint(id) {
   const node = entries.get(id);
@@ -1051,7 +1054,7 @@ function setGroupOpen(target, open) {
   else if (target.key.endsWith("/*")) keys.delete(target.key);
   else for (const key of [...keys]) if (key === target.key || key.startsWith(`${target.key}/`)) keys.delete(key);
   store(storageKey("groups", scene.focusId), [...keys].sort());
-  const before = new Map([...scene.positions].map(([id, box]) => [id, { ...box }]));
+  const before = new Map([...(scene.positions || [])].map(([id, box]) => [id, { ...box }]));
   const anchor = open ? before.get(`group:${target.key}`) : null;
   redraw();
   settle(before, anchor);
@@ -2026,7 +2029,9 @@ function dropOnGrid(id) {
   settle(before, null);
 }
 function redraw() {
-  if (!currentProjection || view !== "diagram") return;
+  if (!currentProjection) return;
+  if (view === "dsm") { scene = buildScene(currentProjection); drawDsm(); updateFilterUI(); return; }
+  if (view !== "diagram") return;
   scene = buildScene(currentProjection);
   drawScene();
   drawMinimap();
@@ -2345,9 +2350,20 @@ function renderView() {
   view = viewChoice || "diagram";
   $("view-diagram").setAttribute("aria-pressed", String(view === "diagram"));
   $("view-table").setAttribute("aria-pressed", String(view === "table"));
+  $("view-dsm").setAttribute("aria-pressed", String(view === "dsm"));
   $("canvas").classList.toggle("table-mode", view === "table");
+  $("canvas").classList.toggle("dsm-mode", view === "dsm");
   $("table-wrap").hidden = view !== "table";
-  if (view === "diagram") {
+  $("dsm-wrap").hidden = view !== "dsm";
+  if (view !== "dsm") $("dsm-wrap").replaceChildren();
+  if (view === "dsm") {
+    $("table-wrap").replaceChildren();
+    $("graph").replaceChildren();
+    $("minimap").replaceChildren();
+    $("legend").hidden = true;
+    scene = buildScene(currentProjection);
+    drawDsm();
+  } else if (view === "diagram") {
     $("table-wrap").replaceChildren();
     scene = buildScene(currentProjection);
     drawScene();
@@ -2366,6 +2382,61 @@ function setView(next) {
   renderView();
   if (view === "diagram") setCamera(initialCamera());
 }
+// The dependency matrix of the level (dsm.js): the canvas's entries and
+// wires with the same filters and directory groups, rows and columns in the
+// canvas's order (bands, then layers from upper to lower), by name within
+// each. Hovering a cell lights its row and column and the matching rows of
+// the details panel; clicking it shows the dependency's evidence.
+function dsmModel() {
+  const inside = scene.entries.filter((node) => !node.outside_focus).map((node) => node.id);
+  const outside = scene.entries.filter((node) => node.outside_focus).map((node) => node.id);
+  const callers = outside.filter((id) => !scene.layoutEdges.some((edge) => edge.to === id));
+  const others = outside.filter((id) => !callers.includes(id));
+  const present = new Set(inside);
+  let layers = (scene.layers && scene.layers.length ? scene.layers : clientLayers(inside, scene.layoutEdges)).map((ids) => ids.filter((id) => present.has(id)));
+  const layered = new Set(layers.flat());
+  const rest = inside.filter((id) => !layered.has(id));
+  if (rest.length) layers = [...layers, rest];
+  layers = layers.filter((ids) => ids.length);
+  const name = (id) => displayEndpoint(id);
+  const byName = (ids) => [...ids].sort((a, b) => name(a).localeCompare(name(b)) || a.localeCompare(b));
+  const title = currentProjection.focus.title;
+  const groups = [
+    { label: "Outside this focus, depending on it", ids: byName(callers) },
+    ...layers.map((ids, i) => ({ label: layers.length > 1 ? `${title}, layer ${i + 1} of ${layers.length}` : title, ids: byName(ids) })),
+    { label: "Outside this focus", ids: byName(others) },
+  ];
+  const entriesInfo = new Map(scene.entries.map((node) => {
+    const detail = displayEndpoint(node.id);
+    const sub = node.entry_kind === "file" && node.file_path ? splitPath(node.file_path)[0] : null;
+    return [node.id, { title: entryTitle(node), sub, detail: `${detail}${node.outside_focus ? " (outside this focus)" : ""}`, idle: isIdle(node) }];
+  }));
+  const cells = scene.edges.map((edge) => ({ from: edge.from, to: edge.to, count: edge.count, kinds: kindCounts(edge.parts), rules: edge.violation_rule_ids, edge }));
+  const classes = [filters.violationsOnly ? "violations-only" : "", filters.idleOnly ? "idle-only" : ""].filter(Boolean).join(" ");
+  return { groups, entries: entriesInfo, cells, classes };
+}
+function drawDsm() {
+  scene.dsm = Dsm.render($("dsm-wrap"), dsmModel(), {
+    cell: (edge, element) => showEdge(edge, element),
+    entry: (id, element) => { const node = scene.byId.get(id); if (node) showNode(node, element); },
+    open: (id) => {
+      const node = scene.byId.get(id);
+      if (node && node.entry_kind === "architecture") loadFocus(node.architecture_id);
+      else if (node && node.entry_kind === "group") setGroupOpen(node, true);
+    },
+    hover: (source) => linkPanel(source),
+  });
+  // The selection survives a redraw (filters, groups).
+  if (selected && selected.kind === "edge") {
+    const edge = scene.edges.find((other) => other.from === selected.from && other.to === selected.to && other.origin === selected.origin);
+    const cell = edge && scene.dsm.cellFor(edge);
+    if (cell) cell.classList.add("selected");
+  } else if (selected && selected.kind === "node") {
+    const row = scene.dsm.rowFor(selected.id);
+    if (row) row.classList.add("selected");
+  }
+}
+
 // Every entry of the level with its dependency counts, file by file: a
 // filterable index next to the canvas.
 const table = { filter: "", sort: "path", timer: null };
@@ -2584,7 +2655,7 @@ function updateFilterUI() {
 }
 function filtersChanged() {
   store("archgraph.filters.v1", filters);
-  if (view === "diagram") redraw(); else updateFilterUI();
+  if (view === "diagram" || view === "dsm") redraw(); else updateFilterUI();
 }
 for (const [id, key] of [["filter-violations", "violationsOnly"], ["filter-idle", "idleOnly"], ["filter-outside", "outside"], ["filter-observed", "observed"], ["filter-manual", "manual"]]) {
   $(id).addEventListener("change", () => { filters[key] = $(id).checked; filtersChanged(); });
@@ -2618,7 +2689,7 @@ $("reset-layout").addEventListener("click", () => {
 });
 $("collapse-groups").addEventListener("click", () => {
   if (!scene) return;
-  const before = new Map([...scene.positions].map(([id, box]) => [id, { ...box }]));
+  const before = new Map([...(scene.positions || [])].map(([id, box]) => [id, { ...box }]));
   store(storageKey("groups", scene.focusId), null);
   redraw();
   settle(before, null);
@@ -2772,6 +2843,7 @@ async function loadFocus(id, pushHistory = true, options = {}) {
 }
 $("view-diagram").addEventListener("click", () => setView("diagram"));
 $("view-table").addEventListener("click", () => setView("table"));
+$("view-dsm").addEventListener("click", () => setView("dsm"));
 $("zoom-in").addEventListener("click", () => { const size = stageSize(); zoomAt(1.25, size.width / 2, size.height / 2); });
 $("zoom-out").addEventListener("click", () => { const size = stageSize(); zoomAt(0.8, size.width / 2, size.height / 2); });
 $("zoom-level").addEventListener("click", () => { const size = stageSize(); zoomAt(1 / camera.k, size.width / 2, size.height / 2); });

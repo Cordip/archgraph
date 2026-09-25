@@ -846,7 +846,7 @@ async fn every_script_and_stylesheet_the_page_loads_is_served() {
         .filter(|part| part.starts_with('/') && (part.ends_with(".js") || part.ends_with(".css")))
         .collect();
     assert!(
-        assets.contains(&"/board.js") && assets.contains(&"/app.js"),
+        assets.contains(&"/board.js") && assets.contains(&"/dsm.js") && assets.contains(&"/app.js"),
         "{assets:?}"
     );
     for asset in assets {

@@ -297,6 +297,51 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .entry-sub { font: 12.5px var(--font-code); color: var(--ink-3); overflow-wrap: anywhere; }
 .entry-button:focus-visible { outline-offset: 0; }
 
+/* Matrix view: a dependency structure matrix drawn like a drawing's
+   schedule. Rows depend on columns; the diagonal is hatched like a section;
+   violating cells are red, and cells below the diagonal (against the layer
+   order) carry an amber corner. The matrix scrolls in its own pane with
+   sticky row and column headers. Cell size: Dsm.CELL (24 px). */
+.canvas.dsm-mode #stage, .canvas.dsm-mode .tools-bottom, .canvas.dsm-mode .wiring, .canvas.dsm-mode .legend, .canvas.dsm-mode #reset-layout, .canvas.dsm-mode .canvas-notice { display: none; }
+.dsm-wrap { position: absolute; inset: 64px 0 0; z-index: 1; display: flex; background: var(--sheet); border-top: 1px solid var(--rule); }
+.dsm { flex: 1; min-width: 0; overflow: auto; overscroll-behavior: contain; }
+.dsm-grid { display: grid; width: max-content; }
+.dsm-corner { position: sticky; top: 0; left: 0; z-index: 4; display: flex; flex-direction: column; justify-content: flex-end; gap: 2px; padding: 10px 12px; background: var(--sheet); border-right: 1.5px solid var(--frame); border-bottom: 1.5px solid var(--frame); }
+.dsm-corner p { margin: 0; }
+.dsm-axis { font: 600 15px var(--font-tech); }
+.dsm-key { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; font-size: 12.5px; color: var(--ink-3); }
+.dsm-swatch { display: inline-block; width: 12px; height: 12px; border: 1px solid var(--rule); }
+.dsm-swatch.violating { background: var(--red-soft); border-color: var(--red); }
+.dsm-swatch.upward { background: linear-gradient(225deg, var(--amber) 0 4px, var(--card) 4px); }
+.dsm-cols { position: sticky; top: 0; z-index: 3; background: var(--sheet); border-bottom: 1.5px solid var(--frame); }
+.dsm-rows { position: sticky; left: 0; z-index: 3; background: var(--sheet); border-right: 1.5px solid var(--frame); }
+.dsm-col-label { position: absolute; bottom: 0; width: 24px; height: 100%; padding: 6px 0; overflow: hidden; font-size: 12.5px; line-height: 24px; color: var(--ink-2); white-space: nowrap; text-overflow: ellipsis; writing-mode: vertical-rl; transform: rotate(180deg); }
+.dsm-group-col { font: 600 12.5px/24px var(--font-tech); color: var(--ink); background: var(--page); }
+.dsm-row-label { position: absolute; left: 0; display: flex; align-items: baseline; gap: 6px; width: 100%; height: 24px; padding: 0 10px 0 6px; overflow: hidden; font-size: 13px; line-height: 24px; text-align: left; white-space: nowrap; color: var(--ink); background: none; border: 0; }
+.dsm-row-label:hover, .dsm-row-label.selected { background: var(--pencil-soft); }
+.dsm-row-label.selected { box-shadow: inset 3px 0 0 var(--pencil); }
+.dsm-number { flex: none; min-width: 2.6em; font-size: 11.5px; text-align: right; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.dsm-col-label .dsm-number { display: inline-block; min-width: 0; margin-left: 2px; }
+.dsm-name { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; }
+.dsm-sub { min-width: 0; overflow: hidden; font: 11.5px var(--font-code); color: var(--ink-3); text-overflow: ellipsis; }
+.dsm-group-label { position: absolute; left: 0; width: 100%; height: 24px; padding: 0 10px; overflow: hidden; font: 600 13px/24px var(--font-tech); white-space: nowrap; text-overflow: ellipsis; background: var(--page); border-top: 1px solid var(--rule); }
+.dsm-row-label.hot, .dsm-col-label.hot { color: var(--pencil); font-weight: 600; background: color-mix(in srgb, var(--hilite) 35%, var(--sheet)); }
+.dsm-body { position: relative; background-color: var(--card); background-image: linear-gradient(to right, var(--grid-major) 1px, transparent 1px), linear-gradient(to bottom, var(--grid-major) 1px, transparent 1px); background-size: 24px 24px; }
+.dsm-band { position: absolute; top: 0; left: 0; width: 24px; height: 24px; background: color-mix(in srgb, var(--page) 80%, transparent); }
+.dsm-diag { position: absolute; width: 24px; height: 24px; background: repeating-linear-gradient(45deg, var(--rule) 0 1px, transparent 1px 5px); }
+.dsm-hl { position: absolute; top: 0; left: 0; width: 24px; height: 24px; background: color-mix(in srgb, var(--hilite) 22%, transparent); pointer-events: none; }
+.dsm-cell { position: absolute; width: 24px; height: 24px; padding: 0; font: 600 11px/22px var(--font-tech); text-align: center; color: var(--ink); background: var(--pencil-soft); border: 1px solid transparent; font-variant-numeric: tabular-nums; }
+.dsm-cell.h2 { background: color-mix(in srgb, var(--pencil) 22%, var(--card)); }
+.dsm-cell.h3 { background: color-mix(in srgb, var(--pencil) 42%, var(--card)); }
+.dsm-cell.h4 { color: var(--sheet); background: var(--pencil); }
+.dsm-cell.upward { background-image: linear-gradient(225deg, var(--amber) 0 5px, transparent 5px); }
+.dsm-cell.violating { color: var(--on-red); background-color: var(--red); border-color: var(--red); }
+.dsm-cell:hover, .dsm-cell:focus-visible { z-index: 2; outline: 2px solid var(--ink); outline-offset: 0; }
+.dsm-cell.selected { z-index: 2; outline: 3px solid var(--pencil); outline-offset: 0; }
+.dsm.violations-only .dsm-cell:not(.violating) { opacity: .25; }
+.dsm.idle-only .dsm-row-label:not(.idle) { opacity: .4; }
+.dsm-empty { position: absolute; top: 12px; left: 12px; margin: 0; width: max-content; max-width: 480px; padding: 8px 12px; font-size: 14px; color: var(--ink-2); background: var(--sheet); border-left: 3px solid var(--frame); }
+
 /* Diagram */
 #graph text { font-family: var(--font-tech); }
 #graph { transition: opacity .2s ease; }
@@ -568,7 +613,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
   .zoom { justify-content: space-between; }
   .zoom button { flex: 1; padding: 6px 4px; }
   .canvas-notice { left: 12px; right: 12px; bottom: 66px; max-width: none; font-size: 12.5px; }
-  .table-wrap { inset: 112px 0 0; }
+  .table-wrap, .dsm-wrap { inset: 112px 0 0; }
   .entries .num { width: auto; padding: 0 8px; }
   .entries .usage-col { width: auto; }
 }
