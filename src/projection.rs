@@ -27,6 +27,29 @@ pub struct NodeSummary {
     pub observed_file_count: usize,
     pub interfaces: Vec<Interface>,
 }
+/// Human-facing identity of a projection entry: the architecture ID or file
+/// path, never the namespaced `node:`/`file:` UI identity.
+pub fn display_name(node: &ProjectionNode) -> String {
+    let id = node.architecture_id.as_deref().unwrap_or(&node.id);
+    match node.entry_kind {
+        EntryKind::File => node.file_path.clone().unwrap_or_else(|| node.id.clone()),
+        EntryKind::Architecture => id.to_owned(),
+        EntryKind::DirectFiles => format!("{id} (direct files)"),
+        EntryKind::Boundary => format!("{id} (boundary)"),
+    }
+}
+
+impl Projection {
+    /// Display name for a projection node ID, e.g. an edge endpoint.
+    pub fn endpoint_name(&self, id: &str) -> String {
+        self.nodes
+            .iter()
+            .find(|node| node.id == id)
+            .map(display_name)
+            .unwrap_or_else(|| id.to_owned())
+    }
+}
+
 /// " (N observed)" for architecture entries; empty for files and synthetic entries.
 pub fn observed_suffix(node: &ProjectionNode) -> String {
     node.observed_file_count

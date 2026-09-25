@@ -155,7 +155,7 @@ pub fn markdown(context: &AgentContext) -> String {
             out.push_str("No observed dependencies at this projection level.\n");
         }
         for projected in edges {
-            append_edge(&mut out, projected);
+            append_edge(&mut out, p, projected);
         }
     }
     out.push_str("\n## Manual relationships (descriptive intent)\n\n");
@@ -164,7 +164,7 @@ pub fn markdown(context: &AgentContext) -> String {
         .iter()
         .filter(|e| e.edge.origin == crate::model::EdgeOrigin::Manual)
     {
-        append_edge(&mut out, edge);
+        append_edge(&mut out, p, edge);
         for manual in &edge.edge.manual_edges {
             let _ = writeln!(
                 out,
@@ -240,13 +240,13 @@ pub fn markdown(context: &AgentContext) -> String {
     out
 }
 
-fn append_edge(out: &mut String, projected: &ProjectionEdge) {
+fn append_edge(out: &mut String, projection: &Projection, projected: &ProjectionEdge) {
     let edge = &projected.edge;
     let _ = writeln!(
         out,
         "- `{}` → `{}` [{}] × {}{}{}",
-        edge.from,
-        edge.to,
+        projection.endpoint_name(&edge.from),
+        projection.endpoint_name(&edge.to),
         edge.kind,
         edge.count,
         if projected.violation_rule_ids.is_empty() {

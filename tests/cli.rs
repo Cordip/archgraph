@@ -83,6 +83,22 @@ fn check_exit_zero_for_clean_two_for_violations_and_scope_filtering() {
 }
 
 #[test]
+fn text_output_names_architecture_ids_and_evidence_reasons() {
+    let fixture = Fixture::new();
+    let show = String::from_utf8(fixture.run(&["show"], "violation").stdout).unwrap();
+    assert!(show.contains("  app.a -> app.b  IMPORTS"), "{show}");
+    assert!(
+        !show.contains("node:"),
+        "internal projection IDs leaked: {show}"
+    );
+    let check = String::from_utf8(fixture.run(&["check"], "violation").stdout).unwrap();
+    assert!(
+        check.contains("src/a.rs -> src/b.rs  (static|import, confidence 1)"),
+        "{check}"
+    );
+}
+
+#[test]
 fn provider_failures_and_invalid_configuration_exit_one() {
     let fixture = Fixture::new();
     for mode in [

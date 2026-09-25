@@ -229,7 +229,21 @@ pub async fn run(cli: Cli) -> Result<u8> {
                             continue;
                         }
                         for evidence in &edge.evidence {
-                            println!("    {} -> {}", evidence.from_file, evidence.to_file);
+                            let detail = [
+                                evidence.reason.clone(),
+                                evidence
+                                    .confidence
+                                    .map(|value| format!("confidence {value}")),
+                            ]
+                            .into_iter()
+                            .flatten()
+                            .collect::<Vec<_>>();
+                            let detail = if detail.is_empty() {
+                                String::new()
+                            } else {
+                                format!("  ({})", detail.join(", "))
+                            };
+                            println!("    {} -> {}{detail}", evidence.from_file, evidence.to_file);
                         }
                         if edge.evidence.len() < edge.count {
                             println!(

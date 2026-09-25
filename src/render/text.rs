@@ -40,8 +40,8 @@ pub fn render(projection: &Projection) -> String {
         let _ = writeln!(
             out,
             "  {} -> {}  {} × {}{}{}{}",
-            edge.from,
-            edge.to,
+            projection.endpoint_name(&edge.from),
+            projection.endpoint_name(&edge.to),
             edge.kind,
             edge.count,
             if projected.suggested_cut_rule_ids.is_empty() {
