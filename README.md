@@ -1,5 +1,7 @@
 # ArchGraph
 
+[![CI](https://github.com/Cordip/archgraph/actions/workflows/ci.yml/badge.svg)](https://github.com/Cordip/archgraph/actions/workflows/ci.yml)
+
 **Desired recursive architecture + observed code dependencies + rules + concrete evidence.**
 
 ArchGraph is a Rust architecture compiler for one local repository. You author
