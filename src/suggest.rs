@@ -53,6 +53,7 @@ const NON_CODE_EXTENSIONS: &[&str] = &[
     "ini",
     "jpeg",
     "jpg",
+    "json",
     "jst",
     "key",
     "less",
@@ -459,6 +460,7 @@ mod tests {
         files.extend(many("src/tiny", "ts", 2));
         files.extend(many("docs", "md", 30));
         files.push("spec/fixtures/token.created_at".into());
+        files.push("package.json".into());
         files.extend(many("node_modules/lib", "js", 50));
         files.extend(many(".github/workflows", "js", 20));
         files.push("src/weird name.v2/x.ts".into());
@@ -480,14 +482,14 @@ mod tests {
             ]
         );
         assert_eq!(draft.cycle_scopes, [root.clone(), format!("{root}.domain")]);
-        assert_eq!(draft.non_code_extensions, ["md"]);
+        assert_eq!(draft.non_code_extensions, ["json", "md"]);
         assert!(!draft.ruby);
 
         let yaml = draft.render(None, Some("no index"));
         let validated = config::parse(&yaml).unwrap();
         assert_eq!(validated.config.rules.len(), 2);
         assert!(yaml.contains("maps: [\"src/domain/orders/**\"]"), "{yaml}");
-        assert!(yaml.contains("\"**/*.{md}\""), "{yaml}");
+        assert!(yaml.contains("\"**/*.{json,md}\""), "{yaml}");
         assert!(yaml.contains("# No coverage comments: no index"), "{yaml}");
     }
 
