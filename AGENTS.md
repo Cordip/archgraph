@@ -202,3 +202,13 @@ Add new entries at the end: what happened, why, and what to do.
     opacity is applied once to its composited content. Check with
     `document.elementsFromPoint` when something stays stronger than its CSS
     says.
+28. **Chromium repaints a whole SVG for small changes to it.** A new
+    `transform` on the drawing's root group, a class on that group, a
+    `:hover` rule on a card, or an opacity transition on each wire all
+    repainted every path: 100-200 ms a frame on the expanded zammad desktop
+    level (about 10,000 paths). SVG children never get compositor layers,
+    and a CSS transform on the outer `<svg>` lays the whole SVG out again.
+    Move or dim HTML wrappers on their own layers (`#viewport`, `#stage`)
+    and draw highlights on `#lift`; measure with a trace (Paint events
+    grouped by `nodeId`), not with frame times in headless Chromium, whose
+    software raster dwarfs everything else.
