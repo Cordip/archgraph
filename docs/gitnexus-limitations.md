@@ -99,6 +99,17 @@ file-level evidence names the wrong file. No workaround.
 zammad's legacy desktop UI (671 `.coffee` files in `app/assets`) is 99%
 unobserved. No workaround in ArchGraph; treat such nodes as unchecked.
 
+## 7. The index can change while ArchGraph reads it
+
+ArchGraph pages through query results. If `gitnexus analyze` rewrites the index
+in between, for example an auto-index service reacting to file changes, the
+pages mix two graphs. On the validation machine this made two identical runs
+disagree. ArchGraph compares the size and modification time of the index
+(`meta.json`, `lbug`) before and after querying and fails with "index changed
+while compiling" instead of reporting the mix. Rerun when indexing has
+finished. Writing `.archgraph/` inside the repository is itself a file change
+such a service may react to.
+
 ## ArchGraph-side limitations
 
 These are ArchGraph's own and could be fixed here:

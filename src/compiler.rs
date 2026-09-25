@@ -35,6 +35,10 @@ pub async fn compile(
             .await
             .context("code-graph reindex failed")?;
     }
+    let index_before = provider
+        .fingerprint()
+        .await
+        .context("cannot read the code-graph index identity")?;
     let provider_info = provider
         .info()
         .await
@@ -43,6 +47,15 @@ pub async fn compile(
         .dependency_edges()
         .await
         .context("code-graph dependency query failed")?;
+    let index_after = provider
+        .fingerprint()
+        .await
+        .context("cannot read the code-graph index identity")?;
+    // Paged queries against an index being rewritten mix two graphs; that
+    // result must never be reported, clean or not.
+    if index_before != index_after {
+        bail!("the code-graph index changed while compiling (another `gitnexus analyze` ran, e.g. an auto-index service); rerun when indexing has finished");
+    }
     let provider_row_count = provided.len();
     let (observed, filtered_edge_count) =
         select_observations(provided, &validated.config.provider)?;

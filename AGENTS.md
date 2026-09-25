@@ -110,3 +110,11 @@ Add new entries at the end: what happened, why, and what to do.
 13. **A stale `archgraph serve` keeps the port.** A new server on the same port
     exits with a bind error while the browser still shows the old build. Stop
     earlier servers before re-checking UI changes.
+14. **An auto-index service can rewrite the GitNexus index mid-run.** This
+    machine runs `gitnexus-auto-index.service`, which reanalyzes every
+    registered repository on file changes, including ArchGraph's own
+    `.archgraph/` output. Two identical runs then disagree. ArchGraph now fails
+    with "index changed while compiling"; rerun after indexing ends. Check
+    `journalctl --user -u gitnexus-auto-index` before blaming ArchGraph for
+    nondeterminism. Registering a test clone (`gitnexus analyze`) puts it
+    under the service's watch.

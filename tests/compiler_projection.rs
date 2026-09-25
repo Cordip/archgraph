@@ -56,6 +56,7 @@ async fn compile(root: &Path, edges: Vec<CodeEdge>) -> ArchitectureIr {
         &InMemoryProvider {
             edges,
             failure: None,
+            ..Default::default()
         },
         false,
     )
@@ -96,11 +97,46 @@ async fn deterministic_under_shuffled_provider_edges_and_repeated_compilation() 
 }
 
 #[tokio::test]
+async fn an_index_rewritten_during_compilation_is_rejected() {
+    let temp = repository();
+    let provider = InMemoryProvider {
+        edges: vec![edge("src/api/routes.py", "src/domain/model.py")],
+        fingerprints: std::sync::Arc::new(std::sync::Mutex::new(vec![
+            "before".into(),
+            "after".into(),
+        ])),
+        ..Default::default()
+    };
+    let error = compiler::compile(
+        temp.path(),
+        &config::parse(CONFIG).unwrap(),
+        &provider,
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("index changed while compiling"),
+        "{error}"
+    );
+    let stable = InMemoryProvider {
+        fingerprints: std::sync::Arc::new(std::sync::Mutex::new(vec!["same".into()])),
+        ..Default::default()
+    };
+    assert!(
+        compiler::compile(temp.path(), &config::parse(CONFIG).unwrap(), &stable, false)
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
 async fn provider_failure_is_not_a_clean_graph() {
     let temp = repository();
     let provider = InMemoryProvider {
         edges: Vec::new(),
         failure: Some("index is unavailable".into()),
+        ..Default::default()
     };
     let result = compiler::compile(
         temp.path(),
@@ -263,6 +299,7 @@ async fn scoped_check_matches_actual_owners_not_similarly_named_or_unaffected_de
             edge("src/api/handlers/route.py", "src/domain/model.py"),
         ],
         failure: None,
+        ..Default::default()
     };
     let ir = compiler::compile(
         temp.path(),

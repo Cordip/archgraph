@@ -167,6 +167,41 @@ impl GitNexusCliProvider {
         })
     }
 
+    /// Where GitNexus keeps this repository's index: `GITNEXUS_STORAGE_PATH`,
+    /// else the registry entry named by `provider.repo`, else `<root>/.gitnexus`.
+    fn storage_dir(&self) -> Option<PathBuf> {
+        if let Some(path) = std::env::var_os("GITNEXUS_STORAGE_PATH") {
+            return Some(PathBuf::from(path));
+        }
+        let Some(repository) = &self.repository else {
+            return Some(self.root.join(".gitnexus"));
+        };
+        let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+        let registry =
+            std::fs::read_to_string(Path::new(&home).join(".gitnexus/registry.json")).ok()?;
+        let entries: Vec<Value> = serde_json::from_str(&registry).ok()?;
+        entries
+            .iter()
+            .find(|entry| {
+                [entry.get("name"), entry.get("path")]
+                    .into_iter()
+                    .flatten()
+                    .any(|value| value.as_str() == Some(repository.as_str()))
+            })
+            .and_then(|entry| {
+                entry
+                    .get("storagePath")
+                    .and_then(Value::as_str)
+                    .map(PathBuf::from)
+                    .or_else(|| {
+                        entry
+                            .get("path")
+                            .and_then(Value::as_str)
+                            .map(|path| Path::new(path).join(".gitnexus"))
+                    })
+            })
+    }
+
     fn command(&self) -> Command {
         let mut command = Command::new(&self.executable);
         command
@@ -263,6 +298,31 @@ impl CodeGraphProvider for GitNexusCliProvider {
             version,
             repository: self.repository.clone(),
         })
+    }
+
+    async fn fingerprint(&self) -> Result<Option<String>> {
+        // Size and modification time of the index metadata and database.
+        // Queries do not touch them; `analyze` rewrites both.
+        let Some(directory) = self.storage_dir() else {
+            return Ok(None);
+        };
+        let mut parts = Vec::new();
+        for name in ["meta.json", "lbug"] {
+            let Ok(metadata) = std::fs::metadata(directory.join(name)) else {
+                if name == "meta.json" {
+                    return Ok(None);
+                }
+                continue;
+            };
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_nanos())
+                .unwrap_or_default();
+            parts.push(format!("{name}:{}:{modified}", metadata.len()));
+        }
+        Ok(Some(parts.join(";")))
     }
 
     async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {

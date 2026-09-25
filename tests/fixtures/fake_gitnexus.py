@@ -40,6 +40,10 @@ if match is None:
 if "r.type IN ['IMPORTS']" not in query or "ORDER BY source, target, kind, reason" not in query:
     sys.exit("unexpected dependency query")
 offset, size = map(int, match.groups())
+if mode == "index_rewrite":
+    # Another `gitnexus analyze` finishing while ArchGraph pages through results.
+    with open(os.path.join(".gitnexus", "meta.json"), "a", encoding="utf-8") as meta:
+        meta.write(" ")
 rows = []
 if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_large"):
     rows.append(("src/a.rs", "src/b.rs"))

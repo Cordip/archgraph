@@ -138,6 +138,19 @@ fn baseline_accepts_existing_violations_and_fails_only_on_new_ones() {
 }
 
 #[test]
+fn an_index_rewritten_while_compiling_fails_instead_of_mixing_graphs() {
+    let fixture = Fixture::new();
+    let index = fixture.root.path().join(".gitnexus");
+    std::fs::create_dir(&index).unwrap();
+    std::fs::write(index.join("meta.json"), "{}").unwrap();
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(2));
+    let output = fixture.run(&["check", "--json"], "index_rewrite");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("index changed while compiling"));
+}
+
+#[test]
 fn closed_stdout_exits_quietly_instead_of_panicking() {
     let fixture = Fixture::new();
     let mut child = Command::new(env!("CARGO_BIN_EXE_archgraph"))
