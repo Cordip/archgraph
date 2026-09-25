@@ -12,6 +12,13 @@
 // Each channel gives every trace its own track at a constant pitch, ordered to
 // reduce crossings, and grows when it needs more tracks. Where two traces
 // still cross, one hops over the other with a small bridge.
+//
+// Traces marked with the same trunk key and heading the same way (at least
+// `trunkMin` of them) form a trunk, like a cable harness: they share the
+// target's port, one vertical channel (PCB) or one strip per row (Hex), and
+// one track in every channel they pass, so their courses coincide from the
+// point where each joins. trunkRuns then finds how many traces run along
+// each piece, for drawing the trunk thicker where more of them share it.
 const Board = (() => {
   const PITCH = 12; // distance between neighbouring tracks
   const CHAMFER = 8; // PCB corner cut
@@ -24,6 +31,9 @@ const Board = (() => {
   // too wide to read (and to route quickly).
   const HEX_MAX_STRIP = 40;
   const HOP = { height: 4, flat: 6 };
+  // Trunk widths by how many traces share a piece; the widest stays well
+  // inside the track pitch.
+  const TRUNK_TIERS = [{ min: 2, width: 3 }, { min: 4, width: 4.5 }, { min: 8, width: 6 }, { min: 16, width: 7.5 }];
   const ORIGIN = { x: 64, y: 40 };
   const SQRT3 = Math.sqrt(3), SIN60 = SQRT3 / 2;
   const EPS = 1e-6;
@@ -207,8 +217,42 @@ const Board = (() => {
         srcSide: dir > 0 ? "bottom" : "top", dstSide: dir < 0 ? "bottom" : "top" };
     });
   }
+  // Trunks: traces with the same key heading the same way (down or along a
+  // row, or up), when there are at least `min` of them.
+  function markTrunks(list, min) {
+    const groups = new Map();
+    for (const trip of list) if (trip.edge.trunk) push(groups, `${trip.edge.trunk}\u0000${trip.dir < 0 ? "up" : "down"}`, trip);
+    for (const [id, members] of groups) if (members.length >= min) for (const trip of members) trip.trunk = id;
+  }
+  function addStubs(leg, stubs) {
+    for (const stub of stubs) if (!leg.stubs.some((other) => Math.abs(other.at - stub.at) < EPS && other.side === stub.side)) leg.stubs.push(stub);
+  }
+  // A trunk's traces take one track in each channel: a shared leg spanning
+  // all of theirs stands in for them when tracks are ordered and packed.
+  function channelLegs(list) {
+    const groups = new Map(), shared = new Map();
+    for (const trip of list) {
+      for (const item of trip.legs) {
+        if (!item) continue;
+        if (!trip.trunk) { push(groups, item.h, item); continue; }
+        const key = `${trip.trunk}\u0000${item.h}`;
+        let proxy = shared.get(key);
+        if (!proxy) {
+          proxy = { trip, key: trip.index, part: item.part, h: item.h, lo: item.lo, hi: item.hi, stubs: [] };
+          shared.set(key, proxy);
+          push(groups, item.h, proxy);
+        }
+        proxy.lo = Math.min(proxy.lo, item.lo);
+        proxy.hi = Math.max(proxy.hi, item.hi);
+        addStubs(proxy, item.stubs);
+        item.proxy = proxy;
+      }
+    }
+    return groups;
+  }
   // Ports spread along a card side, ordered by where their traces head so
-  // that neighbouring traces leave the card without crossing.
+  // that neighbouring traces leave the card without crossing. A trunk's
+  // traces share one port at their target.
   function spreadPorts(tripList, position, towardFor, gap) {
     const sides = new Map();
     for (const trip of tripList) {
@@ -217,19 +261,34 @@ const Board = (() => {
     }
     for (const [key, items] of sides) {
       const box = position(key.split("\u0000")[0]);
-      items.sort((p, q) => p.toward - q.toward || p.trip.index - q.trip.index || p.end - q.end);
-      const n = items.length;
+      const slots = [], byTrunk = new Map();
+      for (const item of items) {
+        const shared = item.end === 1 && item.trip.trunk;
+        let slot = shared ? byTrunk.get(item.trip.trunk) : null;
+        if (!slot) {
+          slot = { items: [], toward: 0, index: item.trip.index, end: item.end };
+          slots.push(slot);
+          if (shared) byTrunk.set(item.trip.trunk, slot);
+        }
+        slot.items.push(item);
+      }
+      for (const slot of slots) slot.toward = slot.items.reduce((sum, item) => sum + item.toward, 0) / slot.items.length;
+      slots.sort((p, q) => p.toward - q.toward || p.index - q.index || p.end - q.end);
+      const n = slots.length;
       const spacing = n > 1 ? Math.min(gap, (box.width - 2 * PORT_INSET) / (n - 1)) : 0;
-      items.forEach((item, i) => {
+      slots.forEach((slot, i) => {
         const x = box.x + box.width / 2 + (i - (n - 1) / 2) * spacing;
-        if (item.end) item.trip.dstX = x; else item.trip.srcX = x;
+        for (const item of slot.items) { if (item.end) item.trip.dstX = x; else item.trip.srcX = x; }
       });
     }
   }
   function sideCounts(tripList) {
-    const counts = new Map();
-    const add = (key) => counts.set(key, (counts.get(key) || 0) + 1);
-    for (const trip of tripList) { add(`${trip.edge.from}\u0000${trip.srcSide}`); add(`${trip.edge.to}\u0000${trip.dstSide}`); }
+    const counts = new Map(), seen = new Set();
+    const add = (key, trunk) => {
+      if (trunk) { if (seen.has(`${key}\u0000${trunk}`)) return; seen.add(`${key}\u0000${trunk}`); }
+      counts.set(key, (counts.get(key) || 0) + 1);
+    };
+    for (const trip of tripList) { add(`${trip.edge.from}\u0000${trip.srcSide}`, null); add(`${trip.edge.to}\u0000${trip.dstSide}`, trip.trunk); }
     return (id) => Math.max(counts.get(`${id}\u0000top`) || 0, counts.get(`${id}\u0000bottom`) || 0);
   }
   // Heights of the horizontal channels (index 0 is above the first row) and
@@ -293,30 +352,49 @@ const Board = (() => {
     const { cell, R, C } = grid;
     const H = input.card.height;
     const list = trips(input.edges, cell);
+    markTrunks(list, input.trunkMin || 3);
     // Vertical channel j lies right of column j (-1: left of the first). A
     // trace that skips rows takes the channel closest to its straight course;
-    // among equals, the least used one.
+    // among equals, the least used one. A trunk takes one channel for all
+    // its traces, closest to their courses together.
     const load = new Array(C + 1).fill(0);
     const longest = list.filter((trip) => trip.first !== trip.last)
       .sort((p, q) => Math.abs(q.last - q.first) - Math.abs(p.last - p.first) || p.index - q.index);
+    const riders = new Map(), spine = new Map();
+    for (const trip of longest) if (trip.trunk) push(riders, trip.trunk, trip);
     for (const trip of longest) {
-      const xa = trip.a.col + 0.5, xb = trip.b.col + 0.5;
+      if (trip.trunk && spine.has(trip.trunk)) { trip.v = spine.get(trip.trunk); continue; }
+      const group = trip.trunk ? riders.get(trip.trunk) : [trip];
+      const xb = trip.b.col + 0.5;
       let best = null;
       for (let j = -1; j < C; j++) {
         const u = j + 1;
-        const score = [Math.abs(xa - u) + Math.abs(u - xb), load[u], Math.abs(u - (xa + xb) / 2), j];
+        let course = 0, middle = 0;
+        for (const other of group) {
+          const xa = other.a.col + 0.5;
+          course += Math.abs(xa - u) + Math.abs(u - xb);
+          middle += Math.abs(u - (xa + xb) / 2);
+        }
+        const score = [course, load[u], middle, j];
         if (!best || less(score, best.score)) best = { j, score };
       }
       trip.v = best.j;
       load[best.j + 1]++;
+      if (trip.trunk) spine.set(trip.trunk, best.j);
     }
-    const vGroups = new Map();
+    const vGroups = new Map(), vShared = new Map();
     for (const trip of list) {
       if (trip.v === undefined) continue;
       const u = trip.v + 1;
-      trip.vLeg = { trip, key: trip.index, part: 0, lo: Math.min(trip.first, trip.last), hi: Math.max(trip.first, trip.last),
+      const own = { trip, key: trip.index, part: 0, lo: Math.min(trip.first, trip.last), hi: Math.max(trip.first, trip.last),
         stubs: [{ at: trip.first, side: trip.a.col + 0.5 < u ? -1 : 1 }, { at: trip.last, side: trip.b.col + 0.5 < u ? -1 : 1 }] };
-      push(vGroups, trip.v, trip.vLeg);
+      if (!trip.trunk) { trip.vLeg = own; push(vGroups, trip.v, own); continue; }
+      let shared = vShared.get(trip.trunk);
+      if (!shared) { shared = { ...own, stubs: [] }; vShared.set(trip.trunk, shared); push(vGroups, trip.v, shared); }
+      shared.lo = Math.min(shared.lo, own.lo);
+      shared.hi = Math.max(shared.hi, own.hi);
+      addStubs(shared, own.stubs);
+      trip.vLeg = shared;
     }
     const vertical = assign(vGroups, true, 0.5);
     // Columns widen when a card needs more ports than fit at the pitch.
@@ -341,19 +419,16 @@ const Board = (() => {
     // Horizontal channel h lies below row h (-1: above the first row). A
     // port on a card's bottom meets the channel below from its top side.
     const sideOf = (cardSide) => (cardSide === "bottom" ? -1 : 1);
-    const hGroups = new Map();
     const leg = (trip, h, part, p, q) => {
       if (Math.abs(p.x - q.x) < 0.5) return null; // a straight drop needs no track
-      const item = { trip, key: trip.index, part, h, lo: Math.min(p.x, q.x), hi: Math.max(p.x, q.x), stubs: [{ at: p.x, side: p.side }, { at: q.x, side: q.side }] };
-      push(hGroups, h, item);
-      return item;
+      return { trip, key: trip.index, part, h, lo: Math.min(p.x, q.x), hi: Math.max(p.x, q.x), stubs: [{ at: p.x, side: p.side }, { at: q.x, side: q.side }] };
     };
     for (const trip of list) {
       const src = { x: trip.srcX, side: sideOf(trip.srcSide) }, dst = { x: trip.dstX, side: sideOf(trip.dstSide) };
       if (trip.v === undefined) trip.legs = [leg(trip, trip.first, 0, src, dst)];
       else trip.legs = [leg(trip, trip.first, 0, src, { x: trip.vx, side: trip.dir > 0 ? 1 : -1 }), leg(trip, trip.last, 1, { x: trip.vx, side: trip.dir > 0 ? -1 : 1 }, dst)];
     }
-    const horizontal = assign(hGroups, true, 2 * PITCH);
+    const horizontal = assign(channelLegs(list), true, 2 * PITCH);
     const { rowY, trackY, notes } = rowTops(horizontal.count, grid, input.card);
     const positions = new Map();
     for (const [id, place] of cell) positions.set(id, { x: colX[place.col], y: rowY[place.row], width: colW[place.col], height: H, row: place.row, col: place.col });
@@ -362,7 +437,7 @@ const Board = (() => {
       const start = { x: trip.srcX, y: trip.srcSide === "bottom" ? a.y + a.height : a.y };
       const end = { x: trip.dstX, y: trip.dstSide === "bottom" ? b.y + b.height : b.y };
       const points = [start];
-      const legY = (item) => trackY(item.h, horizontal.track.get(item));
+      const legY = (item) => trackY(item.h, horizontal.track.get(item.proxy || item));
       if (trip.v === undefined) {
         if (trip.legs[0]) { const y = legY(trip.legs[0]); points.push({ x: start.x, y }, { x: end.x, y }); }
       } else {
@@ -370,7 +445,7 @@ const Board = (() => {
         points.push({ x: start.x, y: y1 }, { x: trip.vx, y: y1 }, { x: trip.vx, y: y2 }, { x: end.x, y: y2 });
       }
       points.push(end);
-      return { dir: trip.dir === 0 ? "same" : trip.dir > 0 ? "down" : "up", core: shorten(simplify(chamfer(simplify(points), CHAMFER)), 2) };
+      return { dir: trip.dir === 0 ? "same" : trip.dir > 0 ? "down" : "up", trunk: trip.trunk || null, core: shorten(simplify(chamfer(simplify(points), CHAMFER)), 2) };
     });
     const colPitch = input.card.width + MIN_GAP_X;
     const grid2 = { mode: "pcb", R, C, rowY, colX, colW, height: H, rowPitch: H + MIN_GAP_Y, colPitch };
@@ -386,6 +461,7 @@ const Board = (() => {
     const { cell, R, C } = grid;
     const H = input.card.height, ear = earOf(H), rise = H / SQRT3; // horizontal shift across a row
     const list = trips(input.edges, cell);
+    markTrunks(list, input.trunkMin || 3);
     const ports = sideCounts(list);
     let W = input.card.width;
     for (const id of cell.keys()) W = Math.max(W, (ports(id) - 1) * HEX_PORT_GAP + 2 * PORT_INSET);
@@ -394,7 +470,7 @@ const Board = (() => {
     const estimate = W + 2 * ear + HEX_MIN_GAP;
     const slot = (r, c) => c + 0.5 + (r % 2) * 0.5;
     const load = new Map();
-    for (const trip of list) {
+    const chooseStrips = (trip) => {
       trip.strips = [];
       let x = slot(trip.a.row, trip.a.col);
       const target = slot(trip.b.row, trip.b.col);
@@ -418,7 +494,22 @@ const Board = (() => {
         }
       }
       waypoints.push(target);
-      trip.strips.forEach((strip, i) => { strip.key = (waypoints[i] + waypoints[i + 2]) / 2; });
+      trip.strips.forEach((strip, i) => { strip.key = (waypoints[i] + waypoints[i + 2]) / 2; strip.owner = trip; });
+    };
+    // A trunk follows the strips of its longest trace; each of its traces
+    // takes the strips of the rows it crosses.
+    const riders = new Map(), spines = new Map();
+    for (const trip of list) if (trip.trunk) push(riders, trip.trunk, trip);
+    for (const trip of list) {
+      if (!trip.trunk) { chooseStrips(trip); continue; }
+      if (!spines.has(trip.trunk)) {
+        const lead = riders.get(trip.trunk).reduce((best, other) => (Math.abs(other.b.row - other.a.row) > Math.abs(best.b.row - best.a.row) ? other : best));
+        chooseStrips(lead);
+        spines.set(trip.trunk, new Map(lead.strips.map((strip) => [strip.row, strip])));
+      }
+      const rows = spines.get(trip.trunk);
+      trip.strips = [];
+      if (trip.dir) for (let k = trip.a.row + trip.dir; k !== trip.b.row; k += trip.dir) trip.strips.push(rows.get(k));
     }
     // Tracks across each strip, ordered by where the traces come from and
     // go; the gap between cards fits the busiest strip. A second pass turns
@@ -428,8 +519,14 @@ const Board = (() => {
     const gapMid = (r, g) => rectX(r, 0) - ear - gap / 2 + (g + 1) * P;
     const centreOf = (place) => rectX(place.row, place.col) + W / 2;
     const layoutStrips = () => {
-      const strips = new Map();
-      for (const trip of list) for (const strip of trip.strips) push(strips, `${strip.row}:${strip.gap}:${strip.slope}`, { trip, strip });
+      const strips = new Map(), seen = new Set();
+      for (const trip of list) {
+        for (const strip of trip.strips) {
+          if (seen.has(strip)) continue;
+          seen.add(strip);
+          push(strips, `${strip.row}:${strip.gap}:${strip.slope}`, { trip: strip.owner, strip });
+        }
+      }
       let widest = 0;
       for (const key of [...strips.keys()].sort()) {
         const items = strips.get(key);
@@ -452,6 +549,7 @@ const Board = (() => {
     for (const trip of list) {
       const xs = [trip.srcX, ...trip.strips.map((strip) => strip.mid), trip.dstX];
       trip.strips.forEach((strip, i) => {
+        if (strip.owner !== trip) return; // a trunk's strip turns with its longest trace
         const o = sign(xs[i + 2] - strip.mid) || sign(strip.mid - xs[i]) || 1;
         strip.slope = trip.dir > 0 ? o : -o;
         strip.key = (xs[i] + xs[i + 2]) / 2;
@@ -461,7 +559,6 @@ const Board = (() => {
     // Legs along the horizontal channels. A strip end sits where the strip's
     // line meets the row's top or bottom edge; `dir` is the way its line
     // moves sideways as it enters the channel (null: a port, free to choose).
-    const hGroups = new Map();
     for (const trip of list) {
       const ends = [{ x: trip.srcX, side: trip.srcSide === "bottom" ? -1 : 1, dir: null, port: true }];
       for (const strip of trip.strips) {
@@ -477,10 +574,10 @@ const Board = (() => {
         const p = ends[i], q = ends[i + 1];
         const item = { trip, key: trip.index, part, h, p, q, lo: Math.min(p.x, q.x), hi: Math.max(p.x, q.x) + (Math.abs(p.x - q.x) < 0.5 ? 1 : 0),
           stubs: [{ at: p.x, side: p.side }, { at: q.x, side: q.side }] };
-        push(hGroups, h, item);
         trip.legs.push(item);
       }
     }
+    const hGroups = channelLegs(list);
     // Legs share a track only when they stay apart even after their slanted
     // stubs shift them sideways, by at most the channel's height / √3.
     const horizontal = { track: new Map(), count: new Map() };
@@ -502,7 +599,7 @@ const Board = (() => {
       };
       const points = [];
       for (const item of trip.legs) {
-        const y = trackY(item.h, horizontal.track.get(item));
+        const y = trackY(item.h, horizontal.track.get(item.proxy || item));
         const yp = edgeY(item.p, item), yq = edgeY(item.q, item);
         const dp = Math.abs(y - yp) / SQRT3, dq = Math.abs(y - yq) / SQRT3;
         // Free (port) ends turn towards the other end; the choice avoiding
@@ -521,7 +618,7 @@ const Board = (() => {
         points.push({ x: best.xp, y }, { x: best.xq, y });
         if (item === trip.legs[trip.legs.length - 1]) points.push({ x: item.q.x, y: yq });
       }
-      return { dir: trip.dir === 0 ? "same" : trip.dir > 0 ? "down" : "up", core: shorten(simplify(points), 2) };
+      return { dir: trip.dir === 0 ? "same" : trip.dir > 0 ? "down" : "up", trunk: trip.trunk || null, core: shorten(simplify(points), 2) };
     });
     const grid2 = { mode: "hex", R, C, rowY, height: H, rowPitch: H + MIN_GAP_Y, P, W, ear, gap };
     return finish(input, positions, traces, notes, grid2, 60);
@@ -573,9 +670,11 @@ const Board = (() => {
   // also drawn over a casing of the sheet's colour, so a later trace cuts a
   // small gap into an earlier one wherever they cross.
   function addHops(traces, ramp, halfWidths) {
+    const trunkOf = traces.map((trace) => trace.trunk || null);
+    const kin = (a, b) => a === b || (trunkOf[a] !== null && trunkOf[a] === trunkOf[b]);
     const segments = [];
     traces.forEach((trace, ti) => { for (let i = 0; i + 1 < trace.core.length; i++) segments.push({ ti, i, a: trace.core[i], b: trace.core[i + 1] }); });
-    const hops = new Map(); // segment index → [distance along it]
+    const hops = new Map(); // segment index → [{ at: distance along it, half: half width of the trace crossed }]
     const horizontal = (s) => Math.abs(s.a.y - s.b.y) < 0.01;
     const footprint = (s) => HOP.flat + 2 * (halfWidths[s.ti] || 0) + 2 * HOP.height / Math.tan(ramp * Math.PI / 180);
     const fits = (s, at) => { const along = distance(s.a, at), length = distance(s.a, s.b); return along > footprint(s) / 2 + 1 && length - along > footprint(s) / 2 + 3; };
@@ -585,8 +684,9 @@ const Board = (() => {
     const CELL_X = 96, CELL_Y = 24;
     const cellKey = (cx, cy) => (cx + 50000) * 100000 + (cy + 50000);
     const cells = new Map();
+    // A trunk's runs are drawn as one thick trunk over them, so they do not hop.
     segments.forEach((s, index) => {
-      if (!horizontal(s)) return;
+      if (!horizontal(s) || trunkOf[s.ti] !== null) return;
       const cy = Math.floor(s.a.y / CELL_Y);
       for (let cx = Math.floor(Math.min(s.a.x, s.b.x) / CELL_X); cx <= Math.floor(Math.max(s.a.x, s.b.x) / CELL_X); cx++) push(cells, cellKey(cx, cy), index);
     });
@@ -604,9 +704,9 @@ const Board = (() => {
             if (seen.has(i)) continue;
             seen.add(i);
             const s = segments[i];
-            if (s.ti === u.ti) continue;
+            if (kin(s.ti, u.ti)) continue;
             const at = intersection(s, u);
-            if (at && fits(s, at)) push(hops, i, distance(s.a, at));
+            if (at && fits(s, at)) push(hops, i, { at: distance(s.a, at), half: halfWidths[u.ti] || 0 });
           }
         }
       }
@@ -615,20 +715,22 @@ const Board = (() => {
     traces.forEach((trace, ti) => {
       const points = trace.core, out = [points[0]];
       for (let i = 0; i + 1 < points.length; i++, index++) {
-        const list = (hops.get(index) || []).sort((p, q) => p - q);
+        const list = (hops.get(index) || []).sort((p, q) => p.at - q.at || p.half - q.half);
         const a = points[i], b = points[i + 1], length = distance(a, b);
         const d = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
         let n = { x: d.y, y: -d.x };
         if (n.y > EPS || (Math.abs(n.y) <= EPS && n.x > 0)) n = { x: -n.x, y: -n.y };
-        const half = HOP.flat / 2 + (halfWidths[ti] || 0), run = HOP.height / Math.tan(ramp * Math.PI / 180);
-        // Hops close together merge into one longer bridge.
+        const own = HOP.flat / 2 + (halfWidths[ti] || 0), run = HOP.height / Math.tan(ramp * Math.PI / 180);
+        // Hops close together merge into one longer bridge; a bridge over a
+        // trunk is as much wider as the trunk.
         const spans = [];
-        for (const at of list) {
+        for (const { at, half: other } of list) {
           const last = spans[spans.length - 1];
-          if (last && at - last[1] < 2 * (half + run) + 2) last[1] = at; else spans.push([at, at]);
+          if (last && at - last[1] < 2 * (own + last[2] + run) + 2) { last[1] = at; last[2] = Math.max(last[2], other); } else spans.push([at, at, other]);
         }
         let floor = 0;
-        for (const [from, to] of spans) {
+        for (const [from, to, other] of spans) {
+          const half = own + other;
           const s0 = from - half - run, s1 = to + half + run;
           if (s0 < floor + 1 || s1 > length - 3) continue;
           const at = (t, lift) => ({ x: a.x + d.x * t + n.x * lift, y: a.y + d.y * t + n.y * lift });
@@ -656,11 +758,10 @@ const Board = (() => {
   // A label sits on a horizontal run of its own trace, in a spot that covers
   // no card, no other label and no other trace; a label that fits nowhere is
   // marked crowded and shown only when its edge is highlighted.
-  function placeLabels(traces, positions, sizes) {
+  function placeLabels(traces, positions, sizes, taken) {
     if (!sizes.some(Boolean)) { for (const trace of traces) trace.label = { ...longestMiddle(trace.core), crowded: true }; return; }
     const index = segmentIndex(traces, "points");
     const cards = [...positions.values()].map((box) => ({ x: box.x - 4 - (box.hex || 0), y: box.y - 4, width: box.width + 8 + 2 * (box.hex || 0), height: box.height + 8 }));
-    const taken = [];
     const order = sizes.map((size, i) => i).filter((i) => sizes[i]).sort((p, q) => sizes[q].priority - sizes[p].priority || p - q);
     for (const ti of order) {
       const { width, height } = sizes[ti];
@@ -698,16 +799,113 @@ const Board = (() => {
     return { x: best.x, y: best.y };
   }
 
+  // ------------------------------------------------------------ trunks
+  // Each trunk's traces cut into pieces at every point of the others, and
+  // the number of its traces running along each piece. Runs are the longest
+  // stretches of a trace whose pieces are shared by at least a tier's
+  // count, drawn in that tier's width; dots mark where a trace joins.
+  function trunkRuns(traces) {
+    const groups = new Map();
+    traces.forEach((trace, ti) => { if (trace.trunk) push(groups, trace.trunk, ti); });
+    const key = (p) => `${p.x},${p.y}`;
+    const between = (v, a, b) => v > Math.min(a, b) + 0.05 && v < Math.max(a, b) - 0.05;
+    const trunks = [];
+    for (const id of [...groups.keys()].sort()) {
+      const members = groups.get(id);
+      const byY = new Map(), byX = new Map(), seen = new Set();
+      for (const ti of members) {
+        for (const p of traces[ti].core) {
+          if (seen.has(key(p))) continue;
+          seen.add(key(p));
+          push(byY, p.y, p);
+          push(byX, p.x, p);
+        }
+      }
+      const paths = members.map((ti) => {
+        const core = traces[ti].core, pieces = [];
+        for (let i = 0; i + 1 < core.length; i++) {
+          const a = core[i], b = core[i + 1];
+          const cuts = a.y === b.y ? (byY.get(a.y) || []).filter((p) => between(p.x, a.x, b.x))
+            : a.x === b.x ? (byX.get(a.x) || []).filter((p) => between(p.y, a.y, b.y)) : [];
+          cuts.sort((p, q) => distance(a, p) - distance(a, q));
+          let from = a;
+          for (const p of [...cuts, b]) { if (distance(from, p) >= 0.05) { pieces.push([from, p]); from = p; } }
+        }
+        return pieces;
+      });
+      const pieceKey = ([p, q]) => { const s = key(p), t = key(q); return s < t ? `${s};${t}` : `${t};${s}`; };
+      const count = new Map();
+      for (const pieces of paths) for (const k of new Set(pieces.map(pieceKey))) count.set(k, (count.get(k) || 0) + 1);
+      const shared = (piece) => count.get(pieceKey(piece)) || 0;
+      const tiers = [];
+      for (const tier of TRUNK_TIERS) {
+        const runs = new Map();
+        for (const pieces of paths) {
+          let run = null;
+          const flush = () => { if (run) runs.set(run.map(key).join(" "), run); run = null; };
+          for (const piece of pieces) {
+            if (shared(piece) >= tier.min) { if (!run) run = [piece[0]]; run.push(piece[1]); } else flush();
+          }
+          flush();
+        }
+        if (runs.size) tiers.push({ ...tier, runs: [...runs.keys()].sort().map((k) => runs.get(k)) });
+      }
+      const dots = new Map();
+      for (const pieces of paths) {
+        const at = pieces.findIndex((piece) => shared(piece) >= 2);
+        if (at > 0) dots.set(key(pieces[at][0]), pieces[at][0]);
+      }
+      const core = traces[members[0]].core;
+      trunks.push({ id, members, tiers, dots: [...dots.keys()].sort().map((k) => dots.get(k)), end: core[core.length - 1],
+        width: tiers.length ? tiers[tiers.length - 1].width : 0 });
+    }
+    return trunks;
+  }
+  // A trunk's tag sits on the middle of one of its widest runs, preferring
+  // a long horizontal stretch, clear of cards and other labels.
+  function placeTags(trunks, sizes, cards, taken) {
+    for (const trunk of trunks) {
+      const size = sizes && sizes.get(trunk.id);
+      const top = trunk.tiers[trunk.tiers.length - 1];
+      if (!size || !top) { trunk.label = null; continue; }
+      const segments = [];
+      for (const run of top.runs) for (let i = 0; i + 1 < run.length; i++) segments.push({ a: run[i], b: run[i + 1], flat: Math.abs(run[i].y - run[i + 1].y) < 0.01 });
+      segments.sort((p, q) => (q.flat - p.flat) || distance(q.a, q.b) - distance(p.a, p.b) || p.a.y - q.a.y || p.a.x - q.a.x);
+      let found = null;
+      for (const segment of segments) {
+        for (const f of [0.5, 0.3, 0.7, 0.15, 0.85]) {
+          const x = segment.a.x + (segment.b.x - segment.a.x) * f, y = segment.a.y + (segment.b.y - segment.a.y) * f;
+          const box = { x: x - size.width / 2, y: y - size.height / 2, width: size.width, height: size.height };
+          if (cards.some((card) => overlaps(card, box)) || taken.some((other) => overlaps(other, box))) continue;
+          found = { x, y, box };
+          break;
+        }
+        if (found) break;
+      }
+      if (found) taken.push(found.box);
+      const fallback = segments[0] ? { x: (segments[0].a.x + segments[0].b.x) / 2, y: (segments[0].a.y + segments[0].b.y) / 2 } : trunk.end;
+      trunk.label = found ? { x: round(found.x), y: round(found.y), crowded: false } : { x: round(fallback.x), y: round(fallback.y), crowded: true };
+    }
+  }
+
   function finish(input, positions, traces, notes, grid, ramp) {
     for (const trace of traces) trace.core = trace.core.map((p) => ({ x: round(p.x), y: round(p.y) }));
-    addHops(traces, ramp, input.edges.map((edge) => edge.halfWidth || 0));
+    const trunks = trunkRuns(traces);
+    const halfWidths = input.edges.map((edge) => edge.halfWidth || 0);
+    for (const trunk of trunks) for (const ti of trunk.members) halfWidths[ti] = Math.max(halfWidths[ti], trunk.width / 2);
+    addHops(traces, ramp, halfWidths);
     for (const trace of traces) trace.points = trace.points.map((p) => ({ x: round(p.x), y: round(p.y) }));
-    placeLabels(traces, positions, input.labels || traces.map(() => null));
+    // A trunk's traces are labelled by its tag; their own labels show on hover.
+    const sizes = (input.labels || traces.map(() => null)).map((size, i) => (traces[i].trunk ? null : size));
+    const cards = [...positions.values()].map((box) => ({ x: box.x - 4 - (box.hex || 0), y: box.y - 4, width: box.width + 8 + 2 * (box.hex || 0), height: box.height + 8 }));
+    const taken = [];
+    placeTags(trunks, input.tags ? new Map(trunks.map((trunk) => [trunk.id, input.tags(trunk.members)])) : null, cards, taken);
+    placeLabels(traces, positions, sizes, taken);
     let extent = null;
     const add = (x, y) => { extent = extent ? { x1: Math.min(extent.x1, x), y1: Math.min(extent.y1, y), x2: Math.max(extent.x2, x), y2: Math.max(extent.y2, y) } : { x1: x, y1: y, x2: x, y2: y }; };
     for (const box of positions.values()) { add(box.x - (box.hex || 0), box.y); add(box.x + box.width + (box.hex || 0), box.y + box.height); }
     for (const trace of traces) for (const p of trace.points) add(p.x, p.y);
-    return { positions, traces, notes, grid, extent };
+    return { positions, traces, trunks, notes, grid, extent };
   }
 
   // ------------------------------------------------------------ public
@@ -763,5 +961,5 @@ const Board = (() => {
     const ear = earOf(height);
     return `M 0 0 H ${round(width)} L ${round(width + ear)} ${round(height / 2)} L ${round(width)} ${round(height)} H 0 L ${round(-ear)} ${round(height / 2)} Z`;
   }
-  return { route, snap, slotBox, offsetPolyline, pathData, hexOutline, earOf, PITCH };
+  return { route, snap, slotBox, offsetPolyline, pathData, hexOutline, earOf, PITCH, TRUNK_TIERS };
 })();

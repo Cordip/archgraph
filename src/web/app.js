@@ -448,20 +448,42 @@ function paint(lit, className, rootClass) {
   for (const [id, element] of scene.nodeEls) element.classList.toggle(className, Boolean(lit) && lit.nodes.has(id));
   for (const item of scene.edgeEls) {
     item.element.classList.toggle(className, Boolean(lit) && lit.edges.has(item.edge));
+    if (!item.marker) continue;
     const strong = item.element.classList.contains("lit") || item.element.classList.contains("hover");
     item.line.setAttribute("marker-end", strong ? item.litMarker : item.marker);
   }
+  // A trunk lights with any of its wires.
+  for (const item of scene.trunkEls || []) item.element.classList.toggle(className, Boolean(lit) && item.trunk.members.some((edge) => lit.edges.has(edge)));
 }
 // Hovering an entry or edge on the canvas marks the rows naming it in the
 // details panel; hovering a row lights its edge and entry on the canvas.
 function linkPanel(source) {
   for (const row of document.querySelectorAll("#details .dependency")) {
-    row.classList.toggle("linked", Boolean(source) && (source.edge ? row.edge === source.edge : row.otherId === source.node));
+    row.classList.toggle("linked", Boolean(source) && (source.trunk ? source.trunk.members.includes(row.edge) : source.edge ? row.edge === source.edge : row.otherId === source.node));
   }
 }
 function hoverCanvas(lit, source) {
   paint(lit, "hover", "has-hover");
   linkPanel(lit ? source : null);
+}
+// A trunk's details: its wires, each opening its own evidence.
+function showTrunk(trunk, element) {
+  select(element, trunkScope(trunk));
+  selected = { kind: "trunk", id: trunk.id };
+  const target = scene.byId.get(trunk.target);
+  const violations = trunk.members.filter(violates);
+  const panel = detailsTitle(trunkText(trunk), displayEndpoint(trunk.target), "Trunk");
+  const sources = new Set(trunk.members.map((edge) => edge.from)).size;
+  panel.append(html("p", `${plural(trunk.members.length, "wire")} from ${sources} ${sources === 1 ? "entry" : "entries"} into ${target ? entryTitle(target) : trunk.target}, drawn as one trunk that fans out near their sources.`));
+  if (violations.length) {
+    const rules = [...new Set(violations.flatMap((edge) => edge.violation_rule_ids))].sort();
+    panel.append(html("p", `⚠ ${violations.length} of them ${violations.length === 1 ? "violates" : "violate"} ${rules.join(", ")}`, "violation-badge"));
+  }
+  const actions = html("div", null, "actions");
+  if (target) actions.append(actionButton(`Show ${entryTitle(target)}`, () => selectEntry(trunk.target, { centre: true }), "secondary"));
+  panel.append(actions);
+  dependencyList(panel, "Wires in this trunk", trunk.members, (edge) => edge.from);
+  revealDetails();
 }
 // A path may break after a slash, never inside a name.
 function pathText(text, className) {
@@ -890,6 +912,9 @@ function restoreSelection() {
     if (item) select(item.element, { nodes: new Set([item.edge.from, item.edge.to]), edges: new Set([item.edge]) });
   } else if (selected.kind === "violation") {
     select(null, violationScope(selected.violation));
+  } else if (selected.kind === "trunk") {
+    const item = (scene.trunkEls || []).find(({ trunk }) => trunk.id === selected.id);
+    if (item) select(item.element, trunkScope(item.trunk)); else showOverview();
   }
 }
 
@@ -1169,27 +1194,98 @@ function contentBounds() {
   return { x: box.x1, y: box.y1, width: box.x2 - box.x1, height: box.y2 - box.y1 };
 }
 
+// ---------------------------------------------------------------- trunks
+// Wires from several sibling entries (those inside the focus, or those
+// outside it) into the same target merge into one trunk, like a cable
+// harness: each source keeps a short branch, and the trunk carries them all
+// to the target, labelled with their number. It takes at least TRUNK_MIN
+// wires heading the same way; manual dependencies are never merged.
+const TRUNK_MIN = 3;
+function trunkKey(edge) {
+  if (edge.origin === "manual") return null;
+  const source = scene.byId.get(edge.from);
+  return `${edge.to}\u0000${source && source.outside_focus ? "outside" : "inside"}`;
+}
+// The tier (width class) of a trunk piece shared by `count` wires.
+function trunkTier(count) {
+  let tier = null;
+  for (const item of Board.TRUNK_TIERS) if (count >= item.min) tier = item;
+  return tier;
+}
+// A trunk takes its wires' colour when they share one (always when wires are
+// coloured by target); otherwise it is neutral ink, each wire keeps its
+// colour on its branch, and the trunk's tag shows the colours it carries.
+function trunkLook(members) {
+  const looks = members.map(edgeLook);
+  const nets = new Set(looks.map((look) => (look.strands || look.net === null || look.net === undefined ? null : look.net)));
+  const single = nets.size === 1 && !nets.has(null) ? [...nets][0] : null;
+  const carried = [...new Set(looks.flatMap((look) => (look.strands ? look.strands.map((strand) => strand.net) : [look.net])).filter((net) => net !== null && net !== undefined))].sort((a, b) => a - b);
+  return { net: single, carried };
+}
+// The room a tag needs at the largest scale its full text is drawn at.
+const TAG_SCALE = 1.5;
+const TAG_SHORT_SCALE = 2.2;
+function tagSize(text) { return { width: (text.length * 7.6 + 34) * TAG_SCALE, height: 22 * TAG_SHORT_SCALE }; }
+function trunkText(trunk) {
+  const target = scene.byId.get(trunk.target);
+  return `×${trunk.members.length} → ${compact(target ? entryTitle(target) : trunk.target, 30)}`;
+}
+
 // ---------------------------------------------------------------- routing
 // Downward edges leave a card's bottom and enter the next card's top; upward
 // ones (against the layer order) run top to bottom and bow to the side, so
 // they stand out. Each card side spreads its edges over several ports.
-// Edges of entries the user moved take a direct curve instead.
+// Edges of entries the user moved take a direct curve instead. A trunk's
+// wires run to a junction just past their own row; from junction to
+// junction, row by row, the trunk gathers them and carries them on to the
+// target, wider as more join.
 function route(edges, positions, moved) {
   const plans = edges.map((edge, order) => {
     const a = positions.get(edge.from), b = positions.get(edge.to);
     if (!a || !b) throw new Error("Projection edge references an absent visible node");
-    return { edge, order, a, b, free: moved.has(edge.from) || moved.has(edge.to), dir: b.row > a.row ? "down" : b.row < a.row ? "up" : "same" };
+    return { edge, order, a, b, fromId: edge.from, toId: edge.to, free: moved.has(edge.from) || moved.has(edge.to), dir: b.row > a.row ? "down" : b.row < a.row ? "up" : "same" };
   });
+  const groups = new Map(), trunks = [];
+  for (const plan of plans) {
+    const key = plan.free || plan.dir === "same" ? null : trunkKey(plan.edge);
+    if (key) { if (!groups.has(`${key}\u0000${plan.dir}`)) groups.set(`${key}\u0000${plan.dir}`, []); groups.get(`${key}\u0000${plan.dir}`).push(plan); }
+  }
+  let order = plans.length;
+  for (const [id, members] of groups) {
+    if (members.length < TRUNK_MIN) continue;
+    const down = members[0].dir === "down", target = members[0].b, targetId = members[0].toId;
+    const byRow = new Map();
+    for (const plan of members) { if (!byRow.has(plan.a.row)) byRow.set(plan.a.row, []); byRow.get(plan.a.row).push(plan); }
+    const tx = target.x + target.width / 2;
+    const junctions = [], carriers = [];
+    let joined = 0, previous = null;
+    for (const row of [...byRow.keys()].sort((a, b) => (down ? a - b : b - a))) {
+      const riders = byRow.get(row), box = riders[0].a;
+      const mean = riders.reduce((sum, plan) => sum + plan.a.x + plan.a.width / 2, 0) / riders.length;
+      const junction = { x: previous ? (previous.x + mean + tx) / 3 : (2 * mean + tx) / 3, y: down ? box.y + box.height + GAP_Y * 0.42 : box.y - GAP_Y * 0.42,
+        width: 0, height: 0, row: row + (down ? 0.5 : -0.5) };
+      for (const plan of riders) { plan.b = junction; plan.toId = null; plan.trunk = id; }
+      if (previous) carriers.push({ edge: null, trunk: id, order: order++, a: previous, b: junction, fromId: null, toId: null, free: false, dir: members[0].dir, count: joined });
+      joined += riders.length;
+      junctions.push(junction);
+      previous = junction;
+    }
+    carriers.push({ edge: null, trunk: id, order: order++, a: previous, b: target, fromId: null, toId: targetId, free: false, dir: members[0].dir, count: joined, last: true });
+    trunks.push({ id, target: targetId, members: members.map((plan) => plan.edge), carriers, carrier: carriers[carriers.length - 1], junctions });
+  }
+  const all = [...plans, ...trunks.flatMap((trunk) => trunk.carriers)];
   const ports = new Map();
   const attach = (id, box, side, plan, end, other) => {
     const key = `${id}\u0000${side}`;
     if (!ports.has(key)) ports.set(key, { box, side, items: [] });
     ports.get(key).items.push({ plan, end, other });
   };
-  for (const plan of plans) {
+  for (const plan of all) {
     if (plan.free) continue;
-    attach(plan.edge.from, plan.a, plan.dir === "down" ? "bottom" : "top", plan, "start", plan.b);
-    attach(plan.edge.to, plan.b, plan.dir === "up" ? "bottom" : "top", plan, "end", plan.a);
+    if (plan.fromId) attach(plan.fromId, plan.a, plan.dir === "down" ? "bottom" : "top", plan, "start", plan.b);
+    else plan.start = { x: plan.a.x, y: plan.a.y };
+    if (plan.toId) attach(plan.toId, plan.b, plan.dir === "up" ? "bottom" : "top", plan, "end", plan.a);
+    else plan.end = { x: plan.b.x, y: plan.b.y };
   }
   for (const { box, side, items } of ports.values()) {
     items.sort((p, q) => p.other.x - q.other.x || p.plan.order - q.plan.order);
@@ -1219,7 +1315,13 @@ function route(edges, positions, moved) {
     channelUse.set(key, used + 1);
     return gaps[best] + ((used % 5) - 2) * 5;
   };
-  for (const plan of plans) {
+  const between = (from, to) => {
+    const list = [];
+    if (to > from) for (let row = Math.floor(from) + 1; row < to; row++) list.push(row);
+    else for (let row = Math.ceil(from) - 1; row > to; row--) list.push(row);
+    return list;
+  };
+  for (const plan of all) {
     if (plan.free) { freeRoute(plan); continue; }
     const s = plan.start, e = plan.end;
     plan.curves = [];
@@ -1231,7 +1333,7 @@ function route(edges, positions, moved) {
     }
     const sign = plan.dir === "down" ? 1 : -1;
     const points = [s];
-    for (let row = plan.a.row + sign; row !== plan.b.row; row += sign) {
+    for (const row of between(plan.a.row, plan.b.row)) {
       const boxes = rows.get(row);
       if (!boxes) continue;
       const box = boxes[0];
@@ -1253,7 +1355,7 @@ function route(edges, positions, moved) {
     }
     plan.d = d;
   }
-  return plans;
+  return { plans, trunks };
 }
 function freeRoute(plan) {
   const a = plan.a, b = plan.b;
@@ -1303,9 +1405,11 @@ function bezier([p, c1, c2, q], t) {
 function placeLabels(plans, positions) {
   const taken = [...positions.values()].map((box) => ({ x: box.x - 2, y: box.y - 2, width: box.width + 4, height: box.height + 4 }));
   const overlaps = (a) => taken.some((b) => a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height);
-  const order = [...plans].sort((a, b) => (b.edge.violation_rule_ids.length > 0) - (a.edge.violation_rule_ids.length > 0) || b.edge.count - a.edge.count || a.order - b.order);
+  const weight = (plan) => (plan.edge ? (plan.edge.violation_rule_ids.length ? 1e9 : 0) + plan.edge.count : 1e12);
+  const order = plans.filter((plan) => !plan.trunk || !plan.edge).sort((a, b) => weight(b) - weight(a) || a.order - b.order);
+  for (const plan of plans) if (plan.trunk && plan.edge) { plan.crowded = true; plan.label = bezier(plan.curves[0], 0.5); }
   for (const plan of order) {
-    const width = plan.text.length * 7.2 + 8, height = 17;
+    const width = plan.edge ? plan.text.length * 7.2 + 8 : tagSize(plan.text).width, height = plan.edge ? 17 : tagSize(plan.text).height;
     const curves = plan.curves.length > 1 ? [plan.curves[0], plan.curves[plan.curves.length - 1]] : plan.curves;
     plan.crowded = true;
     plan.label = bezier(curves[0], 0.5);
@@ -1442,15 +1546,17 @@ function textTier(k) {
   const want = TEXT.minTitle / k;
   const title = compact ? Math.min(TEXT.maxCompactTitle, textStep(want, TEXT.title)) : Math.min(TEXT.maxTitle, textStep(Math.max(want, TEXT.title), TEXT.title));
   const label = Math.min(TEXT.maxLabel, textStep(Math.max(TEXT.minLabel / k, TEXT.label), TEXT.label));
-  const tag = Math.min(2, textStep(Math.max(TEXT.minTitle / k, TEXT.label), TEXT.label) / TEXT.label);
+  const tag = Math.min(TAG_SCALE, textStep(Math.max(TEXT.minTitle / k, TEXT.label), TEXT.label) / TEXT.label);
+  const tagShort = Math.min(TAG_SHORT_SCALE, textStep(Math.max(TEXT.minTitle / k, TEXT.label), TEXT.label) / TEXT.label);
   const up = (value, digits) => Math.ceil(value * digits - 1e-6) / digits;
-  return { compact, title: up(title, 10), label: up(label / TEXT.label, 100), tag: up(tag, 100), key: `${compact}:${up(title, 10)}` };
+  return { compact, title: up(title, 10), label: up(label / TEXT.label, 100), tag: up(tag, 100), tagShort: up(tagShort, 100), key: `${compact}:${up(title, 10)}` };
 }
 function updateText() {
   if (!scene || !scene.cards) return;
   const tier = textTier(camera.k), graph = $("graph");
   graph.style.setProperty("--label-scale", String(tier.label));
   graph.style.setProperty("--tag-scale", String(tier.tag));
+  graph.style.setProperty("--tag-short-scale", String(tier.tagShort));
   graph.classList.toggle("compact", tier.compact);
   graph.classList.toggle("tagless", camera.k < TAG_ZOOM);
   if (scene.textKey === tier.key) return;
@@ -1554,22 +1660,27 @@ function drawScene() {
   // on a board (each mode remembers its own).
   const saved = stored(storageKey(layoutKind(), scene.focusId), {}) || {};
   const moved = new Set();
-  let positions, notes, left, plans;
+  let positions, notes, left, plans, trunks = [];
   Object.assign(scene, { board: null, frameTraces: null, dropCell: null, ghost: null });
   if (board) {
     const fixed = new Map();
     for (const [id, place] of Object.entries(saved)) if (Array.isArray(place) && place.length === 2 && place.every(Number.isInteger)) fixed.set(id, place);
     const started = performance.now();
     const result = Board.route({ mode: display.mode, rows: arrangement.rows, centre: arrangement.centre, unit: CARD.width + GAP_X, card: CARD, fixed,
-      edges: scene.edges.map((edge) => ({ from: edge.from, to: edge.to, halfWidth: busHalfWidth(edge) })),
+      edges: scene.edges.map((edge) => ({ from: edge.from, to: edge.to, halfWidth: busHalfWidth(edge), trunk: trunkKey(edge) })), trunkMin: TRUNK_MIN,
       labels: scene.edges.length <= LABEL_LIMIT ? scene.edges.map((edge) => ({ width: labelText(edge).length * 6.6 + 10, height: 16,
-        priority: (edge.violation_rule_ids.length ? 1e9 : 0) + edge.count })) : null });
+        priority: (edge.violation_rule_ids.length ? 1e9 : 0) + edge.count })) : null,
+      tags: (members) => tagSize(trunkText({ target: scene.edges[members[0]].to, members })) });
     scene.routeTime = performance.now() - started;
     ({ positions, notes } = result);
     left = PAD + 24;
     scene.board = result;
     plans = result.traces.map((trace, order) => ({ edge: scene.edges[order], order, dir: trace.dir, points: trace.points, core: trace.core,
-      d: Board.pathData(trace.points), label: trace.label, crowded: trace.label.crowded }));
+      d: Board.pathData(trace.points), label: trace.label, crowded: trace.label.crowded, trunk: trace.trunk }));
+    trunks = result.trunks.map((trunk) => ({ id: trunk.id, target: scene.edges[trunk.members[0]].to, members: trunk.members.map((ti) => scene.edges[ti]),
+      runs: trunk.tiers.flatMap((tier) => tier.runs.map((run) => ({ tier, d: Board.pathData(run),
+        end: Math.abs(run[run.length - 1].x - trunk.end.x) < 0.05 && Math.abs(run[run.length - 1].y - trunk.end.y) < 0.05 }))),
+      dots: trunk.dots, label: trunk.label }));
     const inside = new Set(scene.entries.filter((node) => !node.outside_focus).map((node) => node.id));
     scene.frameTraces = plans.filter((plan) => inside.has(plan.edge.from) && inside.has(plan.edge.to)).flatMap((plan) => plan.points);
   } else {
@@ -1579,7 +1690,7 @@ function drawScene() {
       if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
     }
   }
-  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], cards: [], textKey: null });
+  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], trunkEls: [], cards: [], textKey: null });
   graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
@@ -1591,15 +1702,29 @@ function drawScene() {
   }
   for (const note of notes) graph.append(svg("text", { x: left - 24, y: note.y, class: "graph-note" }, note.band === "callers" ? "Outside this focus, depending on it" : "Outside this focus"));
   if (!board) {
-    plans = route(scene.edges, positions, moved);
+    const routed = route(scene.edges, positions, moved);
+    plans = routed.plans;
     for (const plan of plans) plan.text = labelText(plan.edge);
-    if (scene.edges.length <= LABEL_LIMIT) placeLabels(plans, positions);
-    else for (const plan of plans) plan.label = bezier(plan.curves[0], 0.5);
+    for (const trunk of routed.trunks) trunk.carrier.text = trunkText(trunk);
+    const carriers = routed.trunks.map((trunk) => trunk.carrier);
+    if (scene.edges.length <= LABEL_LIMIT) placeLabels([...plans, ...carriers], positions);
+    else {
+      for (const plan of plans) plan.label = bezier(plan.curves[0], 0.5);
+      placeLabels(carriers, positions);
+    }
+    trunks = routed.trunks.map((trunk) => ({ id: trunk.id, target: trunk.target, members: trunk.members,
+      runs: trunk.carriers.map((carrier) => ({ tier: trunkTier(carrier.count) || { min: 1 }, d: carrier.d, end: Boolean(carrier.last) })),
+      dots: trunk.junctions, label: { ...trunk.carrier.label, crowded: trunk.carrier.crowded } }));
   }
   for (const plan of plans) plan.text = labelText(plan.edge);
+  scene.trunks = trunks;
   // Violating edges are drawn last, on top of the others.
   plans.sort((a, b) => (a.edge.violation_rule_ids.length > 0) - (b.edge.violation_rule_ids.length > 0) || a.order - b.order);
   for (const plan of plans) graph.append(drawEdge(plan));
+  // Trunks go over the wires they carry, violating ones last.
+  const tags = [];
+  for (const trunk of [...trunks].sort((a, b) => a.members.some(violates) - b.members.some(violates) || a.id.localeCompare(b.id))) graph.append(drawTrunk(trunk, tags));
+  for (const fit of tags) fit();
   scene.entries.forEach((node, index) => {
     const element = drawNode(node, positions.get(node.id), index === 0);
     graph.append(element);
@@ -1631,7 +1756,7 @@ function drawEdge(plan) {
   const net = look.net !== null && look.net !== undefined ? ` ${netClass(look.net)}` : "";
   // Edges are not tab stops (a level can have hundreds); the keyboard
   // reaches them through the selected entry's dependency list.
-  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true" });
+  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.trunk ? " branch" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true" });
   const hit = svg("path", { d: plan.d, class: "edge-hit" });
   group.append(hit);
   // A violation keeps the wire's own colour inside a red casing.
@@ -1643,7 +1768,9 @@ function drawEdge(plan) {
   const gap = plan.points || violating ? svg("path", { d: plan.d, class: "edge-gap" }) : null;
   if (gap) group.append(gap);
   const ids = markers(look, violating);
-  const line = svg("path", { d: plan.d, class: "edge-line", "marker-end": `url(#${ids.end})` });
+  // A trunk's wires end in the trunk's own arrowhead.
+  const line = svg("path", { d: plan.d, class: "edge-line" });
+  if (!plan.trunk) line.setAttribute("marker-end", `url(#${ids.end})`);
   if (plan.points) line.setAttribute("marker-start", `url(#${ids.start})`);
   group.append(line);
   const strands = [];
@@ -1662,11 +1789,71 @@ function drawEdge(plan) {
   group.addEventListener("click", () => showEdge(edge, group));
   group.addEventListener("mouseenter", () => hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }));
   group.addEventListener("mouseleave", () => hoverCanvas(null));
-  const marker = `url(#${ids.end})`;
+  const marker = plan.trunk ? null : `url(#${ids.end})`;
   // Without colours a highlighted wire turns to ink; with them it keeps its colour.
-  const litMarker = !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
-  scene.edgeEls.push({ edge, core: plan.core || null, element: group, line, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
+  const litMarker = marker && !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
+  scene.edgeEls.push({ edge, core: plan.core || null, trunk: plan.trunk || null, element: group, line, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
   return group;
+}
+const violates = (edge) => edge.violation_rule_ids.length > 0;
+// A trunk: its runs (wider where more wires share them), a dot where each
+// wire joins, the target's arrowhead, and a tag naming the count and the
+// target. A violation among its wires gives it the red casing and a count
+// on the tag.
+function drawTrunk(trunk, tags) {
+  const violations = trunk.members.filter(violates).length;
+  const look = trunkLook(trunk.members);
+  const coloured = look.net !== null;
+  const group = svg("g", { class: `edge trunk${coloured ? ` ${netClass(look.net)}` : " neutral"}${violations ? " violating" : ""}`, "aria-hidden": "true", "data-trunk": trunk.id });
+  const runs = [...trunk.runs].sort((a, b) => a.tier.min - b.tier.min);
+  const layer = (className) => runs.map((run) => svg("path", { d: run.d, class: `${className} trunk-t${run.tier.min}` }));
+  group.append(...layer("edge-hit"));
+  if (violations) group.append(...layer("edge-casing"));
+  group.append(...layer("edge-gap"));
+  const lines = layer("trunk-line");
+  const top = runs.filter((run) => run.end).pop();
+  const ids = markers({ net: coloured ? look.net : null }, violations > 0);
+  if (top) lines[runs.indexOf(top)].setAttribute("marker-end", `url(#${ids.end})`);
+  group.append(...lines);
+  for (const dot of trunk.dots) group.append(svg("circle", { cx: round(dot.x), cy: round(dot.y), r: 3.4, class: "trunk-dot" }));
+  if (trunk.label) {
+    // The full tag names the count and the target; zoomed far out, where
+    // the target's card shows little more than its title, only the count.
+    const tag = svg("g", { class: `trunk-tag${trunk.label.crowded ? " crowded" : ""}`, transform: `translate(${round(trunk.label.x)}, ${round(trunk.label.y)})` });
+    const variant = (className, content, strip) => {
+      const scale = svg("g", { class: className });
+      const plate = svg("rect", { class: "tag-plate", height: 22, y: -11, rx: 2 });
+      const text = svg("text", { class: "tag-text", y: 4.5 }, content);
+      if (violations) text.append(svg("tspan", { class: "tag-alert" }, `  ⚠ ${violations}`));
+      scale.append(plate, ...strip, text);
+      tag.append(scale);
+      tags.push(() => {
+        const width = (textWidth(text, text.textContent) || text.textContent.length * 7.4) + 18 + strip.length * 5;
+        plate.setAttribute("x", round(-width / 2));
+        plate.setAttribute("width", round(width));
+        strip.forEach((bar, i) => bar.setAttribute("x", round(-width / 2 + 7 + i * 5)));
+        text.setAttribute("x", round(strip.length * 5 / 2));
+      });
+    };
+    // A neutral trunk carries wires of several colours: a strip shows them.
+    const strip = () => (coloured ? [] : look.carried.slice(0, 6).map((net) => svg("rect", { class: `tag-net ${netClass(net)}`, width: 4, height: 14, y: -7 })));
+    variant("tag-full", trunkText(trunk), strip());
+    variant("tag-short", `×${trunk.members.length}`, []);
+    group.append(tag);
+  }
+  const sources = trunk.members.map((edge) => displayEndpoint(edge.from));
+  group.append(svg("title", {}, `${trunkText(trunk)}${violations ? `, ${plural(violations, "violation")}` : ""}\n${sources.slice(0, 12).join("\n")}${sources.length > 12 ? `\n… and ${sources.length - 12} more` : ""}\nClick to list its wires.`));
+  const lit = trunkScope(trunk);
+  group.addEventListener("click", () => showTrunk(trunk, group));
+  group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas(lit, { trunk }); });
+  group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
+  scene.trunkEls.push({ trunk, element: group });
+  return group;
+}
+function trunkScope(trunk) {
+  const lit = { nodes: new Set([trunk.target]), edges: new Set(trunk.members) };
+  for (const edge of trunk.members) lit.nodes.add(edge.from);
+  return lit;
 }
 // Puts an edge on a new course (a dragged entry's rubber band).
 function reshapeEdge(item, plan) {
@@ -2474,6 +2661,15 @@ function drawLegend() {
   mark(wireSample({ net: null }, { violating: true }), "violation", (edge) => edge.violation_rule_ids.length > 0);
   mark(wireSample({ net: null }, { violating: true, cut: true }), "suggested cut", (edge) => edge.suggested_cut_rule_ids.length > 0);
   mark(wireSample({ net: null }, { manual: true }), "manual", (edge) => edge.origin === "manual");
+  if (scene.trunks && scene.trunks.length) {
+    const sample = svg("svg", { viewBox: "0 0 30 12", width: 30, height: 12, "aria-hidden": "true", class: "swatch edge trunk neutral" });
+    sample.append(svg("path", { d: "M 2 2 Q 8 6 12 6", class: "edge-line" }), svg("path", { d: "M 2 10 Q 8 6 12 6", class: "edge-line" }),
+      svg("path", { d: "M 12 6 H 28", class: "trunk-line trunk-t4" }), svg("circle", { cx: 12, cy: 6, r: 2.6, class: "trunk-dot" }));
+    const item = html("span", null, "legend-mark");
+    item.title = "Wires from several entries into one target, merged; the tag gives their number";
+    item.append(sample, html("span", "trunk"));
+    marks.append(item);
+  }
 }
 function updateDisplayUI() {
   for (const mode of MODES) $(`mode-${mode}`).setAttribute("aria-pressed", String(display.mode === mode));

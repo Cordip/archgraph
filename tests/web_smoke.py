@@ -150,8 +150,18 @@ def wires_projection():
             "edges": edges, "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []}
 
 
+def trunk_projection():
+    """Six files in three rows, all depending on one outside entry; one of those wires violates a rule."""
+    files = [f"t/s{i}.ts" for i in range(6)]
+    edges = [{**edge(f"file:{f}", "node:external.service"), "violation_rule_ids": ["deny-api-domain"] if i == 2 else []} for i, f in enumerate(files)]
+    edges += [{**edge("file:t/s0.ts", "file:t/s1.ts"), "violation_rule_ids": []}, {**edge("file:t/s1.ts", "file:t/s2.ts"), "violation_rule_ids": []}]
+    return {"focus": {**NODES["app.big"], "id": "app.trunks", "title": "Trunks"}, "breadcrumbs": [NODES["app"]],
+            "nodes": [{**entry("app.big", file=f), "violation_rule_ids": []} for f in files] + [entry("external.service", True)],
+            "edges": edges, "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []}
+
+
 # Segments of every drawn wire, from the path data (boards draw only M and L).
-SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line')].map((line) => {
+SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .trunk-line')].map((line) => {
     const numbers = line.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
     const points = [];
     for (let i = 0; i + 1 < numbers.length; i += 2) points.push([numbers[i], numbers[i + 1]]);
@@ -174,8 +184,11 @@ def angles_ok(page, step):
 
 
 def spacing_problems(page, pitch):
-    """Pairs of parallel horizontal or vertical runs of different wires closer than the pitch."""
+    """Pairs of parallel horizontal or vertical runs of different wires closer than the pitch.
+
+    Wires of one trunk share their tracks on purpose, so they are not compared."""
     cores = page.evaluate("() => scene.edgeEls.map((item) => item.core)")
+    trunks = page.evaluate("() => scene.edgeEls.map((item) => item.trunk)")
     runs = []
     for index, core in enumerate(cores):
         for (x1, y1), (x2, y2) in zip([(p["x"], p["y"]) for p in core], [(p["x"], p["y"]) for p in core[1:]]):
@@ -186,7 +199,7 @@ def spacing_problems(page, pitch):
     problems = []
     for i, a in enumerate(runs):
         for b in runs[i + 1:]:
-            if a[0] == b[0] or a[1] != b[1]:
+            if a[0] == b[0] or a[1] != b[1] or (trunks[a[0]] and trunks[a[0]] == trunks[b[0]]):
                 continue
             overlap = min(a[4], b[4]) - max(a[3], b[3])
             if overlap > 1 and abs(a[2] - b[2]) < pitch - 0.5:
@@ -672,6 +685,59 @@ def main():
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         checks.append("violations keep a red casing over the wire colour in curves, PCB and Hex, and turn red with colouring off")
+
+        # Wires from several siblings into one target merge into a trunk: one
+        # arrowhead instead of six, a tag with the count, a red casing and a
+        # count when one of its wires violates a rule, in every mode.
+        page.evaluate("(p) => { window.__fixture.projections['app.trunks'] = p; }", trunk_projection())
+        page.evaluate("loadFocus('app.trunks')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.trunks'")
+        into_service = """() => [...document.querySelectorAll('#graph [marker-end]')].filter((path) => {
+            const edge = path.closest('.edge'); return edge.classList.contains('trunk') || scene.edgeEls.find((item) => item.element === edge).edge.to === 'node:external.service'; }).length"""
+        for mode in ("curves", "pcb", "hex"):
+            page.locator(f"#mode-{mode}").click()
+            page.locator("#zoom-fit").click()
+            assert page.locator("#graph .edge.trunk").count() == 1, mode
+            assert page.locator("#graph .edge.branch").count() == 6, mode
+            assert page.evaluate(into_service) == 1, mode
+            tag = page.locator("#graph .edge.trunk .tag-full .tag-text").text_content()
+            assert tag.startswith("×6 → Service") and "⚠ 1" in tag, (mode, tag)
+            assert page.locator("#graph .edge.trunk .tag-short .tag-text").text_content().startswith("×6"), mode
+            trunk = page.locator("#graph .edge.trunk")
+            assert "violating" in trunk.get_attribute("class")
+            assert trunk.locator(".edge-casing").first.evaluate("e => getComputedStyle(e).stroke") == "rgb(196, 34, 27)", mode
+            # Wider where more wires share it.
+            widths = trunk.locator(".trunk-line").evaluate_all("els => els.map((e) => parseFloat(getComputedStyle(e).strokeWidth))")
+            assert max(widths) >= 4.5 and max(widths) > min(widths), (mode, widths)
+            # With colours by source a trunk of several sources is neutral ink.
+            assert "neutral" in trunk.get_attribute("class"), mode
+            if mode != "curves":
+                assert not angles_ok(page, 45 if mode == "pcb" else 60), (mode, angles_ok(page, 45 if mode == "pcb" else 60))
+                first = page.evaluate(SEGMENTS)
+                page.evaluate("redraw()")
+                assert page.evaluate(SEGMENTS) == first, mode
+            if mode == "pcb":
+                assert not spacing_problems(page, 12), spacing_problems(page, 12)
+            # Hovering the trunk lights its six wires and their entries.
+            trunk.locator(".trunk-tag").hover()
+            assert page.locator("#graph .edge.branch.hover").count() == 6, mode
+            assert page.locator("#graph .node.hover").count() == 7, mode
+            page.mouse.move(0, 0)
+        page.locator("#graph .edge.trunk .trunk-tag").click()
+        details = page.locator("#details").inner_text()
+        assert "Trunk" in details and "Wires in this trunk (6)" in details and "1 of them violates deny-api-domain" in details, details
+        page.locator("#details .dependency", has_text="t/s3.ts").click()
+        assert "Observed dependency" in page.locator("#details").inner_text()
+        assert page.locator("#graph .edge.branch.selected").count() == 1
+        # Coloured by target, the trunk takes the target's colour.
+        page.locator("#colour-by").select_option("target")
+        assert "neutral" not in page.locator("#graph .edge.trunk").get_attribute("class")
+        assert re.search(r"\bn\d\b", page.locator("#graph .edge.trunk").get_attribute("class"))
+        page.locator("#colour-by").select_option("source")
+        page.locator("#mode-curves").click()
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
+        checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: one arrowhead, tag with the count, wider where more wires share it, red casing and a count for a violating wire, hover lights its wires, details list them; neutral when sources differ, the target's colour when coloured by target")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.

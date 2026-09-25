@@ -391,6 +391,41 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 #graph:not(.colour-none) .edge.lit:not(.bus) .edge-line, #graph:not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: 3.2; }
 #graph:not(.colour-none) .edge.lit .edge-strand, #graph:not(.colour-none) .edge.hover .edge-strand { stroke-width: 2.3; }
 .edge.selected:not(.bus) .edge-line { stroke-width: 3.8; }
+/* Trunks: wires into one target merged like a cable harness. The trunk is
+   wider where more wires share it; a dot marks where a wire joins, and a
+   tag names the count and the target. */
+.trunk-line { fill: none; stroke: var(--net, var(--ink-2)); stroke-linecap: round; stroke-linejoin: round; }
+.edge.trunk.neutral { --net: var(--ink-2); }
+.trunk-t1 { stroke-width: 1.8px; }
+.trunk-t2 { stroke-width: 3px; }
+.trunk-t4 { stroke-width: 4.5px; }
+.trunk-t8 { stroke-width: 6px; }
+.trunk-t16 { stroke-width: 7.5px; }
+.edge.trunk .edge-gap.trunk-t1 { stroke-width: 5.8px; }
+.edge.trunk .edge-gap.trunk-t2 { stroke-width: 7px; }
+.edge.trunk .edge-gap.trunk-t4 { stroke-width: 8.5px; }
+.edge.trunk .edge-gap.trunk-t8 { stroke-width: 10px; }
+.edge.trunk .edge-gap.trunk-t16 { stroke-width: 11.5px; }
+.edge.trunk .edge-casing.trunk-t1 { stroke-width: 8.8px; }
+.edge.trunk .edge-casing.trunk-t2 { stroke-width: 10px; }
+.edge.trunk .edge-casing.trunk-t4 { stroke-width: 11.5px; }
+.edge.trunk .edge-casing.trunk-t8 { stroke-width: 13px; }
+.edge.trunk .edge-casing.trunk-t16 { stroke-width: 14.5px; }
+.edge.trunk .edge-hit { stroke-width: 18px; }
+.colour-none .edge.trunk.violating .trunk-line { stroke: var(--red); }
+#graph.colour-none .edge.trunk.violating .edge-casing { display: inline; }
+.trunk-dot { fill: var(--net, var(--ink-2)); stroke: var(--sheet); stroke-width: 1.4; }
+.tag-full { transform: scale(var(--tag-scale, 1)); }
+.tag-short { transform: scale(var(--tag-short-scale, 1)); }
+#graph.compact .tag-full, #graph:not(.compact) .tag-short { display: none; }
+.tag-plate { fill: var(--sheet); stroke: var(--net, var(--ink-2)); stroke-width: 1.4; }
+.edge.trunk.neutral .tag-plate { stroke: var(--ink); }
+.edge.trunk.violating .tag-plate { stroke: var(--red); stroke-width: 2; }
+#graph .tag-text { font-size: 13.5px; font-weight: 600; fill: var(--ink); text-anchor: middle; }
+.tag-alert { fill: var(--red); }
+.tag-net { fill: var(--net); }
+#graph.tagless .edge.trunk:not(.hover):not(.lit) .trunk-tag, .trunk-tag.crowded { display: none; }
+#graph .edge.trunk.hover .trunk-tag, #graph .edge.trunk.lit .trunk-tag { display: inline; }
 .arrow { fill: var(--line); }
 .arrow-error { fill: var(--red); }
 .arrow-lit { fill: var(--ink); }
