@@ -27,6 +27,12 @@
   --amber-soft: #fbf0d8;
   --ok: #19774a;
   --hilite: #ffdd55;
+  /* Usage: entry points start something; files nothing observed uses are
+     calm candidates, not violations, so they are not red. */
+  --entry: #19774a;
+  --entry-soft: #e3f3ea;
+  --idle: #6a4c9c;
+  --idle-soft: #f1ecf8;
   --outside: #f1f4f6;
   --shadow: #c9d2da;
   --side-w: 272px;
@@ -54,6 +60,10 @@
     --amber-soft: #30250f;
     --ok: #5fd197;
     --hilite: #b89a2e;
+    --entry: #5fd197;
+    --entry-soft: #10301f;
+    --idle: #c3a8f0;
+    --idle-soft: #251c3b;
     --outside: #0c1a29;
     --shadow: #030a12;
   }
@@ -229,6 +239,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .entries td { padding: 0 16px; border-bottom: 1px solid var(--rule); }
 .entries td.num { color: var(--ink-2); }
 .entries td.rules { color: var(--red); font-weight: 600; }
+.entries .usage-col { width: 12em; }
+.entries td.usage-cell { font-size: 13px; color: var(--ink-3); }
+.entries td.usage-entry_point { color: var(--entry); font-weight: 600; }
+.entries td.usage-no_observed_users { color: var(--idle); font-weight: 600; }
 .entries td.empty { padding: 20px 16px; color: var(--ink-3); }
 .group-row th { padding: 14px 16px 4px; text-align: left; font: 500 13px var(--font-code); color: var(--ink-2); border-bottom: 1px solid var(--rule); overflow-wrap: anywhere; }
 .entry-row { cursor: pointer; }
@@ -270,6 +284,15 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .coverage-track { fill: var(--rule); }
 .coverage { fill: var(--ink-2); }
 .cloud { fill: none; stroke: var(--red); stroke-width: 1.6; }
+/* Usage marks: a start glyph for a declared entry point; a dashed ring for
+   no observed users, with the number of such files on a node. */
+.entry-ring { fill: var(--entry-soft); stroke: var(--entry); stroke-width: 1.4; }
+.entry-play { fill: var(--entry); }
+.idle-ring { fill: none; stroke: var(--idle); stroke-width: 1.6; stroke-dasharray: 3.2 2.6; }
+#graph .idle-count { font-size: 14px; font-weight: 600; fill: var(--idle); text-anchor: end; }
+#graph .node-facts.usage-entry_point { fill: var(--entry); font-weight: 600; }
+#graph .node-facts.usage-no_observed_users { fill: var(--idle); font-weight: 600; }
+#graph .node-facts.usage-not_indexed { fill: var(--ink-3); font-style: italic; }
 .group-toggle { cursor: pointer; }
 .group-toggle rect { fill: var(--sheet); stroke: var(--ink-2); stroke-width: 1; }
 .group-toggle path { fill: none; stroke: var(--ink); stroke-width: 1.8; }
@@ -296,6 +319,7 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 #graph .edge.hover .edge-label, #graph:not(.has-hover) .edge.lit .edge-label { display: inline; }
 #graph .node, #graph .edge { transition: opacity .15s; }
 #graph.violations-only .node:not(.violating), #graph.violations-only .edge:not(.violating) { opacity: .16; }
+#graph.idle-only .node:not(.idle), #graph.idle-only .edge { opacity: .16; }
 #graph.has-selection .node:not(.lit), #graph.has-selection .edge:not(.lit) { opacity: .18; }
 #graph.has-hover .node:not(.hover), #graph.has-hover .edge:not(.hover) { opacity: .14; }
 #graph.has-hover .node.hover, #graph.has-hover .edge.hover { opacity: 1; }
@@ -329,6 +353,17 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .fact .value { font: 600 22px/1.2 var(--font-tech); font-variant-numeric: tabular-nums; }
 .fact .sub { font-size: 13px; color: var(--ink-3); }
 .fact.alert .value { color: var(--red); }
+.fact.idle .value { color: var(--idle); }
+.usage-note { margin: 12px 0; padding: 8px 12px; border-left: 3px solid; }
+.usage-note p { margin: 0; }
+#details .usage-note p + p { margin-top: 6px; }
+.usage-note.entry { color: var(--ink); background: var(--entry-soft); border-color: var(--entry); }
+.usage-note.idle { color: var(--ink); background: var(--idle-soft); border-color: var(--idle); }
+.usage-note.unknown, .usage-note.used { color: var(--ink-2); background: var(--page); border-color: var(--rule); }
+.usage-caveat { font-size: 13px; color: var(--ink-2); }
+.usage-summary { color: var(--ink-2); }
+.dependency-count.usage-entry_point { color: var(--entry); }
+.dependency-count.usage-no_observed_users { color: var(--idle); }
 .meter { display: block; flex-basis: 100%; width: 100%; height: 4px; margin-top: 5px; }
 .overview-violation { display: grid; gap: 2px; width: 100%; margin-bottom: 6px; padding: 8px 10px; text-align: left; background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--red); }
 .overview-violation:hover { border-color: var(--red); }
@@ -405,6 +440,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
   .canvas-notice { left: 12px; right: 12px; bottom: 66px; max-width: none; font-size: 12.5px; }
   .table-wrap { inset: 112px 0 0; }
   .entries .num { width: auto; padding: 0 8px; }
+  .entries .usage-col { width: auto; }
 }
 
 /* Package details: importing files grouped by node */

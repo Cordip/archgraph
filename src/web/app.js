@@ -381,6 +381,7 @@ function showOverview() {
   interfaces.id = "interfaces";
   interfacesInto(interfaces, focus.interfaces);
   panel.append(description, interfaces, summaryList(projection));
+  if (focusUnused(focus)) usageNote(panel, "idle", "No observed code outside this node depends on it, and it declares no entry point. Possibly started by a tool, or dead code; declare its entry points in project.entry_points if it has any.", IDLE_CAVEAT);
   panel.append(html("h3", `Violations in this view (${projection.violations.length})`));
   if (!projection.violations.length) panel.append(html("p", "No matching observed architecture violations.", "muted"));
   const list = html("ul", null, "plain-list");
@@ -413,7 +414,7 @@ function summaryList(projection) {
   const list = html("dl", null, "facts");
   list.id = "summary";
   const row = (label, value, note, extra) => {
-    const item = html("div", null, `fact${label === "Violations" && value ? " alert" : ""}`);
+    const item = html("div", null, `fact${label === "Violations" && value ? " alert" : ""}${label === "No observed users" && value ? " idle" : ""}`);
     const data = html("dd");
     data.append(html("span", value, "value"));
     if (note) data.append(html("span", note, "sub"));
@@ -428,6 +429,8 @@ function summaryList(projection) {
   row("Observed", focus.observed_file_count, `${share}% of files have a dependency`, meter);
   row("Entries", inside, outside ? `and ${outside} outside` : null);
   row("Dependencies", merged.length, `${projection.edges.length} by relation kind`);
+  row("Entry points", focus.entry_point_count || 0, "declared in architecture.yaml");
+  row("No observed users", focus.no_observed_users_count || 0, "files; candidates, not proof");
   row("Violations", projection.violations.length, null);
   return list;
 }
@@ -509,6 +512,69 @@ function entryTitle(node) {
   if (node.entry_kind === "file" && node.file_path) return splitPath(node.file_path)[1];
   return node.title;
 }
+
+// ---------------------------------------------------------------- usage
+// Whether observed code uses a file: declared entry points (loaded by a tool
+// or runtime) are told apart from files nothing observed depends on, which
+// are dead-code candidates, never proof.
+const USAGE_LABELS = { entry_point: "entry point", used: "used", no_observed_users: "no observed users", not_indexed: "not indexed" };
+const IDLE_NOTE = "No observed code depends on this. Possibly an entry point for a tool, or dead code; declare it in project.entry_points if it is an entry point.";
+const IDLE_CAVEAT = "Not proof: GitNexus misses autoloading, HTML script tags, dynamic imports and files loaded by name. Read the file and search for its name before removing it.";
+// Files of an entry with the given usage: 1 or 0 for a file, a count for
+// nodes, direct files and directory groups.
+function usageCount(node, usage) {
+  if (node.entry_kind === "file") return node.usage === usage ? 1 : 0;
+  if (node.entry_kind === "group") return node.members.filter((member) => member.usage === usage).length;
+  return (usage === "entry_point" ? node.entry_point_count : usage === "no_observed_users" ? node.no_observed_users_count : 0) || 0;
+}
+// An architecture node nothing outside uses, with no entry point: the same
+// rule as CompiledNode::no_outside_users, for the focus itself.
+function focusUnused(focus) {
+  return Boolean(focus.parent) && focus.descendant_file_count > (focus.unindexed_file_count || 0)
+    && !focus.entry_point_count && !focus.outside_user_count;
+}
+// Shown on the canvas as calm, not red: it is not a violation.
+function isIdle(node) { return node.no_outside_users || usageCount(node, "no_observed_users") > 0; }
+// A short status for cards, search results, the table and screen readers.
+function usageLabel(node) {
+  if (node.entry_kind === "file") return node.usage && node.usage !== "used" ? USAGE_LABELS[node.usage] : "";
+  const parts = [];
+  const entries = usageCount(node, "entry_point"), idle = usageCount(node, "no_observed_users");
+  if (node.no_outside_users) parts.push("no observed use from outside");
+  if (entries) parts.push(plural(entries, "entry point"));
+  if (idle) parts.push(`${plural(idle, "file")} with no observed users`);
+  return parts.join(", ");
+}
+function usageNote(panel, className, text, caveat) {
+  const note = html("div", null, `usage-note ${className}`);
+  note.append(html("p", text));
+  if (caveat) note.append(html("p", caveat, "usage-caveat"));
+  panel.append(note);
+}
+function fileUsageDetails(panel, node) {
+  if (node.usage === "entry_point") usageNote(panel, "entry", "Entry point, declared in architecture.yaml (project.entry_points). A tool, runtime or test runner loads it by name, so it needs no observed user.");
+  else if (node.usage === "no_observed_users") usageNote(panel, "idle", IDLE_NOTE, IDLE_CAVEAT);
+  else if (node.usage === "not_indexed") usageNote(panel, "unknown", "Not in the code-graph index, so whether anything uses it is unknown.");
+  else if (node.usage === "used" && !merged.some((edge) => edge.to === node.id)) {
+    usageNote(panel, "used", "Its observed users are outside the architecture (excluded, unassigned or ambiguously mapped files), so none is drawn here.");
+  }
+}
+// Entry points and files with no observed users under a node or a group.
+function groupUsageDetails(panel, node) {
+  const entries = usageCount(node, "entry_point"), idle = usageCount(node, "no_observed_users");
+  if (node.no_outside_users) {
+    usageNote(panel, "idle", "No observed code outside this node depends on it, and it declares no entry point. Possibly started by a tool, or dead code; declare its entry points in project.entry_points if it has any.", IDLE_CAVEAT);
+  }
+  if (!entries && !idle) return;
+  const line = html("p", [entries ? `${plural(entries, "declared entry point")}` : null, idle ? `${plural(idle, "file")} with no observed users` : null].filter(Boolean).join(" · "), "usage-summary");
+  panel.append(line);
+}
+// Opens a node with the "only files with no observed users" filter on.
+async function showIdleFiles(id) {
+  filters.idleOnly = true;
+  store("archgraph.filters.v1", filters);
+  await loadFocus(id);
+}
 function actionButton(text, action, className = "primary") {
   const button = html("button", text, className);
   button.type = "button";
@@ -526,6 +592,8 @@ function showNode(node, element) {
     panel.append(html("p", node.file_count || !packages ? `${plural(node.file_count, "mapped file")}${observed}${packages ? `, ${packages}` : ""}` : packages));
   }
   if (node.description && !node.package) panel.append(html("p", node.description));
+  if (node.entry_kind === "file") fileUsageDetails(panel, node);
+  else if (!node.package) groupUsageDetails(panel, node);
   if ((node.interfaces || []).length) {
     panel.append(html("h3", "Interfaces"));
     const chips = html("div", null, "interfaces");
@@ -534,6 +602,9 @@ function showNode(node, element) {
   }
   const actions = html("div", null, "actions");
   if (node.entry_kind === "architecture") actions.append(actionButton("Open architecture node", () => loadFocus(node.architecture_id)));
+  if (node.entry_kind === "architecture" && !node.outside_focus && usageCount(node, "no_observed_users")) {
+    actions.append(actionButton("Show files with no observed users", () => showIdleFiles(node.architecture_id), "secondary"));
+  }
   if (node.entry_kind === "group") actions.append(actionButton("Expand group", () => setGroupOpen(node, true)));
   const openGroup = scene && openGroupOf(node);
   if (openGroup) actions.append(actionButton(`Collapse ${openGroup.label}`, () => setGroupOpen(openGroup, false), "secondary"));
@@ -554,6 +625,8 @@ function showNode(node, element) {
       const button = html("button", null, `dependency${member.violation_rule_ids.length ? " violating" : ""}`);
       button.type = "button";
       button.append(html("span", member.file_path, "dependency-name"));
+      const status = usageLabel(member);
+      if (status) button.append(html("span", status, `dependency-count usage-${member.usage}`));
       if (member.violation_rule_ids.length) button.append(html("span", "⚠", "dependency-count"));
       button.addEventListener("click", () => revealEntry(member.id));
       const item = html("li");
@@ -819,7 +892,7 @@ function restoreSelection() {
 // ---------------------------------------------------------------- scene
 // Filters apply to what the canvas draws; the layout ignores the kind and
 // origin filters so that entries do not jump when a filter changes.
-const filters = Object.assign({ violationsOnly: false, outside: true, observed: true, manual: true, hiddenKinds: [] }, stored("archgraph.filters.v1", {}));
+const filters = Object.assign({ violationsOnly: false, idleOnly: false, outside: true, observed: true, manual: true, hiddenKinds: [] }, stored("archgraph.filters.v1", {}));
 function edgeShown(edge) {
   return (edge.origin === "manual" ? filters.manual : filters.observed) && !filters.hiddenKinds.includes(edge.kind);
 }
@@ -1246,12 +1319,13 @@ function cloudPath(x, y, width, height) {
 function nodeLines(node) {
   if (node.entry_kind === "file" && node.file_path) {
     const [directory, base] = splitPath(node.file_path);
-    return [base, directory ? `${directory}/` : "", null];
+    return [base, directory ? `${directory}/` : "", usageLabel(node) || null];
   }
   if (node.entry_kind === "group") {
     const flagged = node.members.filter((member) => member.violation_rule_ids.length).length;
+    const idle = usageCount(node, "no_observed_users");
     return [node.title, node.direct ? `files in ${node.directory || "."}/` : `${node.directory}/`,
-      `${plural(node.file_count, "file")}${flagged ? `, ${flagged} in violations` : ""}`];
+      `${plural(node.file_count, "file")}${flagged ? `, ${flagged} in violations` : ""}${idle ? `, ${idle} no users` : ""}`];
   }
   if (node.package) {
     const files = new Set((node.package.imports || []).map((item) => item.file)).size;
@@ -1292,7 +1366,7 @@ function drawScene() {
     if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
   }
   Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [] });
-  graph.setAttribute("class", `${scene.edges.length > LABEL_LIMIT ? "quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}`);
+  graph.setAttribute("class", `${scene.edges.length > LABEL_LIMIT ? "quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
   const frame = frameBox();
@@ -1337,10 +1411,29 @@ function drawEdge(plan) {
   scene.edgeEls.push({ edge, element: group, line, hit, label, marker, violating });
   return group;
 }
+function usageMark(node, box) {
+  const entries = usageCount(node, "entry_point"), idle = usageCount(node, "no_observed_users");
+  const unused = node.no_outside_users || node.usage === "no_observed_users";
+  if (!entries && !idle && !unused) return null;
+  const element = svg("g", { class: "usage-mark", transform: `translate(${box.width - 34}, 10)`, "aria-hidden": "true" });
+  if (entries && !unused) {
+    element.classList.add("entry");
+    element.append(svg("circle", { cx: 12, cy: 12, r: 10, class: "entry-ring" }), svg("path", { d: "M9.5 7.5 L17 12 L9.5 16.5 Z", class: "entry-play" }));
+    return { element, width: 28 };
+  }
+  element.classList.add("idle");
+  element.append(svg("circle", { cx: 12, cy: 12, r: 9, class: "idle-ring" }));
+  // A node with some such files, not unused as a whole: how many.
+  const count = node.entry_kind === "file" || node.no_outside_users ? "" : String(idle);
+  if (count) element.append(svg("text", { x: -3, y: 17, class: "idle-count" }, count));
+  return { element, width: 28 + (count ? count.length * 9 + 4 : 0) };
+}
 function drawNode(node, box, first) {
   const violating = node.violation_rule_ids.length > 0;
-  const group = svg("g", { class: `node ${node.entry_kind}${node.outside_focus ? " outside" : ""}${node.node_kind === "external" ? " external" : ""}${violating ? " violating" : ""}`,
-    transform: `translate(${round(box.x)}, ${round(box.y)})`, tabindex: first ? 0 : -1, role: "button", "aria-label": node.title, "data-id": node.id });
+  const status = usageLabel(node);
+  const entryPoint = usageCount(node, "entry_point") > 0;
+  const group = svg("g", { class: `node ${node.entry_kind}${node.outside_focus ? " outside" : ""}${node.node_kind === "external" ? " external" : ""}${violating ? " violating" : ""}${isIdle(node) ? " idle" : ""}${entryPoint ? " entry-point" : ""}${node.usage === "not_indexed" ? " unknown" : ""}`,
+    transform: `translate(${round(box.x)}, ${round(box.y)})`, tabindex: first ? 0 : -1, role: "button", "aria-label": status ? `${node.title}, ${status}` : node.title, "data-id": node.id });
   if (node.entry_kind === "group") {
     group.append(svg("rect", { x: 8, y: 8, width: box.width, height: box.height, class: "sheet-back" }), svg("rect", { x: 4, y: 4, width: box.width, height: box.height, class: "sheet-back" }));
   }
@@ -1353,11 +1446,16 @@ function drawNode(node, box, first) {
   const titleText = svg("text", { x: 14, y: facts === null ? 37 : 30, class: "node-title" }, compact(title, 26));
   const subtitleText = svg("text", { x: 14, y: facts === null ? 60 : 51, class: "node-subtitle" }, compactStart(subtitle, 30));
   group.append(titleText, subtitleText);
+  // Entry points and entries with no observed users carry a corner mark:
+  // a start glyph, or a dashed ring (with the count of such files).
+  const mark = node.entry_kind === "group" || node.entry_kind === "package" ? null : usageMark(node, box);
+  if (mark) group.append(mark.element);
   // The corner glyph or group toggle starts 34px from the right edge.
-  const corner = node.entry_kind === "package" || node.entry_kind === "group";
-  group.fits = [[titleText, title, box.width - (corner ? 54 : 26), false], [subtitleText, subtitle, box.width - 26, node.entry_kind === "file" || node.entry_kind === "group"]];
+  const corner = node.entry_kind === "package" || node.entry_kind === "group" ? 54 : mark ? 26 + mark.width : 26;
+  group.fits = [[titleText, title, box.width - corner, false], [subtitleText, subtitle, box.width - 26, node.entry_kind === "file" || node.entry_kind === "group"]];
   if (facts) {
-    const factsText = svg("text", { x: 14, y: 70, class: "node-facts" }, compact(facts, 30));
+    const usageClass = node.entry_kind === "file" && node.usage ? ` usage-${node.usage}` : "";
+    const factsText = svg("text", { x: 14, y: 70, class: `node-facts${usageClass}` }, compact(facts, 30));
     group.append(factsText);
     group.fits.push([factsText, facts, box.width - 26, false]);
   }
@@ -1374,7 +1472,7 @@ function drawNode(node, box, first) {
     toggle.addEventListener("click", (event) => { event.stopPropagation(); setGroupOpen(node, true); });
     group.append(toggle);
   }
-  group.append(svg("title", {}, [node.title, node.architecture_id || node.file_path, node.description,
+  group.append(svg("title", {}, [node.title, node.architecture_id || node.file_path, node.description, status ? `Usage: ${status}` : null,
     hasValue(node.observed_file_count) && node.file_count ? `${node.observed_file_count} of ${node.file_count} files have an observed dependency` : null,
     node.package ? `${ecosystemTitle(node.package.ecosystem)} package ${node.id}` : null,
     node.entry_kind === "group" ? "Double-click to expand" : node.entry_kind === "architecture" ? "Double-click to open" : null].filter(Boolean).join("\n")));
@@ -1777,7 +1875,7 @@ function drawTable(projection) {
   filterLabel.htmlFor = "table-filter";
   const sort = html("select");
   sort.id = "table-sort";
-  for (const [value, text] of [["path", "Group by directory"], ["links", "Most dependencies first"], ["rules", "Violations first"]]) {
+  for (const [value, text] of [["path", "Group by directory"], ["links", "Most dependencies first"], ["rules", "Violations first"], ["idle", "No observed users first"]]) {
     const option = html("option", text);
     option.value = value;
     sort.append(option);
@@ -1792,7 +1890,7 @@ function drawTable(projection) {
   const element = html("table", null, "entries");
   element.append(html("caption", `Entries of ${projection.focus.title}`, "visually-hidden"));
   const headRow = html("tr");
-  for (const [text, className] of [["Entry", "entry-col"], ["Depends on", "num"], ["Used by", "num"], ["Violations", "num"]]) {
+  for (const [text, className] of [["Entry", "entry-col"], ["Usage", "usage-col"], ["Depends on", "num"], ["Used by", "num"], ["Violations", "num"]]) {
     const cell = html("th", text, className);
     cell.scope = "col";
     headRow.append(cell);
@@ -1812,9 +1910,11 @@ function drawTable(projection) {
   const render = () => {
     const query = table.filter.trim().toLowerCase();
     const grouped = table.sort === "path";
-    const shown = projection.nodes.filter((node) => !query || [node.title, node.file_path, node.architecture_id].some((value) => value && value.toLowerCase().includes(query)));
+    const shown = projection.nodes.filter((node) => !query || [node.title, node.file_path, node.architecture_id, usageLabel(node)].some((value) => value && value.toLowerCase().includes(query)));
+    const idleRank = (node) => node.no_outside_users ? 1e9 : usageCount(node, "no_observed_users");
     shown.sort((a, b) => (grouped ? rank(a) - rank(b) || tableGroup(a).localeCompare(tableGroup(b)) : 0)
       || (table.sort === "rules" ? b.violation_rule_ids.length - a.violation_rule_ids.length : 0)
+      || (table.sort === "idle" ? idleRank(b) - idleRank(a) : 0)
       || (grouped ? 0 : links(b) - links(a)) || name(a).localeCompare(name(b)));
     body.replaceChildren();
     let group = null;
@@ -1823,7 +1923,7 @@ function drawTable(projection) {
         group = tableGroup(node);
         const row = html("tr", null, "group-row");
         const cell = html("th", group);
-        cell.colSpan = 4;
+        cell.colSpan = 5;
         cell.scope = "colgroup";
         row.append(cell);
         body.append(row);
@@ -1833,7 +1933,7 @@ function drawTable(projection) {
     if (!shown.length) {
       const row = html("tr");
       const cell = html("td", query ? "No entries match this filter." : "No mapped files or dependencies at this focus.", "empty");
-      cell.colSpan = 4;
+      cell.colSpan = 5;
       row.append(cell);
       body.append(row);
     }
@@ -1844,7 +1944,7 @@ function drawTable(projection) {
   render();
 }
 function tableRow(node, stat, grouped) {
-  const row = html("tr", null, `entry-row${node.outside_focus ? " outside" : ""}${node.violation_rule_ids.length ? " violating" : ""}`);
+  const row = html("tr", null, `entry-row${node.outside_focus ? " outside" : ""}${node.violation_rule_ids.length ? " violating" : ""}${isIdle(node) ? " idle" : ""}`);
   if ($("details").dataset.entry === node.id) row.classList.add("selected");
   const file = node.entry_kind === "file" && node.file_path;
   const [directory, base] = file ? splitPath(node.file_path) : ["", ""];
@@ -1862,7 +1962,9 @@ function tableRow(node, stat, grouped) {
   });
   const cell = html("td", null, "entry-cell");
   cell.append(button);
-  row.append(cell, html("td", stat.out || "", "num"), html("td", stat.in || "", "num"),
+  const usage = usageLabel(node);
+  const usageCell = html("td", usage, `usage-cell${node.usage ? ` usage-${node.usage}` : isIdle(node) ? " usage-no_observed_users" : ""}`);
+  row.append(cell, usageCell, html("td", stat.out || "", "num"), html("td", stat.in || "", "num"),
     html("td", node.violation_rule_ids.length || "", "num rules"));
   row.addEventListener("click", () => { showNode(node, row); $("details").dataset.entry = node.id; });
   row.addEventListener("dblclick", () => { if (node.entry_kind === "architecture") loadFocus(node.architecture_id); });
@@ -1898,11 +2000,18 @@ async function searchNodes() {
     const box = $("search-results");
     if (local.length) {
       box.append(html("p", "In this view", "result-heading"));
-      for (const node of local) box.append(resultButton(entryTitle(node), node.file_path || node.architecture_id || entryKind(node), `${entryTitle(node)} (in this view)`, () => revealEntry(node.id)));
+      for (const node of local) {
+        const status = usageLabel(node);
+        const where = node.file_path || node.architecture_id || entryKind(node);
+        box.append(resultButton(entryTitle(node), status ? `${where} · ${status}` : where, `${entryTitle(node)} (in this view)${status ? `, ${status}` : ""}`, () => revealEntry(node.id)));
+      }
     }
     box.append(html("p", "Architecture nodes", "result-heading"));
     if (!results.length) box.append(html("p", "No matching architecture nodes.", "muted"));
-    for (const node of results) box.append(resultButton(node.title, node.id, `${node.title} — ${node.id}`, () => loadFocus(node.id)));
+    for (const node of results) {
+      const status = usageLabel({ ...node, entry_kind: "architecture" });
+      box.append(resultButton(node.title, status ? `${node.id} · ${status}` : node.id, `${node.title} — ${node.id}${status ? `, ${status}` : ""}`, () => loadFocus(node.id)));
+    }
     // Imported packages anywhere: opening one shows who imports it.
     const packages = allPackages.filter((item) => item.name.toLowerCase().includes(lower) || item.id.toLowerCase().includes(lower)).slice(0, 12);
     if (packages.length) {
@@ -1936,6 +2045,7 @@ $("search-form").addEventListener("keydown", moveInResults);
 // ---------------------------------------------------------------- filters
 function updateFilterUI() {
   $("filter-violations").checked = filters.violationsOnly;
+  $("filter-idle").checked = filters.idleOnly;
   $("filter-outside").checked = filters.outside;
   $("filter-observed").checked = filters.observed;
   $("filter-manual").checked = filters.manual;
@@ -1957,7 +2067,7 @@ function updateFilterUI() {
     box.append(label);
   }
   const present = new Set(kinds.map(([kind]) => kind));
-  const active = [filters.violationsOnly, !filters.outside, !filters.observed, !filters.manual].filter(Boolean).length
+  const active = [filters.violationsOnly, filters.idleOnly, !filters.outside, !filters.observed, !filters.manual].filter(Boolean).length
     + filters.hiddenKinds.filter((kind) => present.has(kind)).length;
   $("filters-count").hidden = !active;
   $("filters-count").textContent = active;
@@ -1968,11 +2078,11 @@ function filtersChanged() {
   store("archgraph.filters.v1", filters);
   if (view === "diagram") redraw(); else updateFilterUI();
 }
-for (const [id, key] of [["filter-violations", "violationsOnly"], ["filter-outside", "outside"], ["filter-observed", "observed"], ["filter-manual", "manual"]]) {
+for (const [id, key] of [["filter-violations", "violationsOnly"], ["filter-idle", "idleOnly"], ["filter-outside", "outside"], ["filter-observed", "observed"], ["filter-manual", "manual"]]) {
   $(id).addEventListener("change", () => { filters[key] = $(id).checked; filtersChanged(); });
 }
 $("filters-reset").addEventListener("click", () => {
-  Object.assign(filters, { violationsOnly: false, outside: true, observed: true, manual: true, hiddenKinds: [] });
+  Object.assign(filters, { violationsOnly: false, idleOnly: false, outside: true, observed: true, manual: true, hiddenKinds: [] });
   filtersChanged();
 });
 function togglePopover(button, panel, force) {

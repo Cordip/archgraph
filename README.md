@@ -707,8 +707,9 @@ infinite canvas, drawn like a drawing sheet:
 - **Floating tools** in the top-left corner: search (`/`; entries of the
   current level first, then architecture nodes anywhere, then imported
   packages by name) and **Filters**:
-  only violations (the rest is dimmed), relation kinds, observed and manual
-  dependencies, and entries outside the focus.
+  only violations or only files with no observed users (the rest is
+  dimmed), relation kinds, observed and manual dependencies, and entries
+  outside the focus.
 - **Node list** on the left: the whole architecture tree with the number of
   violations in each subtree, an "Only with violations" switch, and the list
   of all violations. Clicking a node selects and centres it in its parent's
@@ -736,6 +737,19 @@ corners and a crate glyph; its details list every importing file and line,
 grouped by the importing node, and selecting a package from search opens
 that level with the package selected: the quickest answer to "who uses
 OR-Tools".
+
+**Usage** (see [Entry points and files with no observed
+users](#entry-points-and-files-with-no-observed-users)) is drawn calmly, since
+it is not a violation. A declared entry point carries a green start glyph and
+"entry point" on its card. A file nothing observed depends on carries a
+dashed violet ring and "no observed users"; its details say it may be an
+entry point for a tool or dead code, and to declare it in
+`project.entry_points` if it is an entry point. An unindexed file reads "not
+indexed": unknown. A node that nothing outside uses gets the ring too; a node
+with some such files shows the ring with their number, and its details offer
+**Show files with no observed users**, which opens it with that filter on.
+Search results, the table (a Usage column, "No observed users first") and
+the level's facts show the same status.
 
 Levels with more than 120 entries (zammad's leaves have up to 2,577 files)
 show their files as **directory groups**, about 30 per level: double-click a

@@ -37,8 +37,16 @@ NODES = {n["id"]: n for n in [
     # More entries than the UI draws: listed in the table only.
     node("app.big", "Big", files=[f"src/big/f{i:03}.rs" for i in range(200)]),
     node("packages", "External packages", kind="external"),
+    # Usage: entry points, files with no observed users, unindexed files.
+    node("app.web", "Web", ["app.web.build", "app.web.ui", "app.web.old"]),
+    node("app.web.build", "Build configuration", files=["web/vite.config.ts"]),
+    node("app.web.ui", "Interface", files=["web/src/main.tsx", "web/src/App.tsx", "web/src/legacy.ts", "web/src/gen.ts"]),
+    node("app.web.old", "Old widgets", files=["web/old/widget.ts"]),
 ]}
 NODES["packages"].update(descendant_file_count=0, observed_file_count=0, descendant_package_count=1, packages=["package:python/ortools"])
+NODES["app.web.build"].update(descendant_file_count=1, entry_point_count=1)
+NODES["app.web.ui"].update(entry_point_count=1, no_observed_users_count=1, unindexed_file_count=1, outside_user_count=2)
+NODES["app.web.old"].update(descendant_file_count=1, no_observed_users_count=1, no_outside_users=True, outside_user_count=0)
 NODES["app.domain"]["interfaces"] = [{"name": "Domain service", "kind": "custom", "direction": "provides", "protocol": None, "contract": "invoice", "description": "Interface fixture"}]
 
 
@@ -84,6 +92,19 @@ WIDE_PACKAGE_ENTRY = {**PACKAGE_ENTRY, "id": FONTSOURCE["id"], "title": FONTSOUR
 # An edge into a package carries package evidence, not a file.
 PACKAGE_EDGE = {**edge("node:app.domain", ORTOOLS["id"]), "count": 1, "violation_rule_ids": [],
                 "evidence": [{"from_file": "src/domain/a.rs", "to_file": ORTOOLS["id"], "kind": "IMPORTS", "confidence": 1.0, "reason": "package-import"}]}
+def usage_file(identity, path, usage):
+    return {**entry(identity, file=path), "violation_rule_ids": [], "usage": usage}
+
+
+def usage_node(identity):
+    n = NODES[identity]
+    return {**entry(identity), "violation_rule_ids": [], "entry_point_count": n.get("entry_point_count", 0),
+            "no_observed_users_count": n.get("no_observed_users_count", 0), "outside_user_count": n.get("outside_user_count", 1),
+            "no_outside_users": n.get("no_outside_users", False)}
+
+
+WEB_UI_FILES = [usage_file("app.web.ui", "web/src/main.tsx", "entry_point"), usage_file("app.web.ui", "web/src/App.tsx", "used"),
+                usage_file("app.web.ui", "web/src/legacy.ts", "no_observed_users"), usage_file("app.web.ui", "web/src/gen.ts", "not_indexed")]
 PROJECTIONS = {
     "app": {"focus": NODES["app"], "breadcrumbs": [NODES["app"]],
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
@@ -103,6 +124,12 @@ PROJECTIONS = {
                  "nodes": [PACKAGE_ENTRY, WIDE_PACKAGE_ENTRY, entry("app.api", True), entry("app.domain", True)],
                  "edges": [PACKAGE_EDGE, edge("node:app.api", ORTOOLS["id"])],
                  "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": [[ORTOOLS["id"], FONTSOURCE["id"]]]},
+    "app.web": {"focus": NODES["app.web"], "breadcrumbs": [NODES["app"], NODES["app.web"]],
+                "nodes": [usage_node("app.web.build"), usage_node("app.web.old"), usage_node("app.web.ui")],
+                "edges": [], "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
+    "app.web.ui": {"focus": NODES["app.web.ui"], "breadcrumbs": [NODES["app"], NODES["app.web"], NODES["app.web.ui"]],
+                   "nodes": WEB_UI_FILES, "edges": [{**edge("file:web/src/main.tsx", "file:web/src/App.tsx"), "violation_rule_ids": []}],
+                   "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
 }
 PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"],
              "imports": ORTOOLS["imports"]}]
@@ -283,7 +310,7 @@ def main():
         checks.append("filters for relation kinds, manual edges, outside entries and violations only")
 
         # The node list: the tree with violation badges and a filter.
-        assert page.locator("#tree [role='treeitem']").count() == 6
+        assert page.locator("#tree [role='treeitem']").count() == 7
         assert page.locator("#tree [data-id='app.api'] .count-badge").inner_text() == "1"
         page.locator("#tree-violations").check()
         assert page.locator("#tree [role='treeitem']").count() == 3
@@ -410,6 +437,79 @@ def main():
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         checks.append("an edge into packages names them in large type with their import lines; package search opens the owner's level with the package selected; its details list importing files, lines and nodes")
+
+        # Usage: a declared entry point is told apart from code nothing
+        # observed uses, which is marked calmly, never as a violation.
+        page.evaluate("loadFocus('app.web')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.web'")
+        assert page.locator("#graph .node.entry-point .usage-mark.entry").count() == 2
+        old = page.locator("#graph .node[data-id='node:app.web.old']")
+        assert "idle" in old.get_attribute("class") and old.locator(".usage-mark.idle .idle-ring").count() == 1
+        assert old.get_attribute("aria-label") == "Old widgets, no observed use from outside, 1 file with no observed users"
+        assert page.locator("#graph .node.violating").count() == 0
+        ring, red = old.locator(".idle-ring").evaluate("e => [getComputedStyle(e).stroke, getComputedStyle(document.querySelector('.count-badge') || document.body).backgroundColor]")
+        assert ring != red and "196, 34, 27" not in ring, ring
+        old.click()
+        assert "No observed code outside this node depends on it, and it declares no entry point" in page.locator("#details").inner_text()
+        page.locator("#graph .node[data-id='node:app.web.ui']").focus()
+        page.keyboard.press("Enter")
+        details = page.locator("#details").inner_text()
+        assert "1 declared entry point · 1 file with no observed users" in details, details
+        page.locator("#details").get_by_role("button", name="Show files with no observed users").click()
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.web.ui'")
+        assert page.locator("#graph.idle-only").count() == 1
+        assert page.locator("#filters-count").inner_text() == "1"
+        legacy = page.locator("#graph .node[data-id='file:web/src/legacy.ts']")
+        main_tsx = page.locator("#graph .node[data-id='file:web/src/main.tsx']")
+        opacity = lambda locator: float(locator.evaluate("e => getComputedStyle(e).opacity"))
+        page.wait_for_timeout(300)
+        assert opacity(legacy) == 1 and opacity(main_tsx) < 0.5, (opacity(legacy), opacity(main_tsx))
+        assert legacy.locator(".node-facts").text_content() == "no observed users"
+        assert main_tsx.locator(".node-facts").text_content() == "entry point"
+        assert page.locator("#graph .node[data-id='file:web/src/gen.ts'] .node-facts").text_content() == "not indexed"
+        assert page.locator("#graph .node[data-id='file:web/src/App.tsx'] .node-facts").count() == 0
+        legacy.click()
+        details = page.locator("#details").inner_text()
+        assert "No observed code depends on this. Possibly an entry point for a tool, or dead code; declare it in project.entry_points if it is an entry point." in details, details
+        assert "Not proof" in details
+        main_tsx.click()
+        assert "Entry point, declared in architecture.yaml" in page.locator("#details").inner_text()
+        page.locator("#graph .node[data-id='file:web/src/gen.ts']").click()
+        assert "whether anything uses it is unknown" in page.locator("#details").inner_text()
+        page.keyboard.press("Escape")
+        facts = page.locator("#summary").inner_text()
+        assert "Entry points\n1" in facts and "No observed users\n1" in facts, facts
+        # The filter is a checkbox like the others; resetting clears it.
+        page.locator("#filters-button").click()
+        assert page.locator("#filter-idle").is_checked()
+        page.locator("#filters-reset").click()
+        assert page.locator("#graph.idle-only").count() == 0 and not page.locator("#filter-idle").is_checked()
+        page.keyboard.press("Escape")
+        # The table shows the usage, filters by it and sorts by it.
+        page.locator("#view-table").click()
+        assert page.locator("#table-wrap thead").inner_text().split("\t")[1].strip() == "Usage"
+        assert page.locator("#table-wrap tr", has_text="legacy.ts").locator(".usage-cell").inner_text() == "no observed users"
+        assert page.locator("#table-wrap tr", has_text="main.tsx").locator(".usage-cell").inner_text() == "entry point"
+        page.locator("#table-sort").select_option("idle")
+        assert "legacy.ts" in page.locator("#table-wrap .entry-row").first.inner_text()
+        page.locator("#table-filter").fill("no observed")
+        page.wait_for_function("document.querySelectorAll('#table-wrap .entry-row').length === 1")
+        page.locator("#table-filter").fill("")
+        page.locator("#table-sort").select_option("path")
+        page.locator("#view-diagram").click()
+        # Search results carry the status too.
+        page.locator("#search").fill("legacy")
+        page.locator("#search-results").get_by_role("button", name="legacy.ts (in this view), no observed users", exact=True).wait_for()
+        assert "web/src/legacy.ts · no observed users" in page.locator("#search-results").inner_text()
+        page.keyboard.press("Escape")
+        # Dark mode keeps the marks calm and distinct.
+        page.emulate_media(color_scheme="dark")
+        dark = legacy.locator(".idle-ring").evaluate("e => getComputedStyle(e).stroke")
+        assert dark != ring and "255, 116, 104" not in dark, dark
+        page.emulate_media(color_scheme="light")
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
+        checks.append("usage: entry-point and no-observed-users marks on cards (calm, not red, in light and dark), details notes, node-level candidate, filter, table column and sort, search status")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.
