@@ -224,6 +224,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .mode-switch button svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; }
 .mode-switch button[aria-pressed="true"] { color: var(--sheet); background: var(--ink); }
 .mode-switch button[aria-pressed="true"]:hover { background: var(--ink); }
+.tool-row .focus-toggle { display: inline-flex; align-items: center; gap: 6px; border-left: 1px solid var(--rule); }
+.focus-toggle svg { width: 17px; height: 17px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.focus-toggle[aria-pressed="true"] { color: var(--pencil); font-weight: 600; }
+.focus-toggle[aria-pressed="true"] svg circle { fill: currentColor; }
 .colour-pick { display: inline-flex; align-items: center; gap: 8px; padding: 0 10px 0 12px; font-size: 14px; color: var(--ink-2); border-left: 1px solid var(--rule); }
 #colour-by { padding: 4px 6px; font-size: 14px; color: var(--ink); background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px; }
 /* The key to the wire colours, like a drawing's legend block. */
@@ -426,6 +430,7 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .tag-net { fill: var(--net); }
 #graph.tagless .edge.trunk:not(.hover):not(.lit) .trunk-tag, .trunk-tag.crowded { display: none; }
 #graph .edge.trunk.hover .trunk-tag, #graph .edge.trunk.lit .trunk-tag { display: inline; }
+#graph.has-hover .edge.trunk.hover-partial > .trunk-body, #graph.has-selection:not(.has-hover) .edge.trunk.lit-partial > .trunk-body { opacity: .2; }
 .arrow { fill: var(--line); }
 .arrow-error { fill: var(--red); }
 .arrow-lit { fill: var(--ink); }
@@ -435,6 +440,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 #graph.compact .edge-label { display: none; }
 #graph .edge.hover .edge-label, #graph:not(.has-hover) .edge.lit .edge-label { display: inline; }
 #graph .node, #graph .edge { transition: opacity .15s; }
+/* Focus mode on a busy level: wires are faint until something is pointed at
+   or selected; violations stay strong, and trunk tags stay readable. */
+#graph.faint:not(.has-hover):not(.has-selection) .edge { opacity: .16; }
+#graph.faint:not(.has-hover):not(.has-selection) .edge.violating { opacity: .8; }
+#graph.faint:not(.has-hover):not(.has-selection) .edge.trunk:not(.violating) { opacity: 1; }
+#graph.faint:not(.has-hover):not(.has-selection) .edge.trunk:not(.violating) > .trunk-body { opacity: .2; }
 #graph.violations-only .node:not(.violating), #graph.violations-only .edge:not(.violating) { opacity: .16; }
 #graph.idle-only .node:not(.idle), #graph.idle-only .edge { opacity: .16; }
 #graph.has-selection .node:not(.lit), #graph.has-selection .edge:not(.lit) { opacity: .18; }

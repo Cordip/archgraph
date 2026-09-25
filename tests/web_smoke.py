@@ -160,6 +160,16 @@ def trunk_projection():
             "edges": edges, "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []}
 
 
+def dense_projection():
+    """Twelve files, each depending on every later one: 66 wires, one of them violating."""
+    files = [f"d/f{i:02}.ts" for i in range(12)]
+    edges = [{**edge(f"file:{files[i]}", f"file:{files[j]}"), "violation_rule_ids": ["deny-api-domain"] if (i, j) == (0, 11) else []}
+             for i in range(12) for j in range(i + 1, 12)]
+    return {"focus": {**NODES["app.big"], "id": "app.dense", "title": "Dense"}, "breadcrumbs": [NODES["app"]],
+            "nodes": [{**entry("app.big", file=f), "violation_rule_ids": []} for f in files],
+            "edges": edges, "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []}
+
+
 # Segments of every drawn wire, from the path data (boards draw only M and L).
 SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .trunk-line')].map((line) => {
     const numbers = line.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
@@ -604,7 +614,7 @@ def main():
         strands = page.evaluate("() => scene.edgeEls.filter((item) => item.strands.length).map((item) => [item.edge.from, item.strands.map((s) => getComputedStyle(s).stroke)])")
         assert len(strands) == 1 and strands[0][0] == "file:w/a.ts" and len(set(strands[0][1])) == 2, strands
         page.locator("#colour-by").select_option("target")
-        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1'))") == {"mode": "curves", "colour": "target"}
+        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1'))") == {"mode": "curves", "colour": "target", "focus": True}
         page.locator("#colour-by").select_option("source")
         checks.append("wires coloured by source (one colour per entry, all its outgoing wires share it), legend and details swatches, kind colouring with a bus of strands")
 
@@ -738,6 +748,38 @@ def main():
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: one arrowhead, tag with the count, wider where more wires share it, red casing and a count for a violating wire, hover lights its wires, details list them; neutral when sources differ, the target's colour when coloured by target")
+
+        # Focus mode: above 60 wires every wire is faint until an entry is
+        # pointed at; its own wires light up, violations stay strong, and
+        # the toggle is remembered with the other view settings. Below the
+        # threshold (the level before) nothing is faint.
+        assert page.locator("#graph.faint").count() == 0
+        page.evaluate("(p) => { window.__fixture.projections['app.dense'] = p; }", dense_projection())
+        page.evaluate("loadFocus('app.dense')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.dense'")
+        page.locator("#zoom-fit").click()
+        page.wait_for_timeout(500)
+        opacity = lambda selector: page.locator(selector).first.evaluate("e => parseFloat(getComputedStyle(e).opacity)")
+        # A wire of f05's (not violating), and one f05 has nothing to do with.
+        own = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f05.ts']"
+        other = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f01.ts']:not([data-to='file:d/f05.ts'])"
+        assert page.evaluate("scene.edges.length") == 66 and page.locator("#graph.faint").count() == 1
+        assert opacity(own) < 0.3 and opacity(other) < 0.3, (opacity(own), opacity(other))
+        assert opacity("#graph .edge.violating") >= 0.75
+        page.locator("#graph .node[data-id='file:d/f05.ts']").hover()
+        page.wait_for_timeout(300)
+        assert opacity(own) == 1 and opacity(other) < 0.3, (opacity(own), opacity(other))
+        page.mouse.move(0, 0)
+        page.locator("#focus-mode").click()
+        page.wait_for_timeout(300)
+        assert page.locator("#graph.faint").count() == 0 and opacity(other) == 1
+        assert page.locator("#focus-mode").get_attribute("aria-pressed") == "false"
+        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1')).focus") is False
+        page.locator("#focus-mode").click()
+        assert page.locator("#graph.faint").count() == 1
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
+        checks.append("focus mode: above 60 wires all are faint, an entry's own wires light up on hover, violations stay strong; the toggle is remembered")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.

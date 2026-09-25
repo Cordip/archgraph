@@ -30,6 +30,10 @@ const CLUSTER_LIMIT = 120;
 const CLUSTER_TARGET = 32;
 // Above this many drawn edges, labels appear only on highlighted edges.
 const LABEL_LIMIT = 40;
+// Above this many drawn edges, focus mode (on by default) draws every wire
+// faint until an entry, a wire or a legend row is pointed at or selected;
+// violations stay strong.
+const FOCUS_EDGE_LIMIT = 60;
 const CARD = { width: 236, height: 86 }, GAP_X = 44, GAP_Y = 128, PAD = 40, MAX_COLUMNS = 6;
 const MIN_ZOOM = 0.08, MAX_ZOOM = 3;
 
@@ -452,8 +456,13 @@ function paint(lit, className, rootClass) {
     const strong = item.element.classList.contains("lit") || item.element.classList.contains("hover");
     item.line.setAttribute("marker-end", strong ? item.litMarker : item.marker);
   }
-  // A trunk lights with any of its wires.
-  for (const item of scene.trunkEls || []) item.element.classList.toggle(className, Boolean(lit) && item.trunk.members.some((edge) => lit.edges.has(edge)));
+  // A trunk lights with any of its wires; lit for only some of them, it
+  // stays half strength, so their own courses show through it.
+  for (const item of scene.trunkEls || []) {
+    const count = lit ? item.trunk.members.filter((edge) => lit.edges.has(edge)).length : 0;
+    item.element.classList.toggle(className, count > 0);
+    item.element.classList.toggle(`${className}-partial`, count > 0 && count < item.trunk.members.length);
+  }
 }
 // Hovering an entry or edge on the canvas marks the rows naming it in the
 // details panel; hovering a row lights its edge and entry on the canvas.
@@ -1584,7 +1593,8 @@ function fitTitle(card, tier) {
 const MODES = ["curves", "pcb", "hex"], COLOURINGS = ["source", "kind", "target", "none"];
 const display = (() => {
   const saved = stored("archgraph.view.v1", {}) || {};
-  return { mode: MODES.includes(saved.mode) ? saved.mode : "curves", colour: COLOURINGS.includes(saved.colour) ? saved.colour : "source" };
+  return { mode: MODES.includes(saved.mode) ? saved.mode : "curves", colour: COLOURINGS.includes(saved.colour) ? saved.colour : "source",
+    focus: typeof saved.focus === "boolean" ? saved.focus : true };
 })();
 const layoutKind = () => (display.mode === "curves" ? "layout" : `layout-${display.mode}`);
 // Six colour-blind-safe hues (Okabe–Ito, without its vermillion, which is
@@ -1691,7 +1701,7 @@ function drawScene() {
     }
   }
   Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], trunkEls: [], cards: [], textKey: null });
-  graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
+  graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${display.focus && scene.edges.length > FOCUS_EDGE_LIMIT ? " faint" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
   const frame = frameBox();
@@ -1732,6 +1742,7 @@ function drawScene() {
   });
   updateText();
   drawLegend();
+  updateDisplayUI();
 }
 // Marker ids: arrowheads (and vias on a board) take the wire's colour.
 function markers(look, violating) {
@@ -1756,7 +1767,7 @@ function drawEdge(plan) {
   const net = look.net !== null && look.net !== undefined ? ` ${netClass(look.net)}` : "";
   // Edges are not tab stops (a level can have hundreds); the keyboard
   // reaches them through the selected entry's dependency list.
-  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.trunk ? " branch" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true" });
+  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.trunk ? " branch" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true", "data-from": edge.from, "data-to": edge.to });
   const hit = svg("path", { d: plan.d, class: "edge-hit" });
   group.append(hit);
   // A violation keeps the wire's own colour inside a red casing.
@@ -1807,15 +1818,18 @@ function drawTrunk(trunk, tags) {
   const group = svg("g", { class: `edge trunk${coloured ? ` ${netClass(look.net)}` : " neutral"}${violations ? " violating" : ""}`, "aria-hidden": "true", "data-trunk": trunk.id });
   const runs = [...trunk.runs].sort((a, b) => a.tier.min - b.tier.min);
   const layer = (className) => runs.map((run) => svg("path", { d: run.d, class: `${className} trunk-t${run.tier.min}` }));
-  group.append(...layer("edge-hit"));
-  if (violations) group.append(...layer("edge-casing"));
-  group.append(...layer("edge-gap"));
+  // The runs overlap: dimmed as one group, they fade evenly.
+  const body = svg("g", { class: "trunk-body" });
+  group.append(body);
+  body.append(...layer("edge-hit"));
+  if (violations) body.append(...layer("edge-casing"));
+  body.append(...layer("edge-gap"));
   const lines = layer("trunk-line");
   const top = runs.filter((run) => run.end).pop();
   const ids = markers({ net: coloured ? look.net : null }, violations > 0);
   if (top) lines[runs.indexOf(top)].setAttribute("marker-end", `url(#${ids.end})`);
-  group.append(...lines);
-  for (const dot of trunk.dots) group.append(svg("circle", { cx: round(dot.x), cy: round(dot.y), r: 3.4, class: "trunk-dot" }));
+  body.append(...lines);
+  for (const dot of trunk.dots) body.append(svg("circle", { cx: round(dot.x), cy: round(dot.y), r: 3.4, class: "trunk-dot" }));
   if (trunk.label) {
     // The full tag names the count and the target; zoomed far out, where
     // the target's card shows little more than its title, only the count.
@@ -2674,6 +2688,11 @@ function drawLegend() {
 function updateDisplayUI() {
   for (const mode of MODES) $(`mode-${mode}`).setAttribute("aria-pressed", String(display.mode === mode));
   $("colour-by").value = display.colour;
+  $("focus-mode").setAttribute("aria-pressed", String(display.focus));
+  const dense = scene && scene.edges && scene.edges.length > FOCUS_EDGE_LIMIT;
+  $("focus-mode").title = display.focus
+    ? `Focus is on: ${dense ? "this level has" : "on levels with"} more than ${FOCUS_EDGE_LIMIT} wires, they are faint until you point at an entry, a wire or a legend row`
+    : "Focus is off: every wire is drawn at full strength";
 }
 function setDisplay(change) {
   const modeChanged = change.mode && change.mode !== display.mode;
@@ -2687,6 +2706,7 @@ function setDisplay(change) {
 }
 for (const mode of MODES) $(`mode-${mode}`).addEventListener("click", () => setDisplay({ mode }));
 $("colour-by").addEventListener("change", () => setDisplay({ colour: $("colour-by").value }));
+$("focus-mode").addEventListener("click", () => setDisplay({ focus: !display.focus }));
 updateDisplayUI();
 
 // ---------------------------------------------------------------- navigation
