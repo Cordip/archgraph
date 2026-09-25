@@ -71,7 +71,7 @@ jobs:
         run: node --check src/web/app.js
       # Nothing here pins Python dependencies, so a uv cache could never be
       # invalidated; the throwaway Playwright environment is cheap to rebuild.
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: false
       - name: Install Chromium
