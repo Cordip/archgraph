@@ -266,7 +266,13 @@ run GitNexus first when code has changed. The `--reindex` convenience belongs to
 `--reindex=full` forces a rebuild without the parse cache, which is needed after
 changing resolver configuration such as `package.json`, `tsconfig*.json` or
 workspace files (see [docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)).
-`serve` keeps an immutable snapshot until restarted.
+`serve` checks every `--refresh-seconds` (default 5; 0 serves a fixed
+snapshot) whether the GitNexus index fingerprint or `architecture.yaml`
+changed, recompiles in the background and swaps the new result in; the UI
+follows within seconds and stays on the node it shows. Source edits reach it
+through a reindex. A failed reload keeps the last good revision and is shown
+in the UI. Reloads write nothing, so an auto-index service watching the
+repository is not triggered by them.
 
 `compile` succeeds even when it finds violations. `check` exit codes are:
 

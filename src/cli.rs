@@ -124,7 +124,8 @@ pub enum Commands {
         #[arg(long, default_value_t = EVIDENCE_LIMIT)]
         evidence_limit: usize,
     },
-    /// Compile once and serve a read-only focus UI. Restart to reload after edits.
+    /// Compile and serve a read-only focus UI that reloads when the GitNexus
+    /// index or the architecture file changes.
     Serve {
         /// Refresh the provider index first: `--reindex` (incremental) or
         /// `--reindex=full` (after package.json/tsconfig changes).
@@ -135,6 +136,10 @@ pub enum Commands {
         host: IpAddr,
         #[arg(long, default_value_t = 7331)]
         port: u16,
+        /// How often to look for a changed index or configuration; 0 serves
+        /// a fixed snapshot.
+        #[arg(long, default_value_t = 5)]
+        refresh_seconds: u64,
     },
 }
 
@@ -432,14 +437,106 @@ pub async fn run(cli: Cli) -> Result<u8> {
             }
             Ok(0)
         }
-        Commands::Serve { host, port, .. } => {
+        Commands::Serve {
+            host,
+            port,
+            refresh_seconds,
+            ..
+        } => {
             if !host.is_loopback() {
                 eprintln!("warning: binding to {host} exposes read-only architecture metadata to reachable clients; there is no authentication");
             }
-            server::serve(ir, host, port).await?;
+            let live = server::Live::new(ir, refresh_seconds > 0);
+            if refresh_seconds > 0 {
+                let seen = Sources::read(&config_path, &provider).await;
+                tokio::spawn(watch_sources(
+                    root,
+                    config_path,
+                    validated,
+                    seen,
+                    live.clone(),
+                    std::time::Duration::from_secs(refresh_seconds),
+                ));
+            }
+            server::serve(live, host, port).await?;
             Ok(0)
         }
         Commands::Init { .. } => Ok(0), // Handled before loading config/provider.
+    }
+}
+
+/// What a served architecture depends on: the index and the configuration.
+/// Source edits reach it through the index.
+#[derive(Debug, PartialEq)]
+struct Sources {
+    index: Option<String>,
+    config: Option<(u64, std::time::SystemTime)>,
+}
+
+impl Sources {
+    async fn read(config_path: &Path, provider: &GitNexusCliProvider) -> Self {
+        use crate::provider::CodeGraphProvider;
+        Self {
+            index: provider.fingerprint().await.ok().flatten(),
+            config: std::fs::metadata(config_path)
+                .and_then(|metadata| Ok((metadata.len(), metadata.modified()?)))
+                .ok(),
+        }
+    }
+}
+
+/// Recompiles the served architecture when its sources change. Nothing is
+/// written: a GitNexus auto-index service may react to writes in the
+/// repository, which would change the index and trigger another round.
+async fn watch_sources(
+    root: PathBuf,
+    config_path: PathBuf,
+    mut validated: config::ValidatedConfig,
+    mut seen: Sources,
+    live: std::sync::Arc<server::Live>,
+    interval: std::time::Duration,
+) {
+    let mut last_error = None;
+    loop {
+        tokio::time::sleep(interval).await;
+        let result = async {
+            let provider = GitNexusCliProvider::new(&root, &validated.config.provider)?;
+            let now = Sources::read(&config_path, &provider).await;
+            if now == seen {
+                return Ok(None);
+            }
+            if now.config != seen.config {
+                validated = config::load(&config_path)?;
+            }
+            let provider = GitNexusCliProvider::new(&root, &validated.config.provider)?;
+            let options = compiler::CompileOptions::default();
+            let compiled = compiler::compile_with(&root, &validated, &provider, &options).await;
+            // Retry only once something changes again. A compile that failed
+            // because indexing was still running changes the index meanwhile.
+            seen = now;
+            compiled.map(|compiled| Some(compiled.ir))
+        }
+        .await;
+        match result {
+            Ok(Some(ir)) => {
+                let revision = live.publish(ir);
+                last_error = None;
+                eprintln!("ArchGraph: reloaded (revision {revision})");
+            }
+            Ok(None) => {}
+            Err(error) => {
+                // A broken configuration is retried every interval; say so once.
+                let error = format!("{error:#}");
+                if last_error.as_ref() != Some(&error) {
+                    eprintln!(
+                        "warning: reload failed; still serving revision {}: {error}",
+                        live.revision()
+                    );
+                    live.fail(error.clone());
+                    last_error = Some(error);
+                }
+            }
+        }
     }
 }
 

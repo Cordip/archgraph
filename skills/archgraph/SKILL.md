@@ -52,5 +52,5 @@ any checks that could not run. Static evidence may be incomplete: no observed
 edge is not proof of no runtime dependency. Manual edges and interface metadata
 are descriptive, not verified runtime facts.
 
-The web UI is read-only: `archgraph serve` compiles a snapshot and defaults to
-127.0.0.1:7331. Restart it to refresh after reindexing and code edits.
+The web UI is read-only: `archgraph serve` defaults to 127.0.0.1:7331 and
+reloads by itself after a reindex or an `architecture.yaml` edit.

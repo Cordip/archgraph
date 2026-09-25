@@ -10,7 +10,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/">ArchGraph <span>architecture explorer</span></a>
-    <span class="snapshot">Read-only snapshot</span>
+    <span id="snapshot" class="snapshot">Read-only snapshot</span>
     <form id="search-form" role="search">
       <label for="search">Find an architecture node</label>
       <input id="search" type="search" autocomplete="off" placeholder="Node ID or title…" aria-controls="search-results">
@@ -18,6 +18,7 @@
     </form>
   </header>
   <div id="error" role="alert" hidden></div>
+  <div id="refresh-status" role="status" hidden></div>
   <div id="loading" role="status" hidden>Loading architecture…</div>
   <main>
     <section class="workspace">
@@ -40,6 +41,6 @@
     </section>
     <aside id="details" aria-live="polite"><h2>Details &amp; evidence</h2><p>Select a node, dependency, or violation.</p></aside>
   </main>
-  <footer>Architecture is authored in <code>architecture.yaml</code>. Reindex GitNexus and restart <code>archgraph serve</code> after edits.</footer>
+  <footer>Architecture is authored in <code>architecture.yaml</code>. The view reloads when the GitNexus index or the architecture file changes; reindex GitNexus after source edits.</footer>
 </body>
 </html>

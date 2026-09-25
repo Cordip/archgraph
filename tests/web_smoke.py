@@ -91,7 +91,7 @@ def main():
         index = re.sub(r'<link[^>]*rel="stylesheet"[^>]*>', '', index)
         page.set_content(index)
         page.add_style_tag(content=(ROOT / "src/web/style.css").read_text())
-        page.evaluate("(() => { const fixture = " + json.dumps(mocked) + ";" + r"""
+        page.evaluate("(() => { window.__fixture = " + json.dumps(mocked) + "; const fixture = window.__fixture;" + r"""
             window.__history = [];
             window.history.pushState = (state, title, url) => window.__history.push(String(url));
             window.fetch = async (input) => {
@@ -153,6 +153,33 @@ def main():
         assert "deny-api-domain" in page.locator("#details").inner_text()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
         checks.append("architecture search and violation evidence selection")
+
+        # A live server publishes a new revision: the view follows it and stays
+        # on the current node; a failed reload is shown, not hidden.
+        assert page.locator("#snapshot").inner_text() == "Read-only snapshot"
+        page.evaluate("""() => {
+            const fixture = window.__fixture;
+            fixture.meta = {...fixture.meta, watching: true, revision: 2, diagnostics: ['Reloaded coverage warning']};
+            fixture.projections['app.domain'].focus.title = 'Domain v2';
+        }""")
+        assert page.evaluate("checkForUpdates()") is True
+        assert page.locator("#focus-title").inner_text() == "Domain v2"
+        assert page.locator("#snapshot").inner_text() == "Live · revision 2"
+        assert "Reloaded coverage warning" in page.locator("#diagnostics").inner_text()
+        assert page.locator("#refresh-status").is_hidden()
+        page.evaluate("() => { window.__fixture.meta = {...window.__fixture.meta, refresh_error: 'index changed while compiling'}; }")
+        assert page.evaluate("checkForUpdates()") is False
+        assert "latest reload failed: index changed while compiling" in page.locator("#refresh-status").inner_text()
+        page.evaluate("""() => {
+            const fixture = window.__fixture;
+            fixture.meta = {...fixture.meta, revision: 3, refresh_error: null};
+            delete fixture.projections['app.domain'];
+        }""")
+        assert page.evaluate("checkForUpdates()") is True
+        assert page.locator("#focus-title").inner_text() == "Application"
+        assert page.locator("#refresh-status").is_hidden()
+        assert page.locator("#error").is_hidden()
+        checks.append("live reload follows new revisions, keeps the focus while it exists, and reports failed reloads")
 
         screenshot = os.environ.get("ARCHGRAPH_UI_SCREENSHOT")
         if screenshot:

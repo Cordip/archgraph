@@ -26,7 +26,7 @@ has the reasons for each change. Agent workflow rules and known gotchas are in
 | `archgraph baseline` | Accepts all current violations into `<config stem>.baseline.json`, at file-level observation granularity. |
 | `archgraph show [NODE]` | Shared semantic focus projection; `--format text`, `json`, or `mermaid`. Defaults to the configured project root. |
 | `archgraph context NODE` | Agent-oriented Markdown or `--json`; configurable `--evidence-limit`; interfaces, counts, coverage, dependency direction, rules, violations with suggested cuts, concrete evidence, and agent contract. |
-| `archgraph serve` | Compile-on-start read-only snapshot, embedded HTML/CSS/JavaScript, `--reindex[=full]`, `--host`, `--port`; loopback by default. |
+| `archgraph serve` | Read-only UI with embedded HTML/CSS/JavaScript that recompiles when the index fingerprint or configuration changes (`--refresh-seconds`, 0 for a fixed snapshot), `--reindex[=full]`, `--host`, `--port`; loopback by default. |
 
 `--root`, `--config` and `--no-cache` are global options and work before or
 after a subcommand. `show` and `context` also compile fresh rather than

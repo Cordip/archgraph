@@ -68,6 +68,7 @@ button:hover, button:focus-visible { background: #dfeff3; }
 #diagnostics { color: #856318; font-size: 12px; }
 #error { margin: 16px 30px 0; padding: 14px; color: #a82531; background: #ffe9e9; border: 1px solid #e8b4b9; overflow-wrap: anywhere; }
 #loading { padding: 10px 30px; color: #146f88; font-size: 12px; }
+#refresh-status { margin: 16px 30px 0; padding: 12px 14px; color: #7a4a00; background: #fff4dc; border: 1px solid #ecd092; overflow-wrap: anywhere; font-size: 13px; }
 [hidden] { display: none !important; }
 footer { padding: 18px 30px; font-size: 12px; border-top: 1px solid #d9e2ec; color: #657a8d; }
 @media (max-width: 1050px) { main { grid-template-columns: minmax(0, 1fr) 285px; } .workspace { padding: 22px 18px; } .snapshot { display: none; } }

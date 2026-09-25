@@ -607,3 +607,102 @@ fn a_file_moved_since_the_baseline_keeps_its_accepted_observations() {
         Some(2)
     );
 }
+
+fn http_get(port: u16, path: &str) -> Option<Value> {
+    use std::io::{Read, Write};
+    let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .ok()?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response).ok()?;
+    let body = response.split_once("\r\n\r\n")?.1;
+    serde_json::from_str(body).ok()
+}
+
+fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+/// Polls until `condition` holds for `/api/meta`, or panics after 20 s.
+fn wait_for_meta(port: u16, what: &str, condition: impl Fn(&Value) -> bool) -> Value {
+    for _ in 0..200 {
+        if let Some(meta) = http_get(port, "/api/meta").filter(|meta| condition(meta)) {
+            return meta;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    panic!("timed out waiting for {what}");
+}
+
+#[test]
+fn serve_reloads_when_the_configuration_or_the_index_changes() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    std::fs::create_dir(root.join(".gitnexus")).unwrap();
+    std::fs::write(root.join(".gitnexus/meta.json"), "{}").unwrap();
+    let port = free_port();
+    struct Kill(std::process::Child);
+    impl Drop for Kill {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _server = Kill(
+        Command::new(env!("CARGO_BIN_EXE_archgraph"))
+            .arg("--root")
+            .arg(root)
+            .args([
+                "serve",
+                "--refresh-seconds",
+                "1",
+                "--port",
+                &port.to_string(),
+            ])
+            .env("GITNEXUS_BIN", &fixture.executable)
+            .env("ARCHGRAPH_FAKE_MODE", "violation")
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+
+    let meta = wait_for_meta(port, "the server", |meta| meta["revision"] == 1);
+    assert_eq!(meta["watching"], true);
+    let violations = http_get(port, "/api/violations").unwrap();
+    assert_eq!(violations["violations"].as_array().unwrap().len(), 1);
+
+    // A configuration edit: the rule now targets a node with no dependency.
+    std::fs::write(
+        root.join("architecture.yaml"),
+        YAML.replace("to: app.b}", "to: app.c}"),
+    )
+    .unwrap();
+    wait_for_meta(port, "a reload after the config edit", |meta| {
+        meta["revision"] == 2
+    });
+    let violations = http_get(port, "/api/violations").unwrap();
+    assert!(violations["violations"].as_array().unwrap().is_empty());
+
+    // A broken configuration keeps the last good revision and says why.
+    std::fs::write(root.join("architecture.yaml"), "version: [").unwrap();
+    let meta = wait_for_meta(port, "a reported reload failure", |meta| {
+        !meta["refresh_error"].is_null()
+    });
+    assert_eq!(meta["revision"], 2);
+    std::fs::write(root.join("architecture.yaml"), YAML).unwrap();
+    wait_for_meta(port, "a reload after the fix", |meta| meta["revision"] == 3);
+
+    // A reindex (the index files change) reloads as well.
+    std::fs::write(root.join(".gitnexus/meta.json"), "{\"reindexed\": true}").unwrap();
+    let meta = wait_for_meta(port, "a reload after reindexing", |meta| {
+        meta["revision"] == 4
+    });
+    assert!(meta["refresh_error"].is_null());
+}

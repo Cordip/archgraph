@@ -366,6 +366,52 @@ async fn scoped_check_matches_actual_owners_not_similarly_named_or_unaffected_de
 }
 
 #[tokio::test]
+async fn a_live_server_serves_each_published_revision_and_reports_failed_reloads() {
+    let temp = repository();
+    let before = compile(temp.path(), imports()).await;
+    let after = compile(temp.path(), imports()[..1].to_vec()).await;
+    let (before_count, after_count) = (before.violations.len(), after.violations.len());
+    assert_ne!(before_count, after_count);
+    let live = server::Live::new(before, true);
+    let app = server::live_router(live.clone());
+    let get = |path: &'static str| {
+        let app = app.clone();
+        async move {
+            let response = app
+                .oneshot(Request::builder().uri(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap()
+        }
+    };
+    let meta = get("/api/meta").await;
+    assert_eq!(
+        (meta["watching"].as_bool(), meta["revision"].as_u64()),
+        (Some(true), Some(1))
+    );
+    let violation_count = || async {
+        get("/api/violations").await["violations"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert_eq!(violation_count().await, before_count);
+
+    assert_eq!(live.publish(after), 2);
+    assert_eq!(get("/api/meta").await["revision"], 2);
+    assert_eq!(violation_count().await, after_count);
+
+    live.fail("index changed while compiling".into());
+    let meta = get("/api/meta").await;
+    assert_eq!(
+        meta["revision"], 2,
+        "a failed reload keeps the last good revision"
+    );
+    assert_eq!(meta["refresh_error"], "index changed while compiling");
+}
+
+#[tokio::test]
 async fn read_only_http_endpoints_share_projection_and_do_not_expose_source_or_cypher() {
     let temp = repository();
     let ir = compile(temp.path(), imports()).await;

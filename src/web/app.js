@@ -28,6 +28,34 @@ async function api(path) {
   if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
   return payload;
 }
+function showDiagnostics() {
+  $("diagnostics").replaceChildren();
+  $("diagnostics-section").hidden = !meta.diagnostics.length;
+  for (const warning of meta.diagnostics) $("diagnostics").append(html("p", warning));
+}
+function showRefreshState(unreachable) {
+  $("snapshot").textContent = meta.watching ? `Live · revision ${meta.revision}` : "Read-only snapshot";
+  const problem = unreachable
+    ? "Cannot reach archgraph serve; showing the last loaded state."
+    : meta.refresh_error && `Showing revision ${meta.revision}; the latest reload failed: ${meta.refresh_error}`;
+  $("refresh-status").textContent = problem || "";
+  $("refresh-status").hidden = !problem;
+}
+// The server recompiles when the index or architecture.yaml changes; follow
+// it, staying on the current node while it still exists.
+async function checkForUpdates() {
+  let latest;
+  try { latest = await api("/api/meta"); } catch { showRefreshState(true); return false; }
+  const changed = latest.revision !== meta.revision;
+  meta = latest;
+  showRefreshState(false);
+  if (!changed) return false;
+  showDiagnostics();
+  let id = currentProjection ? currentProjection.focus.id : meta.project.root;
+  try { await api(`/api/focus/${encodeURIComponent(id)}`); } catch { id = meta.project.root; }
+  await loadFocus(id, false);
+  return true;
+}
 function showError(error) { $("error").textContent = error.message || String(error); $("error").hidden = false; }
 function focusUrl(id) { const url = new URL(location.href); url.searchParams.set("focus", id); return url; }
 function linkTo(id, title) {
@@ -334,8 +362,9 @@ window.addEventListener("popstate", () => { if (meta) loadFocus(new URL(location
 (async () => {
   try {
     meta = await api("/api/meta");
-    $("diagnostics-section").hidden = !meta.diagnostics.length;
-    for (const warning of meta.diagnostics) $("diagnostics").append(html("p", warning));
+    showDiagnostics();
+    showRefreshState(false);
     await loadFocus(new URL(location.href).searchParams.get("focus") || meta.project.root, false);
+    if (meta.watching) setInterval(() => { if (!document.hidden) checkForUpdates(); }, 5000);
   } catch (error) { showError(error); }
 })();
