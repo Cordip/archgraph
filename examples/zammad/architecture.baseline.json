@@ -1,6 +1,7 @@
 {
   "schema_version": 1,
   "note": "Accepted architecture violations. `archgraph check` fails only on observations not listed here. Regenerate deliberately with `archgraph baseline`.",
+  "commit": "5b396c16c1d150bbcacf42e593a66d860527ae50",
   "entries": [
     {
       "rule_id": "no-backend-layer-cycles",
