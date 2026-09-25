@@ -130,6 +130,28 @@ test helpers kept next to production code (`*.mocks.ts`, `__tests__/`,
 [docs/gitnexus-limitations.md](../../docs/gitnexus-limitations.md)), so those
 810 files stay unobserved.
 
+## Packages
+
+The configuration sets `provider.packages: true`. It adds no violation and
+changes no coverage figure (package imports do not count as observed), and
+the IR stays byte-identical between runs. At the commit above,
+`archgraph packages` lists 77 npm packages imported by 1,377 files, all
+from the new Vue frontend: `vue` by 767 files, `graphql-tag` by 311,
+`@vue/apollo-composable` by 276, `@testing-library/vue` by 211. The legacy
+CoffeeScript UI imports nothing through npm; its libraries are vendored
+into `app/assets/javascripts`.
+
+The 10 ambiguous imports are all in those vendored files: jQuery plugins
+and Rangy modules wrapped for CommonJS (`require('jquery')`, `rangy`) and
+jsonlint's `require('file')`/`require('system')`. No `package.json`
+declares them, since the asset pipeline supplies them, so ArchGraph reports
+them instead of inventing packages. The one dynamic import is the frontend
+build's `import(pathToFileURL(...))` of addon rule files.
+
+Not covered: `.vue` single-file components (their imports are not read; the
+counts above come from `.ts` files only) and gems, which Rails and Bundler
+load without an import statement.
+
 ## UI
 
 `archgraph serve` rendered the backend and root focus levels with no browser

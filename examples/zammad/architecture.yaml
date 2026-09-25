@@ -27,6 +27,9 @@ provider:
   edge_types: &observed [IMPORTS, CALLS, EXTENDS, IMPLEMENTS]
   exclude_reasons: [markdown-link, property-dispatch]
   min_confidence: 0.6
+  # GitNexus drops imports of npm packages; ArchGraph reads them
+  # (`archgraph packages`). Rails loads gems without imports: not covered.
+  packages: true
 policies:
   unassigned_files: warn
   ambiguous_mapping: error
