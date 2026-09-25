@@ -449,6 +449,26 @@ function paint(lit, className, rootClass) {
     item.line.setAttribute("marker-end", strong && !item.violating ? "url(#arrow-lit)" : item.marker);
   }
 }
+// Hovering an entry or edge on the canvas marks the rows naming it in the
+// details panel; hovering a row lights its edge and entry on the canvas.
+function linkPanel(source) {
+  for (const row of document.querySelectorAll("#details .dependency")) {
+    row.classList.toggle("linked", Boolean(source) && (source.edge ? row.edge === source.edge : row.otherId === source.node));
+  }
+}
+function hoverCanvas(lit, source) {
+  paint(lit, "hover", "has-hover");
+  linkPanel(lit ? source : null);
+}
+// A path may break after a slash, never inside a name.
+function pathText(text, className) {
+  const element = html("span", null, className);
+  String(text).split(/(?<=\/)/).forEach((part, index) => {
+    if (index) element.append(document.createElement("wbr"));
+    element.append(part);
+  });
+  return element;
+}
 function sceneEdges(id) { return scene && scene.byId.has(id) ? scene.edges : merged; }
 function neighbourhood(id) {
   const lit = { nodes: new Set([id]), edges: new Set() };
@@ -605,7 +625,15 @@ function dependencyList(panel, heading, edges, other) {
   for (const edge of sorted.slice(0, limit)) {
     const button = html("button", null, `dependency${edge.violation_rule_ids.length ? " violating" : ""}`);
     button.type = "button";
-    button.append(html("span", displayEndpoint(other(edge)), "dependency-name"));
+    button.append(pathText(displayEndpoint(other(edge)), "dependency-name"));
+    button.edge = edge;
+    button.otherId = other(edge);
+    const light = () => hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge });
+    const unlight = () => hoverCanvas(null);
+    button.addEventListener("mouseenter", light);
+    button.addEventListener("mouseleave", unlight);
+    button.addEventListener("focus", light);
+    button.addEventListener("blur", unlight);
     button.append(html("span", `${edgeSummary(edge)}${edge.origin === "manual" ? " manual" : ""}${edge.violation_rule_ids.length ? " ⚠" : ""}`, "dependency-count"));
     button.addEventListener("click", () => {
       const drawn = scene && scene.edgeEls && scene.edgeEls.find((item) => item.edge === edge);
@@ -1259,8 +1287,8 @@ function drawEdge(plan) {
   group.append(hit, line, label);
   group.append(svg("title", {}, `${displayEndpoint(edge.from)} → ${displayEndpoint(edge.to)}\n${kindCounts(edge.parts).map(([kind, count]) => `${kind} × ${count}`).join(", ")}. Click for concrete evidence.`));
   group.addEventListener("click", () => showEdge(edge, group));
-  group.addEventListener("mouseenter", () => paint({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, "hover", "has-hover"));
-  group.addEventListener("mouseleave", () => paint(null, "hover", "has-hover"));
+  group.addEventListener("mouseenter", () => hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }));
+  group.addEventListener("mouseleave", () => hoverCanvas(null));
   scene.edgeEls.push({ edge, element: group, line, hit, label, marker, violating });
   return group;
 }
@@ -1310,10 +1338,10 @@ function drawNode(node, box, first) {
     if (node.entry_kind === "architecture") loadFocus(node.architecture_id);
     else if (node.entry_kind === "group") setGroupOpen(node, true);
   });
-  group.addEventListener("mouseenter", () => { if (!gesture) paint(neighbourhood(node.id), "hover", "has-hover"); });
-  group.addEventListener("mouseleave", () => { if (!gesture) paint(null, "hover", "has-hover"); });
-  group.addEventListener("focus", () => paint(neighbourhood(node.id), "hover", "has-hover"));
-  group.addEventListener("blur", () => paint(null, "hover", "has-hover"));
+  group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas(neighbourhood(node.id), { node: node.id }); });
+  group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
+  group.addEventListener("focus", () => hoverCanvas(neighbourhood(node.id), { node: node.id }));
+  group.addEventListener("blur", () => hoverCanvas(null));
   group.addEventListener("keydown", (event) => nodeKey(event, node, group));
   scene.nodeEls.set(node.id, group);
   return group;

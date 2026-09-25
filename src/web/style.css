@@ -349,9 +349,10 @@ button.secondary { color: var(--ink); background: none; border: 1px solid var(--
 button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
 .plain-list, .dependency-list { margin: 4px 0 0; padding: 0; list-style: none; }
 .dependency { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; width: 100%; padding: 7px 4px; text-align: left; font-size: 14px; background: none; border: 0; border-bottom: 1px solid var(--rule); }
-.dependency:hover { background: var(--pencil-soft); }
+.dependency:hover, .dependency.linked { background: var(--pencil-soft); }
+.dependency.linked { box-shadow: inset 3px 0 0 var(--pencil); }
 .dependency:focus-visible { outline-offset: -2px; }
-.dependency-name { min-width: 0; font: 13px/1.5 var(--font-code); overflow-wrap: anywhere; }
+.dependency-name { min-width: 0; font: 13px/1.5 var(--font-code); overflow-wrap: break-word; }
 .dependency-count { flex: none; font-size: 13px; color: var(--ink-3); white-space: nowrap; }
 .dependency.violating .dependency-count { color: var(--red); }
 .violation-badge { font: 600 14px var(--font-code); color: var(--red); }

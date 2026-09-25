@@ -193,12 +193,24 @@ def main():
         # Selecting an entry dims everything it is not connected to.
         assert page.locator("#graph.has-selection").count() == 1
         assert page.locator("#graph .node.lit").count() == 3
-        page.locator("#details .dependency", has_text="app.domain").click()
+        # A row in the details and its entry on the canvas light each other.
+        row = page.locator("#details .dependency", has_text="app.domain")
+        row.hover()
+        assert page.locator("#graph.has-hover").count() == 1
+        assert page.locator("#graph .node.hover").evaluate_all("els => els.map(e => e.getAttribute('aria-label')).sort()") == ["API", "Domain"]
+        page.mouse.move(0, 0)
+        assert page.locator("#graph.has-hover").count() == 0
+        page.get_by_role("button", name="Domain", exact=True).hover()
+        assert "linked" in row.get_attribute("class")
+        assert page.locator("#details .dependency.linked").count() == 1
+        page.mouse.move(0, 0)
+        assert page.locator("#details .dependency.linked").count() == 0
+        row.click()
         assert "CALLS × 25" in page.locator("#details").inner_text()
         assert "Observed dependency" in page.locator("#details").inner_text()
         page.keyboard.press("Escape")
         assert "This level" in page.locator("#details").inner_text()
-        checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency list to edge evidence, Escape back to the level")
+        checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency rows and canvas entries light each other on hover, dependency list to edge evidence, Escape back to the level")
 
         # Canvas: drag empty space to pan, wheel to zoom at the pointer.
         stage = page.locator("#stage").bounding_box()
