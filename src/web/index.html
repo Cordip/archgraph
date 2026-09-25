@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ArchGraph</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">ArchGraph <span>architecture explorer</span></a>
+    <span class="snapshot">Read-only snapshot</span>
+    <form id="search-form" role="search">
+      <label for="search">Find an architecture node</label>
+      <input id="search" type="search" autocomplete="off" placeholder="Node ID or title…" aria-controls="search-results">
+      <div id="search-results" aria-live="polite"></div>
+    </form>
+  </header>
+  <div id="error" role="alert" hidden></div>
+  <div id="loading" role="status" hidden>Loading architecture…</div>
+  <main>
+    <section class="workspace">
+      <nav id="breadcrumbs" aria-label="Architecture breadcrumbs"></nav>
+      <div class="focus-heading">
+        <div><div id="focus-id" class="eyebrow"></div><h1 id="focus-title">Architecture</h1></div>
+        <div id="focus-count" class="count"></div>
+      </div>
+      <p id="description"></p>
+      <div id="interfaces" class="interfaces"></div>
+      <div id="summary" class="summary"></div>
+      <div class="graph-toolbar">
+        <p>Click for details. Double-click an architecture node to focus. Use breadcrumbs to move up.</p>
+        <span class="legend">Solid: observed · Dashed: manual · ⚠: violation</span>
+      </div>
+      <div id="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Focused architecture dependency graph"></svg></div>
+      <section class="violations-section"><h2>Violations touching this view</h2><div id="violations"></div></section>
+      <section id="diagnostics-section" hidden><h2>Coverage diagnostics</h2><div id="diagnostics"></div></section>
+      <p id="evidence-notice" class="notice"></p>
+    </section>
+    <aside id="details" aria-live="polite"><h2>Details &amp; evidence</h2><p>Select a node, dependency, or violation.</p></aside>
+  </main>
+  <footer>Architecture is authored in <code>architecture.yaml</code>. Reindex GitNexus and restart <code>archgraph serve</code> after edits.</footer>
+</body>
+</html>

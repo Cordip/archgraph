@@ -1,0 +1,63 @@
+version: 1
+project:
+  name: fixture
+  root: app
+  source_roots: [src]
+provider:
+  kind: gitnexus
+  page_size: 2
+nodes:
+  app:
+    title: Application
+    maps: ["src/**"]
+  app.api:
+    title: API
+    description: Inbound adapters.
+    maps: ["src/api/**"]
+    interfaces:
+      - name: Public API
+        kind: http
+        direction: provides
+        protocol: https
+        contract: /api/*
+  app.api.handlers:
+    title: Handlers
+    maps: ["src/api/handlers/**"]
+  app.domain:
+    title: Domain
+    maps: ["src/domain/**"]
+  app.persistence:
+    title: Persistence
+    maps: ["src/persistence/**"]
+  app.shared:
+    title: Shared
+    maps: ["src/shared/**"]
+  external:
+    title: External dependencies
+    kind: external
+  external.service:
+    title: Remote service
+    kind: external
+edges:
+  - id: remote
+    from: app.api
+    to: external.service
+    kind: http
+    label: Remote call
+  - id: boundary-remote
+    from: app
+    to: external.service
+    kind: http
+    label: Whole-application contract
+rules:
+  - id: deny-storage
+    kind: deny_dependency
+    from: app.domain
+    to: app.persistence
+  - id: domain-allowlist
+    kind: allow_only
+    from: app.domain
+    to: [app.shared]
+  - id: no-cycles
+    kind: no_cycles
+    within: app

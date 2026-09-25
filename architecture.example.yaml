@@ -1,0 +1,107 @@
+version: 1
+
+project:
+  name: example-app
+  root: app
+  source_roots: [src]
+  exclude:
+    - "**/target/**"
+    - "**/.venv/**"
+    - "**/__pycache__/**"
+    - "**/generated/**"
+
+provider:
+  kind: gitnexus
+  command: gitnexus
+  repo: null
+  page_size: 1000
+
+policies:
+  unassigned_files: warn
+  ambiguous_mapping: error
+
+nodes:
+  app:
+    title: Application
+    description: Main application boundary.
+    maps: ["src/**"]
+
+  app.billing:
+    title: Billing
+    description: Billing capabilities, independent of directory-level organization.
+    maps: ["src/billing/**"]
+
+  app.billing.api:
+    title: Billing API
+    description: HTTP adapters into billing use cases.
+    maps: ["src/billing/api/**", "src/controllers/billing_controller.py"]
+    interfaces:
+      - name: Billing HTTP API
+        kind: http
+        direction: provides
+        protocol: https
+        contract: /api/billing/*
+        description: Public billing entry point.
+
+  app.billing.domain:
+    title: Billing Domain
+    description: Business rules with no persistence imports.
+    maps: ["src/billing/domain/**"]
+
+  app.billing.domain.invoicing:
+    title: Invoicing
+    description: Invoice calculation policies, nested at an arbitrary depth.
+    maps: ["src/billing/domain/invoicing/**"]
+
+  app.billing.persistence:
+    title: Persistence
+    description: Storage adapters; may depend on domain types.
+    maps: ["src/billing/persistence/**", "src/persistence/invoice/**"]
+
+  app.shared:
+    title: Shared
+    description: Shared value types and primitives.
+    maps: ["src/shared/**"]
+
+  # Every dotted parent is explicit, including the external namespace.
+  external:
+    title: External dependencies
+    kind: external
+
+  external.stripe:
+    title: Stripe
+    kind: external
+    description: External payment provider, treated as a black box.
+    interfaces:
+      - name: Payments API
+        kind: http
+        direction: provides
+        protocol: https
+
+edges:
+  - id: stripe-api
+    from: app.billing.api
+    to: external.stripe
+    kind: http
+    label: Payments API
+    description: Authored integration intent; not inferred or verified by GitNexus.
+
+rules:
+  - id: domain-must-not-import-persistence
+    kind: deny_dependency
+    from: app.billing.domain
+    to: app.billing.persistence
+    edge_types: [IMPORTS]
+    include_descendants: true
+
+  - id: domain-allowlist
+    kind: allow_only
+    from: app.billing.domain
+    to: [app.shared]
+    edge_types: [IMPORTS]
+    include_descendants: true
+
+  - id: billing-must-not-have-module-cycles
+    kind: no_cycles
+    within: app.billing
+    edge_types: [IMPORTS]

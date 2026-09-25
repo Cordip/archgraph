@@ -1,0 +1,373 @@
+# ArchGraph
+
+**Desired recursive architecture + observed code dependencies + rules + concrete evidence.**
+
+ArchGraph is a Rust architecture compiler for one local repository. You author
+`architecture.yaml`; an external GitNexus executable supplies file-level
+`IMPORTS` edges. ArchGraph maps files into logical architecture nodes, checks
+constraints, writes deterministic JSON IR, and presents the same semantic focus
+projection to people and coding agents.
+
+There are no fixed C4 levels. IDs such as `app.billing.domain.invoicing` encode
+an arbitrary-depth hierarchy. Logical nodes may collect files from unrelated
+filesystem directories. GitNexus—not ArchGraph—owns language parsing and symbol
+resolution, whether the source is Python, Rust, C/C++, or another supported
+language.
+
+## Prerequisites and quick start
+
+Building ArchGraph requires a current stable Rust toolchain and Cargo. Running
+it requires GitNexus, its own runtime prerequisites, and an indexed repository.
+ArchGraph itself needs no database, LLM service, frontend package manager, or
+Node/npm frontend build. The following npm command installs the **external
+GitNexus provider**, not an ArchGraph frontend dependency.
+
+```bash
+# Install GitNexus according to its upstream instructions.
+npm install -g gitnexus@latest
+cd /path/to/your-project
+gitnexus analyze --index-only
+
+# Build/install this repository's Rust binary.
+cargo install --path /path/to/archgraph
+
+archgraph init
+# Edit architecture.yaml to describe your logical modules.
+archgraph compile
+archgraph check
+archgraph context app
+archgraph serve
+```
+
+Open `http://127.0.0.1:7331`. Use a validated, pinned GitNexus version in CI:
+upstream output changes must pass the strict compatibility adapter before they
+can be used to report a clean architecture.
+
+**Validation of this source delivery:** the implementation and Rust tests were
+written without a Rust toolchain. They have not been compiled or executed here.
+See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the validation record and first
+Rust validation commands. Do not treat the included tests as evidence of a
+successful build until they have actually run.
+
+## Architecture source
+
+A compact example (the complete, deeper example is
+[architecture.example.yaml](architecture.example.yaml)):
+
+```yaml
+version: 1
+project:
+  name: example-app
+  root: app
+  source_roots: [src]
+  exclude: ["**/generated/**", "**/target/**"]
+provider:
+  kind: gitnexus
+  command: gitnexus
+  repo: null
+  page_size: 1000
+policies:
+  unassigned_files: warn
+  ambiguous_mapping: error
+nodes:
+  app:
+    title: Application
+    maps: ["src/**"]
+  app.api:
+    title: API
+    maps: ["src/api/**"]
+    interfaces:
+      - {name: Public API, kind: http, direction: provides, protocol: https}
+  app.domain:
+    description: Business rules, independent of persistence.
+    maps: ["src/domain/**"]
+  app.persistence:
+    maps: ["src/persistence/**"]
+  app.shared:
+    maps: ["src/shared/**"]
+  external:
+    kind: external
+  external.stripe:
+    title: Stripe
+    kind: external
+edges:
+  - {id: payments, from: app.api, to: external.stripe, kind: http, label: Payments API}
+rules:
+  - id: domain-no-persistence
+    kind: deny_dependency
+    from: app.domain
+    to: app.persistence
+    edge_types: [IMPORTS]
+    include_descendants: true
+  - id: domain-allowlist
+    kind: allow_only
+    from: app.domain
+    to: [app.shared]
+    edge_types: [IMPORTS]
+  - id: no-module-cycles
+    kind: no_cycles
+    within: app
+    edge_types: [IMPORTS]
+```
+
+Every dotted parent must exist, including `external` for `external.stripe`.
+Node IDs use ASCII letters, digits, underscores and hyphens separated by dots.
+`app.foo` is not an ancestor of `app.foobar`. External nodes cannot have file
+maps; internal nodes cannot be placed under external nodes. Project root must
+reference an internal node. Unknown YAML fields, missing references, invalid
+globs, duplicate rule/manual-edge IDs, and zero page sizes are errors.
+
+Paths and globs are repository-relative. Paths normalize to `/` on every
+platform. `**` spans directories; `*` does not cross `/`. Mapping and exclusion
+globs are compiled once. Discovery uses `ignore` with repository `.gitignore`,
+`.ignore`, and `.git/info/exclude` semantics. Global Git ignore configuration is
+disabled for reproducibility. Symlinks are not followed. `.git`, `.archgraph`,
+and `.gitnexus` are never crawled, so compiler/provider output cannot become
+source input on subsequent runs. Missing source roots are actionable errors.
+
+A file matching an ancestor chain belongs to its deepest matching node. Parents
+implicitly contain descendant files for counts and projections. Unrelated
+matching branches are ambiguous. The default is an error; `ambiguous_mapping:
+warn` retains the ambiguity without choosing a branch or assigning the file.
+Unmatched files use the configured `ignore`, `warn` (default), or `error` policy.
+Warnings and excluded/unmapped provider edges remain visible in IR diagnostics.
+
+## Actual versus desired architecture
+
+Observed relationships have `origin: observed` and actual file-pair evidence.
+Manual typed relationships have `origin: manual`, retain authored labels and
+descriptions, and have **no fabricated source evidence**. They are kept separate
+even when an observed relationship has the same endpoints and kind.
+
+Rules evaluate observed relationships only:
+
+| Rule | Meaning |
+| --- | --- |
+| `deny_dependency` | Reject selected observed dependencies from the source to the target subtree. |
+| `allow_only` | Permit dependencies internal to the source subtree and to listed target subtrees; reject other selected outbound dependencies. |
+| `no_cycles` | Project to immediate children of `within`; report each strongly connected component containing at least two children. |
+
+`edge_types` defaults to `[IMPORTS]`. The dependency rules default
+`include_descendants` to `true`. With `false`, source selection and listed
+allow/deny targets match exact ownership nodes; dependencies internal to the
+`allow_only.from` subtree remain permitted. Empty `allow_only.to: []` permits
+only internal dependencies. `no_cycles` ignores self-edges at its zoom level.
+An SCC is reported as a component, not misleadingly formatted as an ordered
+cycle path. Each participating architecture edge has its own evidence sample.
+
+Interfaces are descriptive metadata: only `name` and `kind` are required, and
+kinds are open strings. They do not establish runtime compatibility.
+
+## CLI reference
+
+Global `--root PATH` and `--config PATH` work before or after a subcommand.
+Without `--root`, ArchGraph walks upward to `.git` (directory or worktree file)
+and errors when none is found. Relative config paths resolve against the
+repository root, not the current nested working directory.
+
+```bash
+archgraph init
+archgraph init --install-skill
+archgraph init --install-skill --force
+
+archgraph compile
+archgraph compile --reindex --json
+archgraph compile --config config/architecture.yaml
+
+archgraph check
+archgraph check app.billing --reindex
+archgraph check app.billing --json
+
+archgraph show
+archgraph show app.billing --format text
+archgraph show app.billing --format json
+archgraph show app.billing --format mermaid
+
+archgraph context app.billing
+archgraph context app.billing --json --evidence-limit 50
+
+archgraph serve
+archgraph serve --reindex --port 7331 --host 127.0.0.1
+```
+
+`compile`, `check`, `show`, `context`, and server startup all compile fresh and
+write `.archgraph/architecture.ir.json`. No command silently reuses stale IR.
+`show` defaults to the authored project root. `show` and `context` do not reindex:
+run GitNexus first when code has changed. The `--reindex` convenience belongs to
+`compile`, `check`, and `serve` only, and never requests a forced full rebuild.
+`serve` keeps an immutable snapshot until restarted.
+
+`compile` succeeds even when it finds violations. `check` exit codes are:
+
+| Exit | Meaning |
+| --- | --- |
+| **0** | Compilation succeeded; no matching observed architecture violations. |
+| **1** | Operational, configuration, provider, compiler, or command-line usage failure. |
+| **2** | Compilation succeeded; matching architecture violations exist. |
+
+A scoped check includes violations whose actual source or target ownership is
+in the requested subtree, including cross-boundary dependencies. SCC violations
+retain actual affected ownership nodes so a deep check need not flag an
+unaffected sibling. Unknown focus IDs are errors. Diagnostics and indexing
+progress go to stderr; successful `--json` output remains valid JSON on stdout.
+Failures do not emit a fake clean JSON report or replace IR with empty results.
+An older IR artifact can remain after failure, but ArchGraph does not reuse it.
+
+`init` preserves an existing YAML and skill unless `--force` is explicit. Skill
+installation targets existing `.claude` and `.agents` project directories,
+creating `skills/archgraph/` beneath them. When neither exists, it creates the
+project-local `.agents` destination. It does not write to global agent settings.
+`--force` also overwrites an existing architecture YAML with the starter.
+
+## GitNexus compatibility boundary
+
+`GITNEXUS_BIN` overrides `provider.command`. Both name an executable, not a shell
+command with embedded arguments. Paths containing spaces are supported as one
+executable value. All provider subprocesses run with repository-root cwd.
+Optional `provider.repo` is passed as a separate `--repo` argument to Cypher;
+when null, the flag is omitted. Reindexing is precisely:
+
+```text
+<configured executable> analyze <repository root> --index-only
+```
+
+The adapter captures optional `--version` metadata, then probes
+`MATCH (f:File) RETURN f.filePath AS path LIMIT 1`. It fetches only the needed
+`File --CodeRelation {type: 'IMPORTS'}--> File` edges, sorted by source and target,
+using `SKIP`/`LIMIT`. It does not access LadybugDB, fetch `/api/graph`, invoke a
+shell, or load GitNexus's complete symbol graph.
+
+The supported Cypher stdout contract is one JSON object containing a `markdown`
+string and nonnegative integer `row_count`. The Markdown must have a header and
+separator row, including on empty result pages. Import pages require `source`
+and `target`; `confidence` and `reason` are optional. Columns are found by name,
+escaped pipes are supported, null/empty confidence means absent, and malformed
+rows, invalid numbers, missing columns, or mismatched row counts fail closed.
+Pages continue until `row_count < page_size`. Query timeout is five minutes;
+indexing itself has no imposed timeout. Keep the provider index quiescent while
+compiling so offset pagination describes a consistent dataset.
+
+Provider paths outside the discovered file set, unmatched paths, and unmapped
+endpoints are counted as diagnostics. They are never silently guessed into
+logical nodes. Source paths are metadata only and are not dereferenced by the
+provider adapter.
+
+## Human focus UI
+
+The embedded HTML/CSS/plain JavaScript UI includes breadcrumbs, purpose and
+interfaces, children or files, directed aggregated edges, violation markers,
+node search, and an evidence panel. Click a node or edge for details;
+double-click an architecture node to focus, or use the explicit Open button.
+Deep links use `/?focus=app.billing.domain` and browser back/forward navigation
+is supported. Only the current focus level is rendered with a small SVG layout.
+
+A non-leaf can own files directly: these appear in a **Directly owned files**
+entry rather than disappearing. A manual edge naming the focus itself appears
+on a **boundary** entry instead of inventing a particular source file/child.
+Outside owners appear as explicitly marked cross-boundary entries. Dependencies
+collapsed to the same visible node are omitted. Manual and observed edges are
+visually distinguished. Mermaid is another renderer of the same projection,
+never an architecture source format.
+
+The server defaults to loopback and exposes only:
+
+```text
+GET /api/meta
+GET /api/nodes
+GET /api/focus/{node_id}
+GET /api/violations
+GET /api/search?q=...
+```
+
+There is no arbitrary Cypher endpoint, source-file endpoint, mutation endpoint,
+or authentication. Binding beyond loopback requires explicit `--host` and
+exposes architecture metadata to reachable clients. Dynamic browser text uses
+`textContent`; the server provides a restrictive Content Security Policy and no
+cross-origin access grants.
+
+## AI-agent refactoring loop
+
+```bash
+archgraph context app.billing
+# Use GitNexus context/query/impact and inspect relevant source.
+# Edit code while preserving behavior.
+gitnexus analyze --index-only
+archgraph check app.billing
+# Also run behavioral tests and a repository-wide check when appropriate.
+```
+
+Do not declare completion while check exits 2. Exit 1 means verification failed
+and must be repaired, not that the architecture is clean. Do not edit
+`architecture.yaml` unless the task explicitly requests an architecture change.
+The bundled [agent skill](skills/archgraph/SKILL.md) records this workflow.
+Markdown context and `--json` contain the same focus state, incoming/outgoing
+observed dependencies, rules, violations, concrete evidence and agent contract.
+
+## IR and implementation
+
+The IR has schema version 1, ordered node maps and file records, provider
+metadata, observed/manual architecture edges, resolved file imports, rules,
+violations, coverage diagnostics and counts. There are no compilation timestamps.
+Samples are sorted by file pair/kind with confidence/reason tie-breakers and
+capped at 20 by default; full observation counts and confidence ranges are kept.
+All resolved file imports are retained so a leaf view remains lossless and
+`context --evidence-limit 50` can provide more than the stored aggregate sample.
+No symbols, source contents, CFG, or database are copied into the IR.
+
+The library accepts an async, object-safe `CodeGraphProvider`. The compiler,
+rule engine, projection, renderers and UI know nothing about GitNexus subprocess
+commands. Only `src/provider/gitnexus.rs` launches them. An in-memory provider
+supports independent tests; the CLI never substitutes it for failed GitNexus.
+
+## Tests and first build
+
+```bash
+cargo check --all-targets
+cargo test --all-targets
+cargo fmt --all -- --check
+cargo clippy --all-targets
+```
+
+Unit/integration tests cover hierarchy validation, mapping and file discovery,
+provider wrappers/escaped tables/failures, rule semantics and SCCs, deterministic
+aggregation and evidence, exact scoped checks, lossless projection, context,
+IR round-trips, read-only HTTP routes, init skill preservation, pagination and
+actual CLI exit statuses. Core tests use an in-memory provider and temporary
+repositories. Unix CLI subprocess tests additionally require `python3` for an
+explicit test-only fake executable; no test requires a GitNexus installation.
+There is no production Python component.
+
+An optional UI-only browser harness is available as `python3 tests/web_smoke.py`
+for environments with Python Playwright and Chromium installed. It loads the
+embedded HTML/CSS/JavaScript into an isolated DOM and mocks fetch/history to
+exercise navigation, directed edges, evidence, search, violation markers, and
+hostile-text escaping. It does **not** test the Rust HTTP server or real network
+navigation. Its recorded result is in `validation/ui-smoke.json`.
+
+`Cargo.lock` has not been fabricated without Cargo resolution. On the first
+Rust-enabled machine, resolve dependencies, run the commands above, and commit
+the generated lockfile for repeatable application builds.
+
+## Limitations and licensing
+
+This MVP covers one repository/application and automatically consumes only
+`IMPORTS`. Symbol/function/AST exploration is delegated to GitNexus. Interfaces
+and manual relationships are descriptive, the UI is read-only, the snapshot
+does not auto-refresh, and there is no application database or architecture
+editor. Very large file-only focuses may need further authored child nodes for
+comfortable navigation. Offset pagination assumes a stable index during a run.
+
+**GitNexus evidence can be incomplete.** Dynamic imports, reflection, generated
+code, build-system behavior and runtime dependencies may be missed. “No observed
+dependency” is not proof that no runtime dependency exists. Clean architecture
+checks do not replace behavioral tests or runtime verification.
+
+ArchGraph code is [MIT-licensed](LICENSE). The supplied design identifies the
+upstream GitNexus license as **PolyForm Noncommercial 1.0.0**. GitNexus remains a
+separately installed executable with its own applicable license; this repository
+does not copy its implementation, embed it as a library, or relicense it. Review
+the terms of the provider version/deployment you use, especially for commercial
+use. The replaceable provider boundary is an engineering separation, not a
+legal conclusion. Upstream: https://github.com/abhigyanpatwari/GitNexus.
+
+The supplied product specification is preserved in [DESIGN.md](DESIGN.md).

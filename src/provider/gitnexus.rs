@@ -1,0 +1,221 @@
+use super::{markdown_table::{self, Table}, CodeGraphProvider};
+use crate::{config::ProviderConfig, error::{compatibility, ProviderError}, model::{CodeEdge, ProviderInfo}};
+use anyhow::{bail, Context, Result};
+use async_trait::async_trait;
+use serde_json::Value;
+use std::{ffi::OsString, path::{Path, PathBuf}, process::Stdio, time::Duration};
+use tokio::{process::Command, time::timeout};
+
+const PROBE: &str = "MATCH (f:File) RETURN f.filePath AS path LIMIT 1";
+
+#[derive(Debug)]
+pub struct GitNexusCliProvider {
+    executable: OsString,
+    root: PathBuf,
+    repository: Option<String>,
+    page_size: usize,
+}
+
+#[derive(Debug)]
+pub struct CypherPage {
+    pub table: Table,
+    pub row_count: usize,
+}
+
+pub fn parse_wrapper(stdout: &str) -> Result<CypherPage> {
+    let json: Value = serde_json::from_str(stdout)
+        .map_err(|error| compatibility(format!("stdout is not JSON: {error}")))?;
+    let object = json.as_object().ok_or_else(|| compatibility("stdout is not a JSON object"))?;
+    let markdown = object.get("markdown").and_then(Value::as_str)
+        .ok_or_else(|| compatibility("missing or non-string `markdown`"))?;
+    let count = object.get("row_count").and_then(Value::as_u64)
+        .ok_or_else(|| compatibility("missing or nonnegative-integer `row_count`"))?;
+    let row_count = usize::try_from(count).map_err(|_| compatibility("row_count exceeds this platform's capacity"))?;
+    let table = markdown_table::parse(markdown)?;
+    if table.rows.len() != row_count {
+        return Err(compatibility(format!("row_count is {row_count}, but table contains {} data rows (truncation is unsupported)", table.rows.len())));
+    }
+    Ok(CypherPage { table, row_count })
+}
+
+fn present(value: &str) -> bool { !value.is_empty() && !value.eq_ignore_ascii_case("null") }
+
+pub fn parse_import_page(stdout: &str) -> Result<Vec<CodeEdge>> {
+    let page = parse_wrapper(stdout)?;
+    let source = page.table.column("source")?;
+    let target = page.table.column("target")?;
+    let confidence = page.table.optional_column("confidence");
+    let reason = page.table.optional_column("reason");
+    let mut edges = Vec::with_capacity(page.row_count);
+    for (index, row) in page.table.rows.iter().enumerate() {
+        if !present(&row[source]) || !present(&row[target]) {
+            return Err(compatibility(format!("row {} has empty/null source or target", index + 1)));
+        }
+        let confidence = confidence.map(|column| row[column].as_str()).filter(|value| present(value))
+            .map(|value| {
+                let number = value.parse::<f64>()
+                    .map_err(|_| compatibility(format!("row {} has invalid confidence `{value}`", index + 1)))?;
+                if !number.is_finite() { return Err(compatibility(format!("row {} has non-finite confidence", index + 1))); }
+                Ok(number)
+            }).transpose()?;
+        edges.push(CodeEdge {
+            // Lexical absolute/root validation happens in the compiler, where
+            // anomalies can be reported against the discovered file universe.
+            from_file: row[source].replace('\\', "/"),
+            to_file: row[target].replace('\\', "/"),
+            kind: "IMPORTS".into(), confidence,
+            reason: reason.map(|column| row[column].clone()).filter(|value| present(value)),
+        });
+    }
+    Ok(edges)
+}
+
+pub fn import_query(offset: usize, page_size: usize) -> String {
+    format!("MATCH (a:File)-[r:CodeRelation {{type: 'IMPORTS'}}]->(b:File) \
+RETURN a.filePath AS source, b.filePath AS target, r.confidence AS confidence, r.reason AS reason \
+ORDER BY source, target SKIP {offset} LIMIT {page_size}")
+}
+
+impl GitNexusCliProvider {
+    pub fn new(root: &Path, config: &ProviderConfig) -> Result<Self> {
+        if config.page_size == 0 { bail!("provider.page_size must be greater than zero"); }
+        let executable = std::env::var_os("GITNEXUS_BIN").unwrap_or_else(|| OsString::from(&config.command));
+        if executable.is_empty() { bail!("GITNEXUS_BIN/provider.command is empty; set it to the GitNexus executable"); }
+        // Resolve path-valued commands against repository root, not the caller's cwd.
+        let command_path = Path::new(&executable);
+        let executable = if command_path.is_relative() && command_path.components().count() > 1 {
+            root.join(command_path).into_os_string()
+        } else { executable };
+        Ok(Self { executable, root: root.to_path_buf(), repository: config.repo.clone(), page_size: config.page_size })
+    }
+
+    fn command(&self) -> Command {
+        let mut command = Command::new(&self.executable);
+        command.current_dir(&self.root).stdin(Stdio::null()).kill_on_drop(true);
+        command
+    }
+
+    /// Deliberately argv, not a shell string. No user-controlled Cypher surface.
+    fn query_args(&self, query: &str) -> Vec<OsString> {
+        let mut args = vec![OsString::from("cypher"), OsString::from(query)];
+        if let Some(repository) = &self.repository {
+            args.push(OsString::from("--repo"));
+            args.push(OsString::from(repository));
+        }
+        args
+    }
+
+    async fn query(&self, query: &str) -> Result<String> {
+        let mut command = self.command();
+        command.args(self.query_args(query));
+        let result = timeout(Duration::from_secs(300), command.output()).await
+            .map_err(|_| ProviderError::Timeout("cypher query".into()))?
+            .map_err(|source| ProviderError::Execute { command: self.executable.to_string_lossy().into_owned(), source })?;
+        if !result.status.success() {
+            return Err(ProviderError::Command { operation: "cypher query".into(), status: result.status.to_string(),
+                detail: failure_detail(&result.stdout, &result.stderr) }.into());
+        }
+        String::from_utf8(result.stdout).map_err(|_| compatibility("stdout is not UTF-8"))
+    }
+}
+
+fn failure_detail(stdout: &[u8], stderr: &[u8]) -> String {
+    let detail = if stderr.is_empty() { stdout } else { stderr };
+    String::from_utf8_lossy(detail).trim().chars().take(2000).collect()
+}
+
+#[async_trait]
+impl CodeGraphProvider for GitNexusCliProvider {
+    async fn info(&self) -> Result<ProviderInfo> {
+        // Version is optional metadata; a failed schema/index probe is never optional.
+        let mut version_command = self.command();
+        version_command.arg("--version");
+        let version = match timeout(Duration::from_secs(15), version_command.output()).await {
+            Ok(Ok(output)) if output.status.success() => String::from_utf8(output.stdout).ok()
+                .map(|text| text.trim().to_owned()).filter(|text| !text.is_empty()),
+            _ => None,
+        };
+        let stdout = self.query(PROBE).await.context("GitNexus repository is not indexed or File.filePath is unavailable; run `gitnexus analyze --index-only`")?;
+        let probe = parse_wrapper(&stdout)?;
+        let path = probe.table.column("path")?;
+        if probe.row_count > 1 || probe.table.rows.iter().any(|row| !present(&row[path])) {
+            return Err(compatibility("File.filePath probe must return at most one nonempty file path"));
+        }
+        Ok(ProviderInfo { provider: "gitnexus".into(), version, repository: self.repository.clone() })
+    }
+
+    async fn import_edges(&self) -> Result<Vec<CodeEdge>> {
+        let mut edges = Vec::new();
+        let mut offset: usize = 0;
+        loop {
+            let stdout = self.query(&import_query(offset, self.page_size)).await
+                .with_context(|| format!("failed to read IMPORTS page at offset {offset}"))?;
+            let mut page = parse_import_page(&stdout)?;
+            let row_count = page.len(); // Strict wrapper parsing checked equality.
+            if row_count > self.page_size { return Err(compatibility("query returned more rows than LIMIT; pagination is unsafe")); }
+            edges.append(&mut page);
+            if row_count < self.page_size { break; }
+            offset = offset.checked_add(self.page_size).context("GitNexus pagination offset overflow")?;
+        }
+        Ok(edges)
+    }
+
+    async fn reindex(&self) -> Result<()> {
+        let mut command = self.command();
+        command.arg("analyze").arg(&self.root).arg("--index-only");
+        // Indexing progress goes to stderr so --json stdout stays machine-readable.
+        command.stdout(Stdio::from(std::io::stderr())).stderr(Stdio::inherit());
+        let status = command.status().await.map_err(|source| ProviderError::Execute {
+            command: self.executable.to_string_lossy().into_owned(), source,
+        })?;
+        if !status.success() {
+            return Err(ProviderError::Command { operation: "analyze --index-only".into(),
+                status: status.to_string(), detail: "indexing did not complete; inspect GitNexus diagnostics above".into() }.into());
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn parses_wrapper_and_optional_values() {
+        let edges = parse_import_page(include_str!("../../tests/fixtures/imports.json")).unwrap();
+        assert_eq!(edges.len(), 2);
+        assert_eq!(edges[0].confidence, Some(0.9));
+        assert_eq!(edges[0].reason.as_deref(), Some("static|import"));
+        assert_eq!(edges[1].confidence, None);
+    }
+    #[test]
+    fn malformed_provider_output_never_becomes_empty_success() {
+        for output in ["not json", "{}", "[]", "{\"markdown\":\"\",\"row_count\":0}",
+            "{\"markdown\":\"| source | target |\\n| --- | --- |\",\"row_count\":1}",
+            "{\"markdown\":\"| source | target |\\n| --- | --- |\",\"row_count\":\"0\"}"] {
+            assert!(parse_import_page(output).is_err(), "accepted {output:?}");
+        }
+    }
+    #[test]
+    fn columns_can_be_reordered_and_optional_columns_omitted() {
+        let output = serde_json::json!({"markdown":"| target | source |\n| --- | --- |\n| b | a |", "row_count": 1});
+        let edges = parse_import_page(&output.to_string()).unwrap();
+        assert_eq!(edges[0].from_file, "a");
+        assert_eq!(edges[0].confidence, None);
+    }
+    #[test]
+    fn rejects_missing_headers_and_nonfinite_confidence() {
+        for table in ["| path |\n| --- |", "| source | target | confidence |\n| --- | --- | --- |\n| a | b | NaN |",
+            "| source | target |\n| --- | --- |\n| a | null |"] {
+            let count = table.lines().count() - 2;
+            assert!(parse_import_page(&serde_json::json!({"markdown":table,"row_count":count}).to_string()).is_err());
+        }
+    }
+    #[test]
+    fn argv_preserves_spaces_and_omits_unconfigured_repo() {
+        let mut provider = GitNexusCliProvider { executable: "gitnexus".into(), root: ".".into(), repository: None, page_size: 2 };
+        assert_eq!(provider.query_args("a query with spaces").len(), 2);
+        provider.repository = Some("repo with spaces; not a shell".into());
+        assert_eq!(provider.query_args("query")[3], "repo with spaces; not a shell");
+        assert!(import_query(1000, 1000).ends_with("SKIP 1000 LIMIT 1000"));
+    }
+}

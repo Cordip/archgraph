@@ -1,0 +1,4 @@
+{
+  "markdown": "| source | target | confidence | reason |\n| --- | --- | --- | --- |\n| src/api/routes.py | src/domain/model.py | 0.9 | static\\|import |\n| src/domain/model.py | src/persistence/db.py | null | null |",
+  "row_count": 2
+}

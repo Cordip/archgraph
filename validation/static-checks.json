@@ -1,0 +1,33 @@
+{
+  "rust_toolchain": "unavailable",
+  "rust_validation": "Static review only; not compiled; Rust tests not executed",
+  "checks_passed": [
+    "Cargo.toml parsed with Python tomllib",
+    "YAML examples parsed with Python PyYAML; node/parent/manual edge/rule references checked",
+    "Rust module file and embedded asset references exist",
+    "Python test fixture and browser harness syntax parsed",
+    "Provider JSON fixture parsed",
+    "No required-functionality placeholder markers in Rust source/tests",
+    "Browser dynamic content uses DOM text rather than innerHTML",
+    "node --check src/web/app.js"
+  ],
+  "rust_files": 23,
+  "rust_lines": 2689,
+  "rust_tests_written": 53,
+  "rust_test_breakdown": {
+    "src/cli.rs": 3,
+    "src/config.rs": 4,
+    "src/discovery.rs": 2,
+    "src/mapping.rs": 4,
+    "src/model.rs": 2,
+    "src/paths.rs": 4,
+    "src/provider/gitnexus.rs": 5,
+    "src/provider/markdown_table.rs": 5,
+    "src/render/mermaid.rs": 1,
+    "src/rules.rs": 5,
+    "tests/cli.rs": 6,
+    "tests/compiler_projection.rs": 12
+  },
+  "module_references_checked": 19,
+  "embedded_asset_references_checked": 5
+}

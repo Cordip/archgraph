@@ -1,0 +1,12 @@
+{
+  "status": "passed",
+  "scope": "Isolated browser DOM with mocked fetch/history; no real URL navigation or Rust server was tested",
+  "checks": [
+    "root projection, directed arrows, external/manual entries, violation markers",
+    "edge evidence and hostile provider text rendered without HTML execution",
+    "double-click focus, leaf files, interfaces, updated deep link",
+    "breadcrumb navigation and popstate handler with mocked history",
+    "architecture search and violation evidence selection",
+    "actionable unknown-focus errors"
+  ]
+}
