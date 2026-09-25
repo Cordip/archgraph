@@ -30,6 +30,10 @@ pub struct NodeSummary {
     pub interfaces: Vec<Interface>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub descendant_package_count: usize,
+    pub entry_point_count: usize,
+    pub no_observed_users_count: usize,
+    /// No observed user outside the subtree and no entry point in it.
+    pub no_outside_users: bool,
 }
 
 fn is_zero(value: &usize) -> bool {
@@ -103,6 +107,9 @@ impl From<&CompiledNode> for NodeSummary {
             observed_file_count: node.observed_file_count,
             interfaces: node.interfaces.clone(),
             descendant_package_count: node.descendant_package_count,
+            entry_point_count: node.entry_point_count,
+            no_observed_users_count: node.no_observed_users_count,
+            no_outside_users: node.no_outside_users(),
         }
     }
 }
@@ -129,6 +136,22 @@ pub struct ProjectionNode {
     /// Package entries: the package and every import of it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<PackageUse>,
+    /// File entries: whether observed code uses the file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<FileUsage>,
+    /// Architecture and direct-file entries: declared entry points and files
+    /// with no observed users among their files.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub entry_point_count: usize,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub no_observed_users_count: usize,
+    /// Architecture entries: distinct files outside the node's subtree that
+    /// use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outside_user_count: Option<usize>,
+    /// Architecture entries: `CompiledNode::no_outside_users`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub no_outside_users: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -242,9 +265,14 @@ fn architecture_entry(node: &CompiledNode, outside: bool) -> ProjectionNode {
         violation_rule_ids: Vec::new(),
         package_count: node.descendant_package_count,
         package: None,
+        usage: None,
+        entry_point_count: node.entry_point_count,
+        no_observed_users_count: node.no_observed_users_count,
+        outside_user_count: Some(node.outside_user_count),
+        no_outside_users: node.no_outside_users(),
     }
 }
-fn file_entry(path: &str, node: &CompiledNode) -> ProjectionNode {
+fn file_entry(path: &str, node: &CompiledNode, usage: Option<FileUsage>) -> ProjectionNode {
     ProjectionNode {
         id: format!("file:{path}"),
         title: path.into(),
@@ -260,6 +288,11 @@ fn file_entry(path: &str, node: &CompiledNode) -> ProjectionNode {
         violation_rule_ids: Vec::new(),
         package_count: 0,
         package: None,
+        usage,
+        entry_point_count: 0,
+        no_observed_users_count: 0,
+        outside_user_count: None,
+        no_outside_users: false,
     }
 }
 /// An imported package, drawn at the level of the node owning it.
@@ -293,9 +326,21 @@ fn package_entry(id: &str, owner: &CompiledNode, package: Option<&PackageUse>) -
         violation_rule_ids: Vec::new(),
         package_count: 0,
         package: package.cloned(),
+        usage: None,
+        entry_point_count: 0,
+        no_observed_users_count: 0,
+        outside_user_count: None,
+        no_outside_users: false,
     }
 }
-fn direct_entry(focus: &CompiledNode) -> ProjectionNode {
+fn direct_entry(ir: &ArchitectureIr, focus: &CompiledNode) -> ProjectionNode {
+    let count = |wanted: FileUsage| {
+        focus
+            .direct_files
+            .iter()
+            .filter(|path| ir.file_usage(path) == Some(wanted))
+            .count()
+    };
     ProjectionNode {
         id: format!("direct:{}", focus.id),
         title: "Directly owned files".into(),
@@ -313,6 +358,11 @@ fn direct_entry(focus: &CompiledNode) -> ProjectionNode {
         violation_rule_ids: Vec::new(),
         package_count: 0,
         package: None,
+        usage: None,
+        entry_point_count: count(FileUsage::EntryPoint),
+        no_observed_users_count: count(FileUsage::NoObservedUsers),
+        outside_user_count: None,
+        no_outside_users: false,
     }
 }
 fn boundary_entry(focus: &CompiledNode) -> ProjectionNode {
@@ -322,7 +372,8 @@ fn boundary_entry(focus: &CompiledNode) -> ProjectionNode {
         observed_file_count: None,
         description: Some("An authored manual edge names the focus itself; it cannot be attributed to a particular child or file.".into()),
         interfaces: focus.interfaces.clone(), outside_focus: false, violation_rule_ids: Vec::new(),
-        package_count: 0, package: None }
+        package_count: 0, package: None, usage: None, entry_point_count: 0,
+        no_observed_users_count: 0, outside_user_count: None, no_outside_users: false }
 }
 
 type Packages<'a> = BTreeMap<&'a str, &'a PackageUse>;
@@ -356,8 +407,8 @@ fn representative(
         Some(id) if id.starts_with(PACKAGE_PREFIX) && ir.packages.is_some() => {
             Ok(package_entry(id, focus, packages.get(id).copied()))
         }
-        Some(path) if focus.children.is_empty() => Ok(file_entry(path, focus)),
-        Some(_) => Ok(direct_entry(focus)),
+        Some(path) if focus.children.is_empty() => Ok(file_entry(path, focus, ir.file_usage(path))),
+        Some(_) => Ok(direct_entry(ir, focus)),
         None => Ok(boundary_entry(focus)),
     }
 }
@@ -463,7 +514,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
     }
     if focus.children.is_empty() {
         for path in &focus.direct_files {
-            let entry = file_entry(path, focus);
+            let entry = file_entry(path, focus, ir.file_usage(path));
             entries.insert(entry.id.clone(), entry);
         }
     } else {
@@ -475,7 +526,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         // Mapping to a non-leaf is valid. Never make its directly owned files
         // disappear just because this focus also has authored children.
         if !focus.direct_files.is_empty() {
-            let entry = direct_entry(focus);
+            let entry = direct_entry(ir, focus);
             entries.insert(entry.id.clone(), entry);
         }
     }

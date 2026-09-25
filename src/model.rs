@@ -86,6 +86,17 @@ pub struct CompiledNode {
     pub packages: Vec<String>,
     #[serde(default, skip_serializing_if = "is_zero")]
     pub descendant_package_count: usize,
+    /// Descendant files declared in `project.entry_points`.
+    #[serde(default)]
+    pub entry_point_count: usize,
+    /// Descendant files with `FileUsage::NoObservedUsers`.
+    #[serde(default)]
+    pub no_observed_users_count: usize,
+    /// Distinct files outside this subtree (mapped or not) with an observed
+    /// dependency on a file inside it. Zero, with no entry point and indexed
+    /// files, makes the whole subtree a dead-code candidate.
+    #[serde(default)]
+    pub outside_user_count: usize,
 }
 
 fn is_zero(value: &usize) -> bool {
@@ -97,6 +108,64 @@ pub struct CompiledFile {
     pub path: String,
     pub node: Option<String>,
     pub ambiguous_matches: Vec<String>,
+    /// Mapped files only: whether observed code uses this file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<FileUsage>,
+}
+
+pub const USAGE_NOTICE: &str = "No observed users is not proof of dead code: GitNexus misses Ruby autoloading, HTML script tags, dynamic imports, framework conventions and tools that load files by name (see docs/gitnexus-limitations.md). Declare such files in project.entry_points.";
+
+/// Whether any observed code uses a mapped file. Observations are the
+/// configured `provider.edge_types` after the reason and confidence
+/// filters; a file's dependency on itself and imports of packages do not
+/// count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FileUsage {
+    /// Declared in `project.entry_points`: a tool or runtime loads it.
+    EntryPoint,
+    /// Another file has an observed dependency on it, from inside the
+    /// architecture or not (an excluded or unassigned file is a user too).
+    Used,
+    /// Not declared, and nothing observed depends on it: an entry point
+    /// nobody declared, code loaded in a way the provider does not see, or
+    /// dead code. A candidate, never a proof.
+    NoObservedUsers,
+    /// Not in the provider's index, so nothing about its users is known.
+    NotIndexed,
+}
+
+impl ArchitectureIr {
+    /// The usage of a file by path (`files` is sorted by path).
+    pub fn file_usage(&self, path: &str) -> Option<FileUsage> {
+        self.files
+            .binary_search_by(|file| file.path.as_str().cmp(path))
+            .ok()
+            .and_then(|index| self.files[index].usage)
+    }
+}
+
+impl FileUsage {
+    pub fn describe(self) -> &'static str {
+        match self {
+            Self::EntryPoint => "entry point",
+            Self::Used => "used",
+            Self::NoObservedUsers => "no observed users",
+            Self::NotIndexed => "not indexed",
+        }
+    }
+}
+
+impl CompiledNode {
+    /// Nothing observed outside the subtree uses it, it declares no entry
+    /// point, and the provider indexed some of its files: the whole node
+    /// may be unused. Top-level nodes have no outside, so they never are.
+    pub fn no_outside_users(&self) -> bool {
+        self.parent.is_some()
+            && self.descendant_file_count > self.unindexed_file_count
+            && self.entry_point_count == 0
+            && self.outside_user_count == 0
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

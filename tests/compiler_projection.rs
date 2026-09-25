@@ -1,6 +1,6 @@
 use archgraph::{
     cli, compiler, config, context,
-    model::{ArchitectureIr, CodeEdge, EdgeOrigin},
+    model::{ArchitectureIr, CodeEdge, EdgeOrigin, FileUsage},
     projection::{self, EntryKind},
     provider::InMemoryProvider,
     server,
@@ -527,6 +527,121 @@ async fn layers_put_dependents_above_their_dependencies() {
     assert_eq!(view.layers.iter().map(Vec::len).sum::<usize>(), inside);
 }
 
+#[tokio::test]
+async fn files_are_entry_points_used_unused_or_unknown_and_nodes_count_them() {
+    let temp = repository();
+    write(temp.path(), "src/shared/legacy.py");
+    let config = CONFIG.replace(
+        "source_roots: [src]",
+        "source_roots: [src]\n  entry_points: [src/main.py, \"src/missing/*.py\"]",
+    );
+    let indexed: Vec<String> = [
+        "src/main.py",
+        "src/api/routes.py",
+        "src/domain/model.py",
+        "src/shared/types.py",
+    ]
+    .map(String::from)
+    .to_vec();
+    let provider = InMemoryProvider {
+        edges: vec![
+            edge("src/main.py", "src/api/routes.py"),
+            edge("src/api/routes.py", "src/domain/model.py"),
+            // Its only user is a script outside source_roots.
+            edge("scripts/run.py", "src/api/handlers/route.py"),
+            // Not in the index, but observed users beat "unknown".
+            edge("src/domain/model.py", "src/persistence/db.py"),
+            // A file's dependency on itself is no user.
+            edge("src/shared/types.py", "src/shared/types.py"),
+        ],
+        indexed: Some(indexed),
+        ..Default::default()
+    };
+    let ir = compiler::compile(
+        temp.path(),
+        &config::parse(&config).unwrap(),
+        &provider,
+        None,
+    )
+    .await
+    .unwrap();
+    let usage: Vec<(&str, Option<FileUsage>)> = ir
+        .files
+        .iter()
+        .map(|file| (file.path.as_str(), file.usage))
+        .collect();
+    assert_eq!(
+        usage,
+        [
+            ("src/api/handlers/route.py", Some(FileUsage::Used)),
+            ("src/api/routes.py", Some(FileUsage::Used)),
+            ("src/domain/model.py", Some(FileUsage::Used)),
+            ("src/main.py", Some(FileUsage::EntryPoint)),
+            ("src/persistence/db.py", Some(FileUsage::Used)),
+            ("src/shared/legacy.py", Some(FileUsage::NotIndexed)),
+            ("src/shared/types.py", Some(FileUsage::NoObservedUsers)),
+        ]
+    );
+    assert!(
+        ir.diagnostics
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("`src/missing/*.py` matches no mapped file")),
+        "{:?}",
+        ir.diagnostics.warnings
+    );
+    let counts = |id: &str| {
+        let node = &ir.nodes[id];
+        (
+            node.entry_point_count,
+            node.no_observed_users_count,
+            node.outside_user_count,
+            node.no_outside_users(),
+        )
+    };
+    assert_eq!(counts("app"), (1, 1, 1, false));
+    // main.py (in `app` itself) and the script use the API from outside.
+    assert_eq!(counts("app.api"), (0, 0, 2, false));
+    assert_eq!(counts("app.api.handlers"), (0, 0, 1, false));
+    assert_eq!(counts("app.persistence"), (0, 0, 1, false));
+    // Nothing outside uses it: the whole node is a candidate.
+    assert_eq!(counts("app.shared"), (0, 1, 0, true));
+
+    let root = projection::project(&ir, "app", 20).unwrap();
+    let shared = root
+        .nodes
+        .iter()
+        .find(|node| node.id == "node:app.shared")
+        .unwrap();
+    assert_eq!(shared.no_observed_users_count, 1);
+    assert!(shared.no_outside_users);
+    let direct = root
+        .nodes
+        .iter()
+        .find(|node| node.entry_kind == EntryKind::DirectFiles)
+        .unwrap();
+    assert_eq!(direct.entry_point_count, 1);
+    let leaf = projection::project(&ir, "app.shared", 20).unwrap();
+    let file = |path: &str| {
+        leaf.nodes
+            .iter()
+            .find(|node| node.file_path.as_deref() == Some(path))
+            .unwrap()
+            .usage
+    };
+    assert_eq!(
+        file("src/shared/types.py"),
+        Some(FileUsage::NoObservedUsers)
+    );
+    assert_eq!(file("src/shared/legacy.py"), Some(FileUsage::NotIndexed));
+
+    // Without declared entry points the IR's project has no trace of them.
+    let plain = compile(temp.path(), imports()).await;
+    assert!(!serde_json::to_string(&plain.project)
+        .unwrap()
+        .contains("entry_points"));
+}
+
 const PACKAGES_CONFIG: &str = r#"version: 1
 project: {name: packages, root: app, source_roots: [src]}
 provider: {kind: gitnexus, packages: true}
@@ -637,6 +752,18 @@ async fn imported_packages_are_mapped_ruled_projected_and_kept_out_of_coverage()
         text.contains("fastapi — Python package\n    package:python/fastapi"),
         "{text}"
     );
+    // Importing a package makes no file and no package node "used".
+    let usage = |path: &str| {
+        ir.files
+            .iter()
+            .find(|file| file.path == path)
+            .unwrap()
+            .usage
+    };
+    assert_eq!(usage("src/core/plan.py"), Some(FileUsage::Used));
+    assert_eq!(usage("src/api/routes.py"), Some(FileUsage::NoObservedUsers));
+    assert_eq!(ir.nodes["libs.solver"].outside_user_count, 0);
+    assert_eq!(ir.nodes["packages"].outside_user_count, 0);
     let context = context::build(&ir, "app.api", 20).unwrap();
     let markdown = context::markdown(&context);
     assert!(markdown.contains("- `ortools` (Python, `package:python/ortools`, node `libs.solver`): `src/api/routes.py:2`"), "{markdown}");

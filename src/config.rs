@@ -53,6 +53,14 @@ pub struct ProjectConfig {
     pub source_roots: Vec<String>,
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Files a tool, runtime or test runner loads by name, so no observed
+    /// code needs to use them: `frontend/vite.config.ts` (read by Vite),
+    /// `frontend/src/main.tsx` (loaded from `index.html`), `test_*.py`
+    /// (collected by pytest). Globs over repository files. Everything else
+    /// that nothing observed depends on is reported as having no observed
+    /// users, a dead-code candidate.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entry_points: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -375,6 +383,8 @@ pub struct ValidatedConfig {
     pub package_owners: Vec<String>,
     pub package_patterns: Vec<String>,
     pub exclude_globs: GlobSet,
+    /// `project.entry_points`, matched against mapped file paths only.
+    pub entry_globs: GlobSet,
 }
 
 fn add_glob(builder: &mut GlobSetBuilder, raw: &str, owner: &str) -> Result<()> {
@@ -597,6 +607,13 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     for pattern in &config.project.exclude {
         add_glob(&mut exclusions, pattern, "project.exclude")?;
     }
+    let mut entries = GlobSetBuilder::new();
+    for pattern in &config.project.entry_points {
+        if pattern.starts_with(PACKAGE_PREFIX) {
+            bail!("project.entry_points: `{pattern}` names an imported package, but entry points are repository files that a tool or runtime loads; remove it");
+        }
+        add_glob(&mut entries, pattern, "project.entry_points")?;
+    }
     let mut edge_ids = BTreeSet::new();
     for edge in &config.edges {
         if edge.id.trim().is_empty() || !edge_ids.insert(&edge.id) {
@@ -668,6 +685,7 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
         package_owners,
         package_patterns,
         exclude_globs: exclusions.build()?,
+        entry_globs: entries.build()?,
     })
 }
 
@@ -781,6 +799,24 @@ mod tests {
             .config
             .provider
             .accepts(Some("markdown-link"), Some(0.8)));
+    }
+    #[test]
+    fn entry_points_are_repository_file_globs() {
+        let with = |globs: &str| {
+            parse(&BASE.replace("root: app}", &format!("root: app, entry_points: {globs}}}")))
+        };
+        let valid = with("['web/vite.config.ts', 'tests/**/test_*.py']").unwrap();
+        assert!(valid.entry_globs.is_match("tests/unit/test_a.py"));
+        assert!(!valid.entry_globs.is_match("web/src/vite.config.ts"));
+        for (globs, message) in [
+            ("['package:npm/vite']", "names an imported package"),
+            ("['/abs/main.py']", "must be repository-relative"),
+            ("['../main.py']", "must be repository-relative"),
+            ("['[']", "invalid glob"),
+        ] {
+            let error = format!("{:#}", with(globs).unwrap_err());
+            assert!(error.contains(message), "{globs}: {error}");
+        }
     }
     #[test]
     fn packages_add_their_node_and_package_globs_are_checked() {

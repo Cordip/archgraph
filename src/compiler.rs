@@ -256,7 +256,7 @@ pub async fn compile_with(
         .context("cannot resolve repository root")?;
     let discovered = discovery::discover(&root, validated)?;
     let mapping::Memberships {
-        files,
+        mut files,
         mut diagnostics,
     } = mapping::resolve(&discovered, validated)?;
     let (
@@ -359,6 +359,10 @@ pub async fn compile_with(
         Some(Some(_)) => false,
     };
     let mut out_of_scope_edge_count = 0;
+    // (used file, user file): every observed dependency on a mapped file
+    // from another file, whatever the user's scope. An excluded script
+    // importing a module still uses it.
+    let mut uses: BTreeSet<(String, String)> = BTreeSet::new();
     for mut edge in observed {
         let from_path = provider_path(&root, &edge.from_file);
         let to_path = if is_package(&edge.to_file) {
@@ -383,6 +387,9 @@ pub async fn compile_with(
         };
         let from_node = membership.get(from_path.as_str());
         let to_node = membership.get(to_path.as_str());
+        if matches!(to_node, Some(Some(_))) && !is_package(&to_path) && from_path != to_path {
+            uses.insert((to_path.clone(), from_path.clone()));
+        }
         match (from_node, to_node) {
             (Some(Some(from)), Some(Some(to))) => {
                 edge.from_file = from_path;
@@ -460,6 +467,9 @@ pub async fn compile_with(
                     interfaces: node.interfaces.clone(),
                     packages: Vec::new(),
                     descendant_package_count: 0,
+                    entry_point_count: 0,
+                    no_observed_users_count: 0,
+                    outside_user_count: 0,
                 },
             )
         })
@@ -491,7 +501,11 @@ pub async fn compile_with(
             .filter_map(|path| provider_path(&root, path).ok())
             .collect()
     });
+    let used: HashSet<&str> = uses.iter().map(|(used, _)| used.as_str()).collect();
+    let mut entry_matched = vec![false; config.project.entry_points.len()];
+    let mut usages = Vec::with_capacity(files.len());
     for file in &files {
+        let mut usage = None;
         if let Some(owner) = &file.node {
             let observed = observed_files.contains(file.path.as_str());
             let unindexed = indexed
@@ -500,6 +514,22 @@ pub async fn compile_with(
             if unindexed {
                 diagnostics.unindexed_files.push(file.path.clone());
             }
+            let entry_points = validated.entry_globs.matches(&file.path);
+            for &index in &entry_points {
+                entry_matched[index] = true;
+            }
+            // A user seen beats "not indexed": ArchGraph's own CSS and HTTP
+            // edges reach files GitNexus does not index.
+            let status = if !entry_points.is_empty() {
+                FileUsage::EntryPoint
+            } else if used.contains(file.path.as_str()) {
+                FileUsage::Used
+            } else if unindexed {
+                FileUsage::NotIndexed
+            } else {
+                FileUsage::NoObservedUsers
+            };
+            usage = Some(status);
             nodes
                 .get_mut(owner)
                 .context("mapped node missing while compiling hierarchy")?
@@ -513,9 +543,48 @@ pub async fn compile_with(
                 node.descendant_file_count += 1;
                 node.observed_file_count += usize::from(observed);
                 node.unindexed_file_count += usize::from(unindexed);
+                node.entry_point_count += usize::from(status == FileUsage::EntryPoint);
+                node.no_observed_users_count += usize::from(status == FileUsage::NoObservedUsers);
                 current = parent_id(id);
             }
         }
+        usages.push(usage);
+    }
+    for (pattern, _) in config
+        .project
+        .entry_points
+        .iter()
+        .zip(&entry_matched)
+        .filter(|(_, matched)| !**matched)
+    {
+        diagnostics.warnings.push(format!(
+            "project.entry_points entry `{pattern}` matches no mapped file; check the path, or map the file to a node"
+        ));
+    }
+    // Distinct users outside each subtree: a node everything outside
+    // ignores may be unused as a whole.
+    let mut outside_users: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    for (used, user) in &uses {
+        let Some(Some(owner)) = membership.get(used.as_str()) else {
+            continue;
+        };
+        let user_owner = membership.get(user.as_str()).copied().flatten();
+        let mut current = Some(*owner);
+        while let Some(id) = current {
+            if !user_owner.is_some_and(|user_owner| crate::config::is_within(user_owner, id)) {
+                outside_users.entry(id).or_default().insert(user.as_str());
+            }
+            current = parent_id(id);
+        }
+    }
+    for (id, users) in outside_users {
+        nodes
+            .get_mut(id)
+            .context("used node missing while counting outside users")?
+            .outside_user_count = users.len();
+    }
+    for (file, usage) in files.iter_mut().zip(usages) {
+        file.usage = usage;
     }
     if let Some(report) = &package_report {
         for package in &report.packages {
@@ -807,6 +876,9 @@ mod tests {
                     interfaces: Vec::new(),
                     packages: Vec::new(),
                     descendant_package_count: 0,
+                    entry_point_count: 0,
+                    no_observed_users_count: 0,
+                    outside_user_count: 0,
                 },
             )
         };

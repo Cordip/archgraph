@@ -30,6 +30,7 @@ pub fn resolve(files: &[String], validated: &ValidatedConfig) -> Result<Membersh
             path: path.clone(),
             node: None,
             ambiguous_matches: Vec::new(),
+            usage: None,
         };
         match owner(&path, "file", matches, validated, &mut diagnostics)? {
             Owner::None => {

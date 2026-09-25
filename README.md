@@ -626,6 +626,59 @@ its distribution: PyYAML is `yaml`, and every `google.cloud.*` library is
 `google`. A local module that exists only after a build or is ignored by Git
 looks like a package.
 
+## Entry points and files with no observed users
+
+Some files are loaded by name, not imported: Vite reads
+`frontend/vite.config.ts`, `index.html` loads `frontend/src/main.tsx`,
+pytest collects `test_*.py`, uvicorn starts `planner.api.app:app` from a
+string. Nothing observed depends on them, and neither does anything depend
+on dead code. ArchGraph tells the two apart only if the configuration says
+which files are entry points:
+
+```yaml
+project:
+  entry_points:
+    - frontend/vite.config.ts
+    - frontend/src/main.tsx
+    - "backend/tests/**/test_*.py"
+```
+
+Entry points are globs over repository files, matched against mapped files;
+`package:` globs are an error. An entry that matches no mapped file is a
+warning.
+
+Every mapped file then gets a `usage` in the IR:
+
+| Usage | Meaning |
+| --- | --- |
+| `entry_point` | Declared in `project.entry_points`. |
+| `used` | Another file has an observed dependency on it. |
+| `no_observed_users` | Not declared, and nothing observed depends on it. |
+| `not_indexed` | Not in the provider's index (`diagnostics.unindexed_files`): unknown. |
+
+Observed dependencies are the `provider.edge_types` that survive
+`exclude_reasons` and `min_confidence`, including ArchGraph's own CSS, HTTP
+and package observations. A file's dependency on itself does not count, and
+neither does an import of a package: packages are not files. A user may be
+outside the architecture: a script outside `source_roots`, an excluded or an
+unassigned file still uses what it imports. An observed user wins over "not
+indexed", since ArchGraph's CSS edges reach stylesheets GitNexus does not
+index.
+
+`no_observed_users` is a dead-code **candidate, never a proof**. GitNexus
+does not see Ruby autoloading, HTML script tags, dynamic imports, framework
+conventions (Rails controllers, pytest fixtures in `conftest.py`) or anything
+loaded by a string (see
+[docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)). Read the file
+and search for its name before deleting it; declare it as an entry point if
+a tool loads it.
+
+Each node counts its descendant `entry_point_count` and
+`no_observed_users_count`, and `outside_user_count`: distinct files outside
+its subtree with an observed dependency on a file inside it. A node that is
+not top-level, has indexed files, declares no entry point and has no outside
+user may be unused as a whole.
+
 ## Human focus UI
 
 The embedded HTML/CSS/plain JavaScript UI works offline (no external fonts or
