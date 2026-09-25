@@ -188,3 +188,10 @@ Add new entries at the end: what happened, why, and what to do.
     import path. Do not treat a GitNexus Python edge as proof that an import
     is local; `provider.packages` decides from the directories above the
     importing file (docs, section 12).
+26. **The server's CSP also blocks Playwright's `wait_for_function` with a
+    string.** Against a real `archgraph serve`,
+    `page.wait_for_function("document.… === …")` fails with "'unsafe-eval'
+    is not an allowed source of script" (its predicate goes through
+    `eval`), while `page.evaluate` of the same string works. Poll with
+    `page.evaluate` or from Python. The smoke test's fixture page has no CSP,
+    so it does not show this.
