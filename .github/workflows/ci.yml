@@ -20,7 +20,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
@@ -44,10 +44,10 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: Install GitNexus
@@ -63,13 +63,17 @@ jobs:
     name: UI smoke test
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: JavaScript syntax
         run: node --check src/web/app.js
-      - uses: astral-sh/setup-uv@v6
+      # Nothing here pins Python dependencies, so a uv cache could never be
+      # invalidated; the throwaway Playwright environment is cheap to rebuild.
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: false
       - name: Install Chromium
         run: uv run --with playwright python -m playwright install --with-deps chromium
       - name: Browser smoke test
