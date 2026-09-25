@@ -16,6 +16,19 @@ group. Open questions: whether relation kinds must match too, how a
 violation on one of the merged files is shown, and how the card is named
 when the files share no directory.
 
+## Level of detail when zoomed far out
+
+Below about 20%, wires and trunks stay readable (they keep a minimum width
+on screen), but card titles do not: a compact card's title can grow only as
+far as the card is wide (up to 32 px, two lines), which is about 6 px on
+screen at 20%. Two ideas were considered and not built. Collapsing each
+directory group or row into one titled block at very low zoom would give
+room for large titles, but it changes the layout, and so the routing, with
+the zoom; the routing is expensive on large levels and a view that
+rearranges itself while zooming is hard to follow. Titles drawn over the
+cards regardless of their width would overlap their neighbours on dense
+levels. A good answer probably labels groups rather than cards.
+
 ## Code viewer in a split right panel
 
 The inspector already reserves a second, stacked pane

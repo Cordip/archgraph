@@ -819,6 +819,11 @@ row is pointed at or selected, and then only its wires are drawn at full
 strength. Violations stay strong. The setting is remembered with the mode
 and colouring.
 
+**Zoomed out.** Wires keep at least 1.5 px on screen, trunk strands 2 to 3
+px (a ribbon at most about 12 px), and arrowheads at least 9 px, so wires,
+their colours and their directions stay readable at 20%. The widths change
+in 10% steps of the zoom.
+
 **Text size.** Card titles and wire labels keep a readable size on screen:
 below 100% they grow as the view zooms out, up to what a card can hold, and
 are refitted so that long names never overflow. Below 60% a card shows only

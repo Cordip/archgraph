@@ -1861,8 +1861,8 @@ function drawEdge(plan) {
       strands.push(svg("path", { d, class: `edge-strand${strand.net === null ? "" : ` ${netClass(strand.net)}`}` }));
     });
     group.append(...strands);
-    if (casing) casing.style.strokeWidth = `${round(2 * busHalfWidth(edge) + 8)}px`;
-    if (gap) gap.style.strokeWidth = `${round(2 * busHalfWidth(edge) + (violating ? 4 : 5))}px`;
+    if (casing) casing.style.strokeWidth = `calc(${round(2 * busHalfWidth(edge) + 8)}px * var(--ws, 1))`;
+    if (gap) gap.style.strokeWidth = `calc(${round(2 * busHalfWidth(edge) + (violating ? 4 : 5))}px * var(--ws, 1))`;
   }
   const label = svg("text", { x: round(plan.label.x), y: round(plan.label.y + 4.5), class: "edge-label" }, plan.text);
   group.append(label);
@@ -2051,13 +2051,23 @@ function overlayTrunk(item, edges) {
   });
   item.overlay.replaceChildren(...copies);
 }
-// Trunks are laid out again at each step of the zoom (10%).
+// Wires keep a minimum width on screen (--ws scales their strokes) and
+// arrowheads a minimum size. Both change in steps of the zoom (10%), and
+// each step lays the trunks out again.
+const WIRE_MIN_PX = 1.5, ARROW_MIN_PX = 9;
 const zoomStep = (k) => Math.pow(1.1, Math.floor(Math.log(k) / Math.log(1.1) + 1e-9));
 function updateWires() {
   const k = zoomStep(camera.k), graph = $("graph");
   if (scene.wireKey === k) return;
   scene.wireKey = k;
-  graph.style.setProperty("--ts", String(Math.round(Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))) * 100) / 100));
+  const scales = { wire: Math.min(12, Math.max(1, WIRE_MIN_PX / (1.3 * k))), strand: Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))), arrow: Math.min(12, Math.max(1, ARROW_MIN_PX / (11 * k))) };
+  graph.style.setProperty("--ws", String(Math.round(scales.wire * 100) / 100));
+  graph.style.setProperty("--ts", String(Math.round(scales.strand * 100) / 100));
+  for (const marker of document.querySelectorAll("#stage > defs > marker")) {
+    if (!marker.dataset.width) { marker.dataset.width = marker.getAttribute("markerWidth"); marker.dataset.height = marker.getAttribute("markerHeight"); }
+    marker.setAttribute("markerWidth", Math.round(Number(marker.dataset.width) * scales.arrow * 100) / 100);
+    marker.setAttribute("markerHeight", Math.round(Number(marker.dataset.height) * scales.arrow * 100) / 100);
+  }
   for (const item of scene.trunkEls || []) layoutTrunk(item, k);
 }
 function trunkScope(trunk) {

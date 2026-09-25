@@ -397,21 +397,21 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .n4 { --net: var(--n4); }
 .n5 { --net: var(--n5); }
 .edge-line { fill: none; stroke: var(--net, var(--line)); }
-.edge-strand { fill: none; stroke: var(--net, var(--line)); stroke-width: 1.7; }
+.edge-strand { fill: none; stroke: var(--net, var(--line)); stroke-width: calc(1.7px * var(--ws, 1)); }
 .edge.bus > .edge-line { stroke: none; }
 /* Past six nets the hues repeat with a dash pattern. */
-.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: 6 3; }
-.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: 1.6 3; }
-.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: 10 3 2 3; }
-.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: 2 5; }
+.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: calc(6px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: calc(1.6px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: calc(10px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(2px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: calc(2px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
 /* A violation keeps the wire's own colour inside a red casing. */
-.edge-casing { fill: none; stroke: var(--red); stroke-width: 8; stroke-linejoin: round; }
-.w3 .edge-casing { stroke-width: 9; }
-.w4 .edge-casing { stroke-width: 10; }
-.edge.violating .edge-gap { stroke-width: 4.5; }
-.w3.violating .edge-gap { stroke-width: 5.5; }
-.w4.violating .edge-gap { stroke-width: 6.5; }
-.edge-gap { fill: none; stroke: var(--sheet); stroke-width: 6; }
+.edge-casing { fill: none; stroke: var(--red); stroke-width: calc(8px * var(--ws, 1)); stroke-linejoin: round; }
+.w3 .edge-casing { stroke-width: calc(9px * var(--ws, 1)); }
+.w4 .edge-casing { stroke-width: calc(10px * var(--ws, 1)); }
+.edge.violating .edge-gap { stroke-width: calc(4.5px * var(--ws, 1)); }
+.w3.violating .edge-gap { stroke-width: calc(5.5px * var(--ws, 1)); }
+.w4.violating .edge-gap { stroke-width: calc(6.5px * var(--ws, 1)); }
+.edge-gap { fill: none; stroke: var(--sheet); stroke-width: calc(6px * var(--ws, 1)); }
 .edge.rubber .edge-gap { display: none; }
 .arrow-net { fill: var(--net); }
 .via { fill: var(--sheet); stroke: var(--net, var(--line)); stroke-width: 1.6; }
@@ -422,24 +422,24 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 #graph.mode-pcb .edge-line, #graph.mode-pcb .edge-strand, #graph.mode-pcb .edge-casing,
 #graph.mode-hex .edge-line, #graph.mode-hex .edge-strand, #graph.mode-hex .edge-casing { stroke-linejoin: miter; }
 #graph.mode-pcb .edge-label, #graph.mode-hex .edge-label { font-size: calc(12.5px * var(--label-scale, 1)); stroke-width: calc(4px * var(--label-scale, 1)); }
-.w1 .edge-line { stroke-width: 1.3; }
-.w2 .edge-line { stroke-width: 1.8; }
-.w3 .edge-line { stroke-width: 2.5; }
-.w4 .edge-line { stroke-width: 3.3; }
-.edge-hit { fill: none; stroke: transparent; stroke-width: 16; }
-.edge.manual .edge-line { stroke-dasharray: 7 5; }
-.edge.cut .edge-line { stroke-width: 3.4; stroke-dasharray: 9 5; }
-.edge.cut .edge-casing { stroke-width: 10; }
-.edge.cut .edge-gap { stroke-width: 6; }
+.w1 .edge-line { stroke-width: calc(1.3px * var(--ws, 1)); }
+.w2 .edge-line { stroke-width: calc(1.8px * var(--ws, 1)); }
+.w3 .edge-line { stroke-width: calc(2.5px * var(--ws, 1)); }
+.w4 .edge-line { stroke-width: calc(3.3px * var(--ws, 1)); }
+.edge-hit { fill: none; stroke: transparent; stroke-width: calc(16px * var(--ws, 1)); }
+.edge.manual .edge-line { stroke-dasharray: calc(7px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
+.edge.cut .edge-line { stroke-width: calc(3.4px * var(--ws, 1)); stroke-dasharray: calc(9px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
+.edge.cut .edge-casing { stroke-width: calc(10px * var(--ws, 1)); }
+.edge.cut .edge-gap { stroke-width: calc(6px * var(--ws, 1)); }
 /* One colour: violations are red and highlighted wires turn to ink. */
 .colour-none .edge.violating .edge-line { stroke: var(--red); }
 .colour-none .edge.violating .edge-casing, #graph:not(.mode-pcb):not(.mode-hex).colour-none .edge-gap { display: none; }
 .colour-none .edge.lit .edge-line, .colour-none .edge.hover .edge-line { stroke: var(--ink); }
 .colour-none .edge.violating.lit .edge-line, .colour-none .edge.violating.hover .edge-line { stroke: var(--red); }
 /* Coloured: a highlighted wire keeps its colour and gets heavier. */
-#graph:not(.colour-none) .edge.lit:not(.bus) .edge-line, #graph:not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: 3.2; }
-#graph:not(.colour-none) .edge.lit .edge-strand, #graph:not(.colour-none) .edge.hover .edge-strand { stroke-width: 2.3; }
-.edge.selected:not(.bus) .edge-line { stroke-width: 3.8; }
+#graph:not(.colour-none) .edge.lit:not(.bus) .edge-line, #graph:not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: calc(3.2px * var(--ws, 1)); }
+#graph:not(.colour-none) .edge.lit .edge-strand, #graph:not(.colour-none) .edge.hover .edge-strand { stroke-width: calc(2.3px * var(--ws, 1)); }
+.edge.selected:not(.bus) .edge-line { stroke-width: calc(3.8px * var(--ws, 1)); }
 /* Trunks: wires into one target merged into a ribbon cable, a strand per
    colour among them, ending in an arrowhead as wide as the ribbon; chevrons
    along it point the way and a tag at the arrowhead names the count and

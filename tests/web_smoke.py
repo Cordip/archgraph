@@ -811,8 +811,8 @@ def main():
             if mode == "pcb":
                 assert not spacing_problems(page, 12), spacing_problems(page, 12)
             # Zoomed in, chevrons point along the trunk at a fixed spacing on
-            # screen; zoomed far out, the strands and the arrowhead keep a
-            # minimum width and the count stays readable.
+            # screen; zoomed far out, the strands, the wires and their arrowheads
+            # keep a minimum width and the count stays readable.
             box = page.evaluate("scene.positions.get('node:external.service')")
             page.evaluate(f"setCamera({{k: 3, x: -({box['x']} + 40) * 3 + 400, y: -({box['y']}) * 3 + 600}})")
             assert page.locator("#graph .edge.trunk .trunk-chevron").count() >= 1, mode
@@ -823,7 +823,7 @@ def main():
                 marker: parseFloat(document.getElementById('arrow').getAttribute('markerWidth')) * camera.k,
                 arrow: (() => { const b = document.querySelector('#graph .trunk-arrow').getBoundingClientRect(); return Math.max(b.width, b.height); })(),
                 count: (() => { const t = document.querySelector('#graph [data-trunk-tag] .tag-short .tag-text'); return getComputedStyle(t).display !== 'none' && getComputedStyle(t.closest('.tag-short')).display !== 'none' ? t.getBoundingClientRect().height : 0; })() })""")
-            assert far["strand"] >= 1.95 and far["arrow"] >= 12 and far["count"] >= 11, (mode, far)
+            assert far["wire"] >= 1.45 and far["strand"] >= 1.95 and far["marker"] >= 8.5 and far["arrow"] >= 12 and far["count"] >= 11, (mode, far)
             page.locator("#zoom-fit").click()
             # Hovering the trunk lights its six wires and their entries.
             page.locator("#graph [data-trunk-tag] .trunk-tag").hover()
@@ -850,7 +850,7 @@ def main():
         page.locator("#mode-curves").click()
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
-        checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: a ribbon of a strand per source colour (one per kind, one when coloured by target), one arrowhead as wide as the ribbon at the target, the tag beside it, chevrons along it, red casing and a count for a violating wire; zoomed out to 15% its strands, arrowhead and count keep a minimum size; hover lights its wires, details list them, a selected wire's strand shows through")
+        checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: a ribbon of a strand per source colour (one per kind, one when coloured by target), one arrowhead as wide as the ribbon at the target, the tag beside it, chevrons along it, red casing and a count for a violating wire; zoomed out to 15% wires, strands, arrowheads and the count keep a minimum size; hover lights its wires, details list them, a selected wire's strand shows through")
 
         # Focus mode: above 60 wires every wire is faint until an entry is
         # pointed at; its own wires light up, violations stay strong, and
