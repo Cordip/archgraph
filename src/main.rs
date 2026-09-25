@@ -11,7 +11,14 @@ async fn main() -> ExitCode {
     let arguments = match Cli::try_parse() {
         Ok(arguments) => arguments,
         Err(error) => {
-            let code = if matches!(error.kind(), ErrorKind::DisplayHelp | ErrorKind::DisplayVersion) { 0 } else { 1 };
+            let code = if matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp | ErrorKind::DisplayVersion
+            ) {
+                0
+            } else {
+                1
+            };
             let _ = error.print();
             return ExitCode::from(code);
         }

@@ -26,15 +26,25 @@ pub struct InMemoryProvider {
 #[async_trait]
 impl CodeGraphProvider for InMemoryProvider {
     async fn info(&self) -> Result<ProviderInfo> {
-        if let Some(message) = &self.failure { bail!("{message}"); }
-        Ok(ProviderInfo { provider: "in-memory".into(), version: None, repository: None })
+        if let Some(message) = &self.failure {
+            bail!("{message}");
+        }
+        Ok(ProviderInfo {
+            provider: "in-memory".into(),
+            version: None,
+            repository: None,
+        })
     }
     async fn import_edges(&self) -> Result<Vec<CodeEdge>> {
-        if let Some(message) = &self.failure { bail!("{message}"); }
+        if let Some(message) = &self.failure {
+            bail!("{message}");
+        }
         Ok(self.edges.clone())
     }
     async fn reindex(&self) -> Result<()> {
-        if let Some(message) = &self.failure { bail!("{message}"); }
+        if let Some(message) = &self.failure {
+            bail!("{message}");
+        }
         Ok(())
     }
 }

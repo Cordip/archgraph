@@ -26,9 +26,16 @@ pub fn normalize_relative(raw: &str) -> Result<String> {
 }
 
 pub fn relative_file(root: &Path, file: &Path) -> Result<String> {
-    let relative = file.strip_prefix(root)
-        .with_context(|| format!("file {} is outside repository {}", file.display(), root.display()))?;
-    let raw = relative.to_str().context("non-UTF-8 repository path; rename it to a UTF-8 path")?;
+    let relative = file.strip_prefix(root).with_context(|| {
+        format!(
+            "file {} is outside repository {}",
+            file.display(),
+            root.display()
+        )
+    })?;
+    let raw = relative
+        .to_str()
+        .context("non-UTF-8 repository path; rename it to a UTF-8 path")?;
     let normalized = normalize_relative(raw)?;
     if normalized.is_empty() {
         bail!("expected a file path, got repository root");
@@ -45,8 +52,13 @@ pub fn provider_path(root: &Path, raw: &str) -> Result<String> {
     // Windows canonicalize can add a verbatim prefix and change drive casing.
     // Only the absolute root prefix is compared case-insensitively; repository
     // file identities keep their authored casing for globs and diagnostics.
-    let windows_root = root_string.as_bytes().get(1) == Some(&b':') || root_string.starts_with("//");
-    let relative = if windows_root && path.get(..root_prefix.len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case(&root_prefix)) {
+    let windows_root =
+        root_string.as_bytes().get(1) == Some(&b':') || root_string.starts_with("//");
+    let relative = if windows_root
+        && path
+            .get(..root_prefix.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(&root_prefix))
+    {
         &path[root_prefix.len()..]
     } else {
         path.strip_prefix(&root_prefix).unwrap_or(&path)
@@ -63,27 +75,36 @@ fn portable_absolute(raw: &str) -> String {
     if let Some(unc) = normalized.strip_prefix("//?/UNC/") {
         format!("//{unc}")
     } else {
-        normalized.strip_prefix("//?/").unwrap_or(&normalized).to_owned()
+        normalized
+            .strip_prefix("//?/")
+            .unwrap_or(&normalized)
+            .to_owned()
     }
 }
 
 pub fn locate_repository(explicit: Option<&Path>, start: &Path) -> Result<PathBuf> {
     if let Some(root) = explicit {
-        let root = root.canonicalize()
+        let root = root
+            .canonicalize()
             .with_context(|| format!("cannot open --root {}", root.display()))?;
         if !root.is_dir() {
             bail!("--root {} is not a directory", root.display());
         }
         return Ok(root);
     }
-    let start = start.canonicalize().context("cannot resolve current directory")?;
+    let start = start
+        .canonicalize()
+        .context("cannot resolve current directory")?;
     for directory in start.ancestors() {
         // Worktrees have a .git file instead of a directory.
         if directory.join(".git").exists() {
             return Ok(directory.to_path_buf());
         }
     }
-    bail!("no Git repository found above {}; run from a repository or pass --root <directory>", start.display())
+    bail!(
+        "no Git repository found above {}; run from a repository or pass --root <directory>",
+        start.display()
+    )
 }
 
 #[cfg(test)]
@@ -100,16 +121,25 @@ mod tests {
 
     #[test]
     fn absolute_provider_path_requires_repository_boundary() {
-        assert_eq!(provider_path(Path::new("/work/repo"), "/work/repo/src/a").unwrap(), "src/a");
+        assert_eq!(
+            provider_path(Path::new("/work/repo"), "/work/repo/src/a").unwrap(),
+            "src/a"
+        );
         assert!(provider_path(Path::new("/work/repo"), "/work/repository/a").is_err());
     }
 
     #[test]
     fn windows_verbatim_roots_and_drive_case_are_compatible() {
         let root = Path::new(r"\\?\C:\Work\repo");
-        assert_eq!(provider_path(root, r"c:\Work\repo\src\a.rs").unwrap(), "src/a.rs");
+        assert_eq!(
+            provider_path(root, r"c:\Work\repo\src\a.rs").unwrap(),
+            "src/a.rs"
+        );
         let unc = Path::new(r"\\?\UNC\server\share\repo");
-        assert_eq!(provider_path(unc, r"\\server\share\repo\src\a.rs").unwrap(), "src/a.rs");
+        assert_eq!(
+            provider_path(unc, r"\\server\share\repo\src\a.rs").unwrap(),
+            "src/a.rs"
+        );
     }
 
     #[test]
@@ -118,6 +148,9 @@ mod tests {
         std::fs::write(temp.path().join(".git"), "gitdir: elsewhere").unwrap();
         let nested = temp.path().join("a/b");
         std::fs::create_dir_all(&nested).unwrap();
-        assert_eq!(locate_repository(None, &nested).unwrap(), temp.path().canonicalize().unwrap());
+        assert_eq!(
+            locate_repository(None, &nested).unwrap(),
+            temp.path().canonicalize().unwrap()
+        );
     }
 }

@@ -31,13 +31,19 @@ pub struct EdgeEvidence {
 }
 impl From<CodeEdge> for EdgeEvidence {
     fn from(edge: CodeEdge) -> Self {
-        Self { from_file: edge.from_file, to_file: edge.to_file, kind: edge.kind,
-            confidence: edge.confidence, reason: edge.reason }
+        Self {
+            from_file: edge.from_file,
+            to_file: edge.to_file,
+            kind: edge.kind,
+            confidence: edge.confidence,
+            reason: edge.reason,
+        }
     }
 }
 
 pub fn evidence_cmp(a: &EdgeEvidence, b: &EdgeEvidence) -> Ordering {
-    (&a.from_file, &a.to_file, &a.kind).cmp(&(&b.from_file, &b.to_file, &b.kind))
+    (&a.from_file, &a.to_file, &a.kind)
+        .cmp(&(&b.from_file, &b.to_file, &b.kind))
         .then_with(|| match (a.confidence, b.confidence) {
             (Some(a), Some(b)) => a.total_cmp(&b),
             (None, Some(_)) => Ordering::Less,
@@ -79,7 +85,10 @@ pub struct CompiledFile {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum EdgeOrigin { Observed, Manual }
+pub enum EdgeOrigin {
+    Observed,
+    Manual,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CompiledEdge {
@@ -107,11 +116,21 @@ impl EvidenceAccumulator {
     pub fn add(&mut self, evidence: &EdgeEvidence, limit: usize) {
         self.count += 1;
         if let Some(confidence) = evidence.confidence {
-            self.confidence_min = Some(self.confidence_min.map_or(confidence, |x| x.min(confidence)));
-            self.confidence_max = Some(self.confidence_max.map_or(confidence, |x| x.max(confidence)));
+            self.confidence_min = Some(
+                self.confidence_min
+                    .map_or(confidence, |x| x.min(confidence)),
+            );
+            self.confidence_max = Some(
+                self.confidence_max
+                    .map_or(confidence, |x| x.max(confidence)),
+            );
         }
-        if limit == 0 { return; }
-        let position = self.evidence.binary_search_by(|current| evidence_cmp(current, evidence))
+        if limit == 0 {
+            return;
+        }
+        let position = self
+            .evidence
+            .binary_search_by(|current| evidence_cmp(current, evidence))
             .unwrap_or_else(|position| position);
         if position < limit {
             self.evidence.insert(position, evidence.clone());
@@ -119,19 +138,35 @@ impl EvidenceAccumulator {
         }
     }
     pub fn into_edge(self, from: String, to: String, kind: String) -> CompiledEdge {
-        CompiledEdge { from, to, kind, origin: EdgeOrigin::Observed, count: self.count,
-            evidence: self.evidence, confidence_min: self.confidence_min,
-            confidence_max: self.confidence_max, manual_edges: Vec::new() }
+        CompiledEdge {
+            from,
+            to,
+            kind,
+            origin: EdgeOrigin::Observed,
+            count: self.count,
+            evidence: self.evidence,
+            confidence_min: self.confidence_min,
+            confidence_max: self.confidence_max,
+            manual_edges: Vec::new(),
+        }
     }
 }
 
-pub fn aggregate_observed<'a>(edges: impl IntoIterator<Item = &'a ResolvedEdge>, limit: usize) -> Vec<CompiledEdge> {
+pub fn aggregate_observed<'a>(
+    edges: impl IntoIterator<Item = &'a ResolvedEdge>,
+    limit: usize,
+) -> Vec<CompiledEdge> {
     let mut groups: BTreeMap<(String, String, String), EvidenceAccumulator> = BTreeMap::new();
     for edge in edges {
-        groups.entry((edge.from.clone(), edge.to.clone(), edge.kind.clone())).or_default()
+        groups
+            .entry((edge.from.clone(), edge.to.clone(), edge.kind.clone()))
+            .or_default()
             .add(&edge.evidence, limit);
     }
-    groups.into_iter().map(|((from, to, kind), evidence)| evidence.into_edge(from, to, kind)).collect()
+    groups
+        .into_iter()
+        .map(|((from, to, kind), evidence)| evidence.into_edge(from, to, kind))
+        .collect()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -200,15 +235,24 @@ pub struct ArchitectureIr {
 mod tests {
     use super::*;
     fn evidence(i: usize) -> EdgeEvidence {
-        EdgeEvidence { from_file: format!("src/{i:03}.rs"), to_file: "src/end.rs".into(), kind: "IMPORTS".into(),
-            confidence: Some(i as f64 / 100.0), reason: None }
+        EdgeEvidence {
+            from_file: format!("src/{i:03}.rs"),
+            to_file: "src/end.rs".into(),
+            kind: "IMPORTS".into(),
+            confidence: Some(i as f64 / 100.0),
+            reason: None,
+        }
     }
     #[test]
     fn evidence_is_sorted_capped_and_counts_all() {
         let mut a = EvidenceAccumulator::default();
         let mut b = EvidenceAccumulator::default();
-        for i in (0..70).rev() { a.add(&evidence(i), 20); }
-        for i in 0..70 { b.add(&evidence(i), 20); }
+        for i in (0..70).rev() {
+            a.add(&evidence(i), 20);
+        }
+        for i in 0..70 {
+            b.add(&evidence(i), 20);
+        }
         assert_eq!(a.count, 70);
         assert_eq!(a.evidence, b.evidence);
         assert_eq!(a.evidence.len(), 20);
@@ -217,8 +261,14 @@ mod tests {
     }
     #[test]
     fn aggregates_by_architecture_pair_and_kind() {
-        let edges: Vec<_> = (0..3).map(|i| ResolvedEdge { from: "app.a".into(), to: "app.b".into(),
-            kind: "IMPORTS".into(), evidence: evidence(i) }).collect();
+        let edges: Vec<_> = (0..3)
+            .map(|i| ResolvedEdge {
+                from: "app.a".into(),
+                to: "app.b".into(),
+                kind: "IMPORTS".into(),
+                evidence: evidence(i),
+            })
+            .collect();
         let result = aggregate_observed(&edges, 20);
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].count, 3);
