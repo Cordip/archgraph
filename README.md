@@ -428,11 +428,11 @@ observed dependencies, rules, violations, concrete evidence and agent contract.
 ## IR and implementation
 
 The IR has schema version 1, ordered node maps and file records, provider
-metadata, observed/manual architecture edges, resolved file imports, rules,
+metadata, observed/manual architecture edges, resolved file dependencies, rules,
 violations, coverage diagnostics and counts. There are no compilation timestamps.
 Samples are sorted by file pair/kind with confidence/reason tie-breakers and
 capped at 20 by default; full observation counts and confidence ranges are kept.
-All resolved file imports are retained so a leaf view remains lossless and
+All resolved file dependencies are retained so a leaf view remains lossless and
 `context --evidence-limit 50` can provide more than the stored aggregate sample.
 No symbols, source contents, CFG, or database are copied into the IR.
 

@@ -41,7 +41,7 @@ macro_rules! outln {
     name = "archgraph",
     version,
     about = "Compile and check recursive architecture over GitNexus",
-    after_help = "MVP: one repository; automatically observed IMPORTS only. Interfaces/manual edges are descriptive; UI is read-only. Symbol/AST exploration belongs to GitNexus, an external executable with its own license. No observed edge is not proof of no runtime dependency."
+    after_help = "One repository per configuration. Observed dependencies are the GitNexus relation kinds in provider.edge_types (default IMPORTS). Interfaces/manual edges are descriptive; UI is read-only. Symbol/AST exploration belongs to GitNexus, an external executable with its own license. No observed edge is not proof of no runtime dependency."
 )]
 pub struct Cli {
     /// Repository root; otherwise walk upward to a .git directory or worktree file.
