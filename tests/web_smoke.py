@@ -171,7 +171,7 @@ def dense_projection():
 
 
 # Segments of every drawn wire, from the path data (boards draw only M and L).
-SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .trunk-line')].map((line) => {
+SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .trunk-strand')].filter((line) => line.getAttribute('d')).map((line) => {
     const numbers = line.getAttribute('d').match(/-?[\\d.]+/g).map(Number);
     const points = [];
     for (let i = 0; i + 1 < numbers.length; i += 2) points.push([numbers[i], numbers[i + 1]]);
@@ -764,31 +764,45 @@ def main():
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         checks.append("violations keep a red casing over the wire colour in curves, PCB and Hex, and turn red with colouring off")
 
-        # Wires from several siblings into one target merge into a trunk: one
-        # arrowhead instead of six, a tag with the count, a red casing and a
-        # count when one of its wires violates a rule, in every mode.
+        # Wires from several siblings into one target merge into a trunk: a
+        # ribbon with a strand per source colour, one arrowhead as wide as the
+        # ribbon at the target (the wires lose theirs), a tag beside it with
+        # the count, chevrons along it, a red casing and a count when one of
+        # its wires violates a rule, in every mode.
         page.evaluate("(p) => { window.__fixture.projections['app.trunks'] = p; }", trunk_projection())
         page.evaluate("loadFocus('app.trunks')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.trunks'")
-        into_service = """() => [...document.querySelectorAll('#graph [marker-end]')].filter((path) => {
-            const edge = path.closest('.edge'); return edge.classList.contains('trunk') || scene.edgeEls.find((item) => item.element === edge).edge.to === 'node:external.service'; }).length"""
+        into_service = """() => [...document.querySelectorAll('#graph .edge:not(.trunk) [marker-end]')].filter((path) =>
+            scene.edgeEls.find((item) => item.element === path.closest('.edge')).edge.to === 'node:external.service').length"""
+        ribbon = """() => { const trunk = document.querySelector('#graph .edge.trunk[data-trunk]'), service = scene.positions.get('node:external.service');
+            const arrow = trunk.querySelector('.trunk-arrow').getBBox(), plate = document.querySelector(`#graph [data-trunk-tag] ${document.getElementById('graph').classList.contains('compact') ? '.tag-short' : '.tag-full'} .tag-plate`).getBoundingClientRect();
+            const tip = trunk.querySelector('.trunk-arrow').getBoundingClientRect();
+            const strands = [...trunk.querySelectorAll('.trunk-strand')].filter((s) => s.getAttribute('d'));
+            return { classes: [...new Set(strands.map((s) => getComputedStyle(s).stroke))].length,
+                strandWidth: Math.max(...strands.map((s) => parseFloat(getComputedStyle(s).strokeWidth))),
+                arrowWidth: Math.min(arrow.width, arrow.height), arrowAt: [arrow.x + arrow.width / 2, arrow.y + arrow.height, service.x, service.x + service.width, service.y],
+                tagGap: Math.max(plate.left - tip.right, tip.left - plate.right, plate.top - tip.bottom, tip.top - plate.bottom),
+                markers: trunk.querySelectorAll('[marker-end]').length }; }"""
         for mode in ("curves", "pcb", "hex"):
             page.locator(f"#mode-{mode}").click()
             page.locator("#zoom-fit").click()
-            assert page.locator("#graph .edge.trunk").count() == 1, mode
+            assert page.locator("#graph .edge.trunk[data-trunk]").count() == 1, mode
             assert page.locator("#graph .edge.branch").count() == 6, mode
-            assert page.evaluate(into_service) == 1, mode
-            tag = page.locator("#graph .edge.trunk .tag-full .tag-text").text_content()
+            assert page.evaluate(into_service) == 0, mode
+            tag = page.locator("#graph [data-trunk-tag] .tag-full .tag-text").text_content()
             assert tag.startswith("×6 → Service") and "⚠ 1" in tag, (mode, tag)
-            assert page.locator("#graph .edge.trunk .tag-short .tag-text").text_content().startswith("×6"), mode
-            trunk = page.locator("#graph .edge.trunk")
+            assert page.locator("#graph [data-trunk-tag] .tag-short .tag-text").text_content().startswith("×6"), mode
+            trunk = page.locator("#graph .edge.trunk[data-trunk]")
             assert "violating" in trunk.get_attribute("class")
-            assert trunk.locator(".edge-casing").first.evaluate("e => getComputedStyle(e).stroke") == "rgb(196, 34, 27)", mode
-            # Wider where more wires share it.
-            widths = trunk.locator(".trunk-line").evaluate_all("els => els.map((e) => parseFloat(getComputedStyle(e).strokeWidth))")
-            assert max(widths) >= 4.5 and max(widths) > min(widths), (mode, widths)
-            # With colours by source a trunk of several sources is neutral ink.
-            assert "neutral" in trunk.get_attribute("class"), mode
+            assert trunk.locator(".trunk-casing").first.evaluate("e => getComputedStyle(e).stroke") == "rgb(196, 34, 27)", mode
+            state = page.evaluate(ribbon)
+            # Six sources, six colours side by side; the arrowhead as wide as
+            # the ribbon, at the target's card, the tag right beside it.
+            assert state["classes"] == 6 and "ribbon" in trunk.get_attribute("class"), (mode, state)
+            assert state["markers"] == 0 and state["arrowWidth"] >= 6 * 1.8, (mode, state)
+            x, bottom, left, right, top = state["arrowAt"]
+            assert left <= x <= right and abs(bottom - top) < 30, (mode, state)
+            assert state["tagGap"] < 6, (mode, state)
             if mode != "curves":
                 assert not angles_ok(page, 45 if mode == "pcb" else 60), (mode, angles_ok(page, 45 if mode == "pcb" else 60))
                 first = page.evaluate(SEGMENTS)
@@ -796,26 +810,47 @@ def main():
                 assert page.evaluate(SEGMENTS) == first, mode
             if mode == "pcb":
                 assert not spacing_problems(page, 12), spacing_problems(page, 12)
+            # Zoomed in, chevrons point along the trunk at a fixed spacing on
+            # screen; zoomed far out, the strands and the arrowhead keep a
+            # minimum width and the count stays readable.
+            box = page.evaluate("scene.positions.get('node:external.service')")
+            page.evaluate(f"setCamera({{k: 3, x: -({box['x']} + 40) * 3 + 400, y: -({box['y']}) * 3 + 600}})")
+            assert page.locator("#graph .edge.trunk .trunk-chevron").count() >= 1, mode
+            page.evaluate("setCamera({k: 0.15, x: 300, y: 200})")
+            far = page.evaluate("""() => ({
+                wire: Math.min(...[...document.querySelectorAll('#graph .edge:not(.trunk) .edge-line')].map((e) => parseFloat(getComputedStyle(e).strokeWidth))) * camera.k,
+                strand: Math.min(...[...document.querySelectorAll('#graph .trunk-strand')].map((e) => parseFloat(getComputedStyle(e).strokeWidth))) * camera.k,
+                marker: parseFloat(document.getElementById('arrow').getAttribute('markerWidth')) * camera.k,
+                arrow: (() => { const b = document.querySelector('#graph .trunk-arrow').getBoundingClientRect(); return Math.max(b.width, b.height); })(),
+                count: (() => { const t = document.querySelector('#graph [data-trunk-tag] .tag-short .tag-text'); return getComputedStyle(t).display !== 'none' && getComputedStyle(t.closest('.tag-short')).display !== 'none' ? t.getBoundingClientRect().height : 0; })() })""")
+            assert far["strand"] >= 1.95 and far["arrow"] >= 12 and far["count"] >= 11, (mode, far)
+            page.locator("#zoom-fit").click()
             # Hovering the trunk lights its six wires and their entries.
-            trunk.locator(".trunk-tag").hover()
+            page.locator("#graph [data-trunk-tag] .trunk-tag").hover()
             assert page.locator("#graph .edge.branch.hover").count() == 6, mode
             assert page.locator("#graph .node.hover").count() == 7, mode
             page.mouse.move(0, 0)
-        page.locator("#graph .edge.trunk .trunk-tag").click()
+        page.locator("#graph [data-trunk-tag] .trunk-tag").click()
         details = page.locator("#details").inner_text()
         assert "Trunk" in details and "Wires in this trunk (6)" in details and "1 of them violates deny-api-domain" in details, details
         page.locator("#details .dependency", has_text="t/s3.ts").click()
         assert "Observed dependency" in page.locator("#details").inner_text()
         assert page.locator("#graph .edge.branch.selected").count() == 1
-        # Coloured by target, the trunk takes the target's colour.
+        # One wire selected: its own strand shows over the dimmed trunk.
+        assert page.locator("#graph .edge.trunk .trunk-overlay .trunk-strand").count() == 1
+        # Coloured by kind, one strand per kind (all six are IMPORTS).
+        page.locator("#colour-by").select_option("kind")
+        assert page.evaluate(ribbon)["classes"] == 1
+        # Coloured by target, the trunk is one strand of the target's colour.
         page.locator("#colour-by").select_option("target")
-        assert "neutral" not in page.locator("#graph .edge.trunk").get_attribute("class")
-        assert re.search(r"\bn\d\b", page.locator("#graph .edge.trunk").get_attribute("class"))
+        assert "ribbon" not in page.locator("#graph .edge.trunk[data-trunk]").get_attribute("class")
+        assert re.search(r"\bn\d\b", page.locator("#graph .edge.trunk[data-trunk]").get_attribute("class"))
+        assert page.evaluate(ribbon)["classes"] == 1
         page.locator("#colour-by").select_option("source")
         page.locator("#mode-curves").click()
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
-        checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: one arrowhead, tag with the count, wider where more wires share it, red casing and a count for a violating wire, hover lights its wires, details list them; neutral when sources differ, the target's colour when coloured by target")
+        checks.append("a trunk replaces six parallel wires into one target in curves, PCB and Hex: a ribbon of a strand per source colour (one per kind, one when coloured by target), one arrowhead as wide as the ribbon at the target, the tag beside it, chevrons along it, red casing and a count for a violating wire; zoomed out to 15% its strands, arrowhead and count keep a minimum size; hover lights its wires, details list them, a selected wire's strand shows through")
 
         # Focus mode: above 60 wires every wire is faint until an entry is
         # pointed at; its own wires light up, violations stay strong, and

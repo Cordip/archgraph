@@ -795,19 +795,23 @@ own positions. The same input always gives the same routing.
 
 **Trunks.** Wires from several sibling entries (those inside the focus, or
 those outside it) into the same target merge into a trunk, like a cable
-harness, once three or more head the same way. Each source keeps a short
-branch in its own colour; the branches join the trunk near their sources (a
-dot marks each join), and the trunk carries them to the target with one
-arrowhead, wider where more wires share it. Its tag names the count and the
-target (`×27 → External packages`); zoomed far out it shows only the count.
-Hovering a trunk lights its wires and their entries, and clicking it lists
-them, each opening its evidence. If any of its wires violates a rule the
-trunk gets the red casing and the tag the number of violating wires. A
-trunk takes its wires' colour when they share one (always when colouring by
-target); otherwise it is neutral ink, and its tag carries a strip of the
-colours it carries. The boards keep their angles and track pitch: a trunk's
-wires share one port, one channel and one track per channel. Manual
-dependencies never merge.
+harness, once three or more head the same way. The trunk is a ribbon cable:
+one thin strand per colour among its wires, side by side (per source
+colour, or per relation kind when colouring by kind), and each source's
+branch runs into its own strand. Past six colours, sources that share a hue
+share its strand (drawn solid), and any rest go into a grey strand. When
+colouring by target, or without colours, a trunk is one wide strand. It ends
+in one arrowhead as wide as the ribbon at the target, chevrons along it
+point the way, and a tag beside the arrowhead names the count and the
+target (`×27 → External packages`); zoomed out, the tag shows only the count
+and grows so it stays readable. Hovering a trunk lights its wires and their
+entries, and clicking it lists them, each opening its evidence; with one of
+its wires selected, that wire's strand shows through the dimmed ribbon. If
+any of its wires violates a rule, the red casing surrounds the whole ribbon
+and the tag gives the number of violating wires. The boards keep their
+angles and track pitch: a trunk's wires share one port, one channel and a
+band of tracks per channel wide enough for the ribbon. Manual dependencies
+never merge.
 
 **Focus** (the button next to Colour, on by default): on a level with more
 than 60 drawn wires, every wire is faint until an entry, a wire or a legend
