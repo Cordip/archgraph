@@ -162,3 +162,10 @@ Add new entries at the end: what happened, why, and what to do.
     silently misses every awaited generic call: in lct-task3 the candidates
     route looked uncalled. Look through `await` (`client::Scan::callee`), and
     dump the tree (a small `tree_sitter` program) before assuming a shape.
+22. **The server's CSP silently drops inline `style` attributes.** `archgraph
+    serve` sends `style-src 'self'`, so `setAttribute("style", …)` in
+    `app.js` does nothing except log a console error (CSSOM `element.style`
+    still works). `tests/web_smoke.py` injects the page without that header,
+    so it cannot catch this. Style through classes in `style.css` (the SVG
+    edge weights are `w1`–`w4` classes for this reason) and look at the
+    browser console of a real `archgraph serve`.
