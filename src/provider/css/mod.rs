@@ -18,6 +18,7 @@ use crate::{
         SourceLine, Stylesheet,
     },
     paths::normalize_relative,
+    provider::typescript::is_script,
 };
 use anyhow::{Context, Result};
 use std::{
@@ -28,17 +29,11 @@ use std::{
 /// Relation kinds only this provider produces; GitNexus is not asked for them.
 pub const EDGE_TYPES: [&str; 1] = ["USES_CLASS"];
 
-const SCRIPT_EXTENSIONS: [&str; 8] = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-
 #[derive(Debug, Default)]
 pub struct Extraction {
     pub edges: Vec<CodeEdge>,
     pub report: CssReport,
     pub warnings: Vec<String>,
-}
-
-fn is_script(path: &str) -> bool {
-    SCRIPT_EXTENSIONS.iter().any(|ext| path.ends_with(ext)) && !path.ends_with(".d.ts")
 }
 
 fn edge(from: &str, to: &str, kind: &str, reason: &str, confidence: f64) -> CodeEdge {

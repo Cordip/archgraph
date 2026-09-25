@@ -2,6 +2,7 @@
 pub mod css;
 pub mod gitnexus;
 pub mod markdown_table;
+pub mod typescript;
 
 use crate::model::{CodeEdge, ProviderInfo};
 use anyhow::{bail, Result};

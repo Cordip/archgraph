@@ -1,31 +1,10 @@
 //! `archgraph styles`: the class report, whole or for one node's subtree.
-use crate::{
-    config::is_within,
-    model::{ArchitectureIr, ClassStatus, CssClass, CssReport, SourceLine},
-};
+use super::Owners;
+use crate::model::{ArchitectureIr, ClassStatus, CssClass, CssReport, SourceLine};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fmt::Write,
 };
-
-struct Owners<'a>(HashMap<&'a str, &'a str>);
-
-impl<'a> Owners<'a> {
-    fn new(ir: &'a ArchitectureIr) -> Self {
-        Self(
-            ir.files
-                .iter()
-                .filter_map(|file| Some((file.path.as_str(), file.node.as_deref()?)))
-                .collect(),
-        )
-    }
-    fn of(&self, file: &str) -> Option<&'a str> {
-        self.0.get(file).copied()
-    }
-    fn within(&self, file: &str, node: Option<&str>) -> bool {
-        node.is_none_or(|node| self.of(file).is_some_and(|owner| is_within(owner, node)))
-    }
-}
 
 /// The part of the report that touches `node`: classes defined or used in
 /// its subtree (with all their uses, so outside users stay visible),

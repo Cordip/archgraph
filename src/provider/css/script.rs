@@ -4,10 +4,12 @@
 //! `el.classList.add/remove/toggle/replace(...)` and `class="..."` inside
 //! HTML strings. What cannot be resolved statically is recorded, not
 //! guessed.
-use crate::model::ClassCertainty;
-use anyhow::{anyhow, Result};
-use std::collections::HashMap;
-use tree_sitter::{Node, Parser};
+use crate::{
+    model::ClassCertainty,
+    provider::typescript::{self, line, Script, Segment},
+};
+use anyhow::Result;
+use tree_sitter::Node;
 
 #[derive(Debug, PartialEq)]
 pub struct DynamicUse {
@@ -32,25 +34,12 @@ const MAX_CONSTANT_DEPTH: usize = 8;
 const EXPRESSION_LENGTH: usize = 80;
 
 pub fn parse(file: &str, source: &str) -> Result<ScriptFacts> {
-    let language = if file.ends_with(".ts") || file.ends_with(".mts") || file.ends_with(".cts") {
-        tree_sitter_typescript::LANGUAGE_TYPESCRIPT
-    } else {
-        tree_sitter_typescript::LANGUAGE_TSX
-    };
-    let mut parser = Parser::new();
-    parser
-        .set_language(&language.into())
-        .map_err(|error| anyhow!("cannot load the TypeScript grammar: {error}"))?;
-    let tree = parser
-        .parse(source, None)
-        .ok_or_else(|| anyhow!("tree-sitter gave up parsing {file}"))?;
+    let tree = typescript::parse(file, source)?;
+    let root = tree.root_node();
     let mut scan = Scan {
-        source,
-        constants: HashMap::new(),
+        script: Script::new(source, root),
         facts: ScriptFacts::default(),
     };
-    let root = tree.root_node();
-    scan.collect_constants(root);
     scan.visit(root);
     if root.has_error() {
         scan.facts.warnings.push(format!(
@@ -60,51 +49,21 @@ pub fn parse(file: &str, source: &str) -> Result<ScriptFacts> {
     Ok(scan.facts)
 }
 
-/// A string broken into characters and embedded expressions (`${...}`, or
-/// the operands of `+`), each character with its line.
-enum Segment<'t> {
-    Char(char, usize),
-    Expression(Node<'t>),
-}
-
 struct Scan<'s, 't> {
-    source: &'s str,
-    constants: HashMap<&'s str, Vec<Node<'t>>>,
+    script: Script<'s, 't>,
     facts: ScriptFacts,
-}
-
-fn line(node: Node) -> usize {
-    node.start_position().row + 1
 }
 
 impl<'s, 't> Scan<'s, 't> {
     fn text(&self, node: Node) -> &'s str {
-        &self.source[node.byte_range()]
-    }
-
-    fn collect_constants(&mut self, node: Node<'t>) {
-        if node.kind() == "variable_declarator" {
-            if let (Some(name), Some(value)) = (
-                node.child_by_field_name("name"),
-                node.child_by_field_name("value"),
-            ) {
-                if name.kind() == "identifier" {
-                    let name = self.text(name);
-                    self.constants.entry(name).or_default().push(value);
-                }
-            }
-        }
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            self.collect_constants(child);
-        }
+        self.script.text(node)
     }
 
     fn visit(&mut self, node: Node<'t>) {
         match node.kind() {
             "import_statement" => {
                 if let Some(source) = node.child_by_field_name("source") {
-                    let specifier = self.string_text(source);
+                    let specifier = self.script.string_text(source);
                     if specifier.ends_with(".css") {
                         self.facts
                             .stylesheet_imports
@@ -127,7 +86,7 @@ impl<'s, 't> Scan<'s, 't> {
                     node.child_by_field_name("value"),
                 ) {
                     let key = match key.kind() {
-                        "string" => self.string_text(key),
+                        "string" => self.script.string_text(key),
                         _ => self.text(key).to_owned(),
                     };
                     if CLASS_PROPERTIES.contains(&key.as_str()) {
@@ -156,21 +115,13 @@ impl<'s, 't> Scan<'s, 't> {
         }
     }
 
-    /// The content of a string literal, escapes left as written.
-    fn string_text(&self, node: Node) -> String {
-        let mut cursor = node.walk();
-        node.named_children(&mut cursor)
-            .map(|part| self.text(part))
-            .collect()
-    }
-
     /// `certainty` applies to plain strings; anything nested in an
     /// expression is at most `Expression`.
     fn class_value(&mut self, node: Node<'t>, certainty: ClassCertainty, depth: usize) {
         let nested = ClassCertainty::Expression;
         match node.kind() {
             "string" => {
-                for (name, line) in words(&self.segments(node)) {
+                for (name, line) in words(&self.script.segments(node)) {
                     self.facts.classes.push((name, line, certainty));
                 }
             }
@@ -185,7 +136,7 @@ impl<'s, 't> Scan<'s, 't> {
                 }
             }
             "template_string" => {
-                let segments = self.segments(node);
+                let segments = self.script.segments(node);
                 self.tokens(&segments, node, nested, depth);
             }
             "ternary_expression" => {
@@ -214,7 +165,7 @@ impl<'s, 't> Scan<'s, 't> {
                     }
                     Some("+") => {
                         let mut segments = Vec::new();
-                        self.concatenation(node, &mut segments);
+                        self.script.concatenation(node, &mut segments);
                         self.tokens(&segments, node, nested, depth);
                     }
                     _ => self.dynamic(node, None),
@@ -233,7 +184,7 @@ impl<'s, 't> Scan<'s, 't> {
             }
             "call_expression" => self.call(node, depth),
             "identifier" => {
-                let values = self.constants.get(self.text(node)).cloned();
+                let values = self.script.constants(self.text(node)).map(<[_]>::to_vec);
                 match values {
                     Some(values) if depth < MAX_CONSTANT_DEPTH => {
                         for value in values {
@@ -312,7 +263,7 @@ impl<'s, 't> Scan<'s, 't> {
                             .classes
                             .push((self.text(key).to_owned(), line(key), nested)),
                         Some(key) if key.kind() == "string" => {
-                            for (name, line) in words(&self.segments(key)) {
+                            for (name, line) in words(&self.script.segments(key)) {
                                 self.facts.classes.push((name, line, nested));
                             }
                         }
@@ -339,42 +290,6 @@ impl<'s, 't> Scan<'s, 't> {
             expression,
             prefix,
         });
-    }
-
-    fn segments(&self, node: Node<'t>) -> Vec<Segment<'t>> {
-        let mut segments = Vec::new();
-        let mut cursor = node.walk();
-        for part in node.named_children(&mut cursor) {
-            if part.kind() == "template_substitution" {
-                if let Some(inner) = part.named_child(0) {
-                    segments.push(Segment::Expression(inner));
-                }
-                continue;
-            }
-            let mut line = line(part);
-            for c in self.text(part).chars() {
-                segments.push(Segment::Char(c, line));
-                if c == '\n' {
-                    line += 1;
-                }
-            }
-        }
-        segments
-    }
-
-    fn concatenation(&self, node: Node<'t>, segments: &mut Vec<Segment<'t>>) {
-        let operator = node.child_by_field_name("operator");
-        match node.kind() {
-            "binary_expression" if operator.is_some_and(|op| self.text(op) == "+") => {
-                for side in ["left", "right"] {
-                    if let Some(side) = node.child_by_field_name(side) {
-                        self.concatenation(side, segments);
-                    }
-                }
-            }
-            "string" => segments.extend(self.segments(node)),
-            _ => segments.push(Segment::Expression(node)),
-        }
     }
 
     /// Splits a class string with embedded expressions into class names. A
@@ -415,7 +330,7 @@ impl<'s, 't> Scan<'s, 't> {
 
     /// `class="..."` attributes inside an HTML string.
     fn markup(&mut self, node: Node<'t>) {
-        let segments = self.segments(node);
+        let segments = self.script.segments(node);
         let chars: Vec<Option<char>> = segments
             .iter()
             .map(|segment| match segment {
