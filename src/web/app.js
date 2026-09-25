@@ -444,32 +444,62 @@ function select(element, lit) {
   for (const previous of document.querySelectorAll("#graph .selected, #table-wrap .selected, #dsm-wrap .selected, #violations .selected, #details .selected")) previous.classList.remove("selected");
   if (element) element.classList.add("selected");
   selection = lit || null;
-  paint(selection, "lit", "has-selection");
+  paint(selection, "lit");
 }
-function paint(lit, className, rootClass) {
-  if (!scene || !scene.nodeEls) return;
-  $("graph").classList.toggle(rootClass, Boolean(lit));
-  for (const [id, element] of scene.nodeEls) element.classList.toggle(className, Boolean(lit) && lit.nodes.has(id));
-  for (const item of scene.edgeEls) {
-    item.element.classList.toggle(className, Boolean(lit) && lit.edges.has(item.edge));
-    if (!item.marker) continue;
-    const strong = item.element.classList.contains("lit") || item.element.classList.contains("hover");
-    item.line.setAttribute("marker-end", strong ? item.litMarker : item.marker);
-  }
-  // A trunk lights with any of its wires; lit for only some of them, its
-  // body dims and their own strands show through it. A selection's overlay
-  // stays under a hover's.
+// Highlighting draws copies of the lit entries and wires on #lift, a layer
+// over the drawing, and dims the drawing's own layer (#stage) as a whole.
+// The drawing itself is not touched: changing a class on its root or its
+// thousands of elements would restyle and repaint all of them (100 ms and
+// more on a large level), where the compositor dims a layer for free. A
+// hover shows over a selection; without either the lift is empty.
+let hovered = null, pointed = null;
+function paint(lit, className, source) {
+  if (className === "hover") { hovered = lit || null; pointed = lit && source && source.node ? source.node : null; }
+  renderLift();
+}
+function renderLift() {
+  const lift = $("lift-graph"), graph = $("graph"), lit = hovered || selection;
+  const kind = hovered ? "hover" : "lit";
+  $("viewport").classList.toggle("lifted", Boolean(lit && scene && scene.nodeEls));
+  if (!lit || !scene || !scene.nodeEls) { lift.replaceChildren(); return; }
+  lift.setAttribute("class", `${graph.getAttribute("class") || ""} ${hovered ? "has-hover" : "has-selection"}`);
+  lift.setAttribute("transform", graph.getAttribute("transform") || "");
+  // Copies in the drawing's order, so what was on top stays on top.
+  const copies = new Map();
+  for (const id of lit.nodes) { const element = scene.nodeEls.get(id); if (element) copies.set(element, null); }
+  for (const item of scene.edgeEls) if (lit.edges.has(item.edge)) copies.set(item.element, item);
   for (const item of scene.trunkEls || []) {
-    const count = lit ? item.trunk.members.filter((edge) => lit.edges.has(edge)).length : 0;
-    const partial = count > 0 && count < item.trunk.members.length;
-    for (const element of [item.element, item.tagGroup]) {
-      element.classList.toggle(className, count > 0);
-      element.classList.toggle(`${className}-partial`, partial);
-    }
-    const own = className === "hover" ? (partial ? lit.edges : null) : null;
-    const chosen = selection ? item.trunk.members.filter((edge) => selection.edges.has(edge)).length : 0;
-    overlayTrunk(item, own || (chosen > 0 && chosen < item.trunk.members.length ? selection.edges : null));
+    const count = item.trunk.members.filter((edge) => lit.edges.has(edge)).length;
+    if (!count) continue;
+    const partial = count < item.trunk.members.length;
+    copies.set(item.element, { trunk: item, partial });
+    copies.set(item.tagGroup, { tag: item, partial });
   }
+  const out = [];
+  for (const element of graph.children) {
+    if (!copies.has(element)) continue;
+    const item = copies.get(element), copy = element.cloneNode(true);
+    copy.classList.add(kind);
+    if (hovered && pointed && element === scene.nodeEls.get(pointed)) copy.classList.add("pointed");
+    copy.removeAttribute("tabindex");
+    copy.removeAttribute("role");
+    if (item && item.line && item.marker) copy.querySelector(".edge-line").setAttribute("marker-end", item.litMarker);
+    if (item && (item.trunk || item.tag) && item.partial) copy.classList.add(`${kind}-partial`);
+    // A trunk lit for only some of its wires shows their own strands over
+    // its dimmed body.
+    if (item && item.trunk && item.partial) {
+      const strands = [];
+      item.trunk.strandPaths.forEach(({ edge, element: strand }, i) => {
+        if (!lit.edges.has(edge) || !item.trunk.paths) return;
+        const path = svg("path", { d: item.trunk.paths[i], class: strand.getAttribute("class") });
+        path.style.strokeWidth = strand.style.strokeWidth;
+        strands.push(path);
+      });
+      copy.querySelector(".trunk-overlay").replaceChildren(...strands);
+    }
+    out.push(copy);
+  }
+  lift.replaceChildren(...out);
 }
 // Hovering an entry or edge on the canvas marks the rows naming it in the
 // details panel; hovering a row lights its edge and entry on the canvas.
@@ -479,7 +509,7 @@ function linkPanel(source) {
   }
 }
 function hoverCanvas(lit, source) {
-  paint(lit, "hover", "has-hover");
+  paint(lit, "hover", source);
   linkPanel(lit ? source : null);
 }
 // A trunk's details: its wires, each opening its own evidence.
@@ -1635,13 +1665,13 @@ function updateText() {
   if (!scene || !scene.cards) return;
   updateWires();
   const tier = textTier(camera.k), graph = $("graph");
-  graph.style.setProperty("--label-scale", String(tier.label));
-  graph.style.setProperty("--tag-scale", String(tier.tag));
-  graph.style.setProperty("--tag-short-scale", String(tier.tagShort));
+  $("canvas").style.setProperty("--label-scale", String(tier.label));
+  $("canvas").style.setProperty("--tag-scale", String(tier.tag));
+  $("canvas").style.setProperty("--tag-short-scale", String(tier.tagShort));
   graph.classList.toggle("compact", tier.compact);
   if (scene.textKey === tier.key) return;
   scene.textKey = tier.key;
-  graph.style.setProperty("--title-size", `${tier.title}px`);
+  $("canvas").style.setProperty("--title-size", `${tier.title}px`);
   for (const card of scene.cards) fitTitle(card, tier);
 }
 function fitTitle(card, tier) {
@@ -1734,6 +1764,9 @@ function wireSample(look, { violating = false, manual = false, cut = false } = {
 function drawScene() {
   const graph = $("graph");
   graph.replaceChildren();
+  hovered = null;
+  $("lift-graph").replaceChildren();
+  $("viewport").classList.remove("lifted");
   const arrangement = arrange(scene.entries, scene.layoutEdges, scene.layers);
   scene.colours = assignColours(arrangement.order);
   const board = display.mode !== "curves" && scene.entries.length > 0;
@@ -1915,7 +1948,7 @@ function drawTrunk(trunk, tags) {
   // Chevrons run along the longest tail.
   let spine = null, spineLength = -1;
   for (const tail of trunk.tails.values()) { const length = tailLength(tail); if (length > spineLength) { spine = tail; spineLength = length; } }
-  const item = { trunk, element: group, body, ribbon, violations, casingPaths, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [], lit: null };
+  const item = { trunk, element: group, body, ribbon, violations, casingPaths, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [] };
   // The tag: the count and the target; zoomed far out only the count.
   const tag = svg("g", { class: "trunk-tag" });
   const variant = (className, content, strip) => {
@@ -2014,7 +2047,6 @@ function layoutTrunk(item, k) {
   item.chevrons.replaceChildren(...chevrons.map((d) => svg("path", { d, class: "trunk-chevron" })));
   item.chevrons.style.strokeWidth = `${round(Math.max(1.4 * scale, strandWidth * 0.6))}px`;
   placeTag(item);
-  if (item.lit) overlayTrunk(item, item.lit);
 }
 // The tag sits beside the arrowhead, on the side away from the ribbon's
 // course, so it reads as the label of the trunk's target end. Its scale
@@ -2039,18 +2071,6 @@ function placeTag(item) {
     shape.text.setAttribute("y", y + 15.5);
   }
 }
-// Copies of the lit wires' strands over a dimmed trunk.
-function overlayTrunk(item, edges) {
-  item.lit = edges;
-  const copies = [];
-  item.strandPaths.forEach(({ edge, element }, i) => {
-    if (!edges || !edges.has(edge) || !item.paths) return;
-    const copy = svg("path", { d: item.paths[i], class: element.getAttribute("class") });
-    copy.style.strokeWidth = element.style.strokeWidth;
-    copies.push(copy);
-  });
-  item.overlay.replaceChildren(...copies);
-}
 // Wires keep a minimum width on screen (--ws scales their strokes) and
 // arrowheads a minimum size. Both change in steps of the zoom (10%), and
 // each step lays the trunks out again.
@@ -2061,8 +2081,8 @@ function updateWires() {
   if (scene.wireKey === k) return;
   scene.wireKey = k;
   const scales = { wire: Math.min(12, Math.max(1, WIRE_MIN_PX / (1.3 * k))), strand: Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))), arrow: Math.min(12, Math.max(1, ARROW_MIN_PX / (11 * k))) };
-  graph.style.setProperty("--ws", String(Math.round(scales.wire * 100) / 100));
-  graph.style.setProperty("--ts", String(Math.round(scales.strand * 100) / 100));
+  $("canvas").style.setProperty("--ws", String(Math.round(scales.wire * 100) / 100));
+  $("canvas").style.setProperty("--ts", String(Math.round(scales.strand * 100) / 100));
   for (const marker of document.querySelectorAll("#stage > defs > marker")) {
     if (!marker.dataset.width) { marker.dataset.width = marker.getAttribute("markerWidth"); marker.dataset.height = marker.getAttribute("markerHeight"); }
     marker.setAttribute("markerWidth", Math.round(Number(marker.dataset.width) * scales.arrow * 100) / 100);
@@ -2198,6 +2218,7 @@ function moveEntry(id, x, y) {
     scene.ghost.setAttribute("d", slot.hex ? Board.hexOutline(slot.width, slot.height) : `M 0 0 H ${round(slot.width)} V ${slot.height} H 0 Z`);
     scene.dropCell = cell;
   }
+  if (selection) renderLift();
   const frame = frameBox();
   if (frame && scene.frameRect) {
     for (const key of ["x", "y", "width", "height"]) scene.frameRect.setAttribute(key, round(frame[key]));
@@ -2300,11 +2321,13 @@ function commitCamera() {
   clearTimeout(settleTimer);
   const transform = `translate(${round(camera.x)} ${round(camera.y)}) scale(${camera.k.toFixed(4)})`;
   $("graph").setAttribute("transform", transform);
+  $("lift-graph").setAttribute("transform", transform);
   $("grid").setAttribute("patternTransform", transform);
   $("viewport").style.transform = "";
   $("stage").classList.toggle("coarse", camera.k < 0.45);
   drawn = { ...camera };
   updateText();
+  if (hovered || selection) renderLift();
 }
 function setCamera(target) {
   ++cameraAnimation;
@@ -2456,7 +2479,7 @@ stage.addEventListener("pointermove", (event) => {
     ++cameraAnimation;
     stage.setPointerCapture(event.pointerId);
     $("canvas").classList.add(gesture.kind === "node" ? "dragging" : "panning");
-    paint(null, "hover", "has-hover");
+    paint(null, "hover");
   }
   if (gesture.kind === "pan") {
     if (spaceHeld) spacePanned = true;

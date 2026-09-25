@@ -179,7 +179,11 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 /* During a gesture the compositor moves #viewport as one picture
    (applyCamera); moving #stage itself would lay the whole SVG out again. */
 #viewport { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
-#stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; }
+#stage { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; user-select: none; -webkit-user-select: none; will-change: opacity; }
+/* Highlights: copies of the lit elements over the dimmed drawing (renderLift). */
+#lift { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+#viewport.lifted #stage { opacity: .16; }
+.canvas.table-mode #lift, .canvas.dsm-mode #lift { display: none; }
 .canvas.space-pan #stage { cursor: grab; }
 .canvas.panning #stage, .canvas.dragging #stage { cursor: grabbing; }
 .grid-minor { fill: none; stroke: var(--grid); stroke-width: 1; }
@@ -346,10 +350,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .dsm-empty { position: absolute; top: 12px; left: 12px; margin: 0; width: max-content; max-width: 480px; padding: 8px 12px; font-size: 14px; color: var(--ink-2); background: var(--sheet); border-left: 3px solid var(--frame); }
 
 /* Diagram */
-#graph text { font-family: var(--font-tech); }
-#graph { transition: opacity .2s ease; }
-#graph.leaving { opacity: 0; transition-duration: .28s; }
-#graph.settling .edge { opacity: 0; }
+:is(#graph, #lift-graph) text { font-family: var(--font-tech); }
+:is(#graph, #lift-graph) { transition: opacity .2s ease; }
+:is(#graph, #lift-graph).leaving { opacity: 0; transition-duration: .28s; }
+:is(#graph, #lift-graph).settling .edge { opacity: 0; }
 .frame { fill: none; stroke: var(--frame); stroke-width: 1.2; stroke-dasharray: 16 5 2 5; opacity: .75; }
 .frame-label { font-size: 16px; font-weight: 600; fill: var(--ink-2); }
 .graph-note { font-size: 15px; fill: var(--ink-3); }
@@ -366,15 +370,16 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .package-glyph { fill: none; stroke: var(--pencil); stroke-width: 1.3; stroke-linejoin: round; }
 .node.outside .box { fill: var(--outside); stroke: var(--ink-3); stroke-dasharray: 6 4; }
 .node.outside .box-inner { stroke-dasharray: 6 4; }
-.node:hover .box { stroke: var(--pencil); }
+/* The entry under the pointer (a :hover rule would repaint the drawing). */
+#lift-graph .node.pointed .box { stroke: var(--pencil); }
 .node.selected .box { fill: color-mix(in srgb, var(--hilite) 42%, var(--card)); }
 .node:focus-visible .box { stroke: var(--pencil); stroke-width: 3.5; }
 /* Title and label sizes follow the zoom (app.js, updateText). */
 .node-title { font-size: var(--title-size, 17px); font-weight: 600; fill: var(--ink); }
 /* Zoomed far out a card shows only its title. */
-#graph.compact .node-subtitle, #graph.compact .node-facts, #graph.compact .coverage-track, #graph.compact .coverage,
-#graph.compact .usage-mark, #graph.compact .package-glyph, #graph.compact .box-inner { display: none; }
-#graph .node-subtitle { font: 13px var(--font-code); fill: var(--ink-3); }
+:is(#graph, #lift-graph).compact .node-subtitle, :is(#graph, #lift-graph).compact .node-facts, :is(#graph, #lift-graph).compact .coverage-track, :is(#graph, #lift-graph).compact .coverage,
+:is(#graph, #lift-graph).compact .usage-mark, :is(#graph, #lift-graph).compact .package-glyph, :is(#graph, #lift-graph).compact .box-inner { display: none; }
+:is(#graph, #lift-graph) .node-subtitle { font: 13px var(--font-code); fill: var(--ink-3); }
 .node-facts { font-size: 14px; fill: var(--ink-2); }
 .coverage-track { fill: var(--rule); }
 .coverage { fill: var(--ink-2); }
@@ -384,10 +389,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .entry-ring { fill: var(--entry-soft); stroke: var(--entry); stroke-width: 1.4; }
 .entry-play { fill: var(--entry); }
 .idle-ring { fill: none; stroke: var(--idle); stroke-width: 1.6; stroke-dasharray: 3.2 2.6; }
-#graph .idle-count { font-size: 14px; font-weight: 600; fill: var(--idle); text-anchor: end; }
-#graph .node-facts.usage-entry_point { fill: var(--entry); font-weight: 600; }
-#graph .node-facts.usage-no_observed_users { fill: var(--idle); font-weight: 600; }
-#graph .node-facts.usage-not_indexed { fill: var(--ink-3); font-style: italic; }
+:is(#graph, #lift-graph) .idle-count { font-size: 14px; font-weight: 600; fill: var(--idle); text-anchor: end; }
+:is(#graph, #lift-graph) .node-facts.usage-entry_point { fill: var(--entry); font-weight: 600; }
+:is(#graph, #lift-graph) .node-facts.usage-no_observed_users { fill: var(--idle); font-weight: 600; }
+:is(#graph, #lift-graph) .node-facts.usage-not_indexed { fill: var(--ink-3); font-style: italic; }
 .group-toggle { cursor: pointer; }
 .group-toggle rect { fill: var(--sheet); stroke: var(--ink-2); stroke-width: 1; }
 .group-toggle path { fill: none; stroke: var(--ink); stroke-width: 1.8; }
@@ -422,26 +427,29 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .drop-slot { fill: color-mix(in srgb, var(--pencil) 10%, transparent); stroke: var(--pencil); stroke-width: 1.5; stroke-dasharray: 5 4; }
 .edge.rubber .edge-line, .edge.rubber .edge-strand { stroke-dasharray: 4 4; opacity: .7; }
 /* Boards: traces on tracks meet at chamfered or 60° corners. */
-#graph.mode-pcb .edge-line, #graph.mode-pcb .edge-strand, #graph.mode-pcb .edge-casing,
-#graph.mode-hex .edge-line, #graph.mode-hex .edge-strand, #graph.mode-hex .edge-casing { stroke-linejoin: miter; }
-#graph.mode-pcb .edge-label, #graph.mode-hex .edge-label { font-size: calc(12.5px * var(--label-scale, 1)); stroke-width: calc(4px * var(--label-scale, 1)); }
+:is(#graph, #lift-graph).mode-pcb .edge-line, :is(#graph, #lift-graph).mode-pcb .edge-strand, :is(#graph, #lift-graph).mode-pcb .edge-casing,
+:is(#graph, #lift-graph).mode-hex .edge-line, :is(#graph, #lift-graph).mode-hex .edge-strand, :is(#graph, #lift-graph).mode-hex .edge-casing { stroke-linejoin: miter; }
+:is(#graph, #lift-graph).mode-pcb .edge-label, :is(#graph, #lift-graph).mode-hex .edge-label { font-size: calc(12.5px * var(--label-scale, 1)); stroke-width: calc(4px * var(--label-scale, 1)); }
 .w1 .edge-line { stroke-width: calc(1.3px * var(--ws, 1)); }
 .w2 .edge-line { stroke-width: calc(1.8px * var(--ws, 1)); }
 .w3 .edge-line { stroke-width: calc(2.5px * var(--ws, 1)); }
 .w4 .edge-line { stroke-width: calc(3.3px * var(--ws, 1)); }
 .edge-hit { fill: none; stroke: transparent; stroke-width: calc(16px * var(--ws, 1)); }
+/* Only the hit paths take the pointer: hit-testing every drawn stroke of a
+   large level costs milliseconds on each mouse move. */
+#graph .edge path:not(.edge-hit) { pointer-events: none; }
 .edge.manual .edge-line { stroke-dasharray: calc(7px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
 .edge.cut .edge-line { stroke-width: calc(3.4px * var(--ws, 1)); stroke-dasharray: calc(9px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
 .edge.cut .edge-casing { stroke-width: calc(10px * var(--ws, 1)); }
 .edge.cut .edge-gap { stroke-width: calc(6px * var(--ws, 1)); }
 /* One colour: violations are red and highlighted wires turn to ink. */
 .colour-none .edge.violating .edge-line { stroke: var(--red); }
-.colour-none .edge.violating .edge-casing, #graph:not(.mode-pcb):not(.mode-hex).colour-none .edge-gap { display: none; }
+.colour-none .edge.violating .edge-casing, :is(#graph, #lift-graph):not(.mode-pcb):not(.mode-hex).colour-none .edge-gap { display: none; }
 .colour-none .edge.lit .edge-line, .colour-none .edge.hover .edge-line { stroke: var(--ink); }
 .colour-none .edge.violating.lit .edge-line, .colour-none .edge.violating.hover .edge-line { stroke: var(--red); }
 /* Coloured: a highlighted wire keeps its colour and gets heavier. */
-#graph:not(.colour-none) .edge.lit:not(.bus) .edge-line, #graph:not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: calc(3.2px * var(--ws, 1)); }
-#graph:not(.colour-none) .edge.lit .edge-strand, #graph:not(.colour-none) .edge.hover .edge-strand { stroke-width: calc(2.3px * var(--ws, 1)); }
+:is(#graph, #lift-graph):not(.colour-none) .edge.lit:not(.bus) .edge-line, :is(#graph, #lift-graph):not(.colour-none) .edge.hover:not(.bus) .edge-line { stroke-width: calc(3.2px * var(--ws, 1)); }
+:is(#graph, #lift-graph):not(.colour-none) .edge.lit .edge-strand, :is(#graph, #lift-graph):not(.colour-none) .edge.hover .edge-strand { stroke-width: calc(2.3px * var(--ws, 1)); }
 .edge.selected:not(.bus) .edge-line { stroke-width: calc(3.8px * var(--ws, 1)); }
 /* Trunks: wires into one target merged into a ribbon cable, a strand per
    colour among them, ending in an arrowhead as wide as the ribbon; chevrons
@@ -461,37 +469,36 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .edge.trunk.violating .trunk-arrow { fill: var(--red); }
 .trunk-chevron { fill: none; stroke: var(--sheet); stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
 .colour-none .edge.trunk.violating .trunk-strand { stroke: var(--red); }
-#graph.colour-none .edge.trunk.violating .edge-casing { display: inline; }
+:is(#graph, #lift-graph).colour-none .edge.trunk.violating .edge-casing { display: inline; }
 .tag-full { transform: scale(var(--tag-scale, 1)); }
 .tag-short { transform: scale(var(--tag-short-scale, 1)); }
-#graph.compact .tag-full, #graph:not(.compact) .tag-short { display: none; }
+:is(#graph, #lift-graph).compact .tag-full, :is(#graph, #lift-graph):not(.compact) .tag-short { display: none; }
 .tag-plate { fill: var(--sheet); stroke: var(--net, var(--ink-2)); stroke-width: 1.4; }
 .edge.trunk.neutral .tag-plate, .edge.trunk.ribbon .tag-plate { stroke: var(--ink); }
 .edge.trunk.violating .tag-plate { stroke: var(--red); stroke-width: 2; }
-#graph .tag-text { font-size: 13.5px; font-weight: 600; fill: var(--ink); text-anchor: middle; }
+:is(#graph, #lift-graph) .tag-text { font-size: 13.5px; font-weight: 600; fill: var(--ink); text-anchor: middle; }
 .tag-alert { fill: var(--red); }
 .tag-net { fill: var(--net); }
 .trunk-overlay { pointer-events: none; }
-#graph.has-hover .edge.trunk.hover-partial > .trunk-body, #graph.has-selection:not(.has-hover) .edge.trunk.lit-partial > .trunk-body { opacity: .2; }
+:is(#graph, #lift-graph).has-hover .edge.trunk.hover-partial > .trunk-body, :is(#graph, #lift-graph).has-selection:not(.has-hover) .edge.trunk.lit-partial > .trunk-body { opacity: .2; }
 .arrow { fill: var(--line); }
 .arrow-error { fill: var(--red); }
 .arrow-lit { fill: var(--ink); }
 .edge-label { font-size: calc(14px * var(--label-scale, 1)); fill: var(--ink-2); text-anchor: middle; paint-order: stroke; stroke: var(--sheet); stroke-width: calc(5px * var(--label-scale, 1)); stroke-linejoin: round; }
 .edge.violating .edge-label { fill: var(--red); font-weight: 600; }
-#graph.quiet .edge-label, .edge.crowded .edge-label { display: none; }
-#graph.compact .edge-label { display: none; }
-#graph .edge.hover .edge-label, #graph:not(.has-hover) .edge.lit .edge-label { display: inline; }
-#graph .node, #graph .edge { transition: opacity .15s; }
+:is(#graph, #lift-graph).quiet .edge-label, .edge.crowded .edge-label { display: none; }
+:is(#graph, #lift-graph).compact .edge-label { display: none; }
+:is(#graph, #lift-graph) .edge.hover .edge-label, :is(#graph, #lift-graph):not(.has-hover) .edge.lit .edge-label { display: inline; }
 /* Focus mode on a busy level: at rest, trunks and violations stay at full
    strength and the other wires (branches included) are dimmed, not below
    .35 so they still read zoomed out; pointing at or selecting something
    brings its wires back. */
-#graph.faint:not(.has-hover):not(.has-selection) .edge:not(.trunk):not(.violating) { opacity: .35; }
-#graph.violations-only .node:not(.violating), #graph.violations-only .edge:not(.violating) { opacity: .16; }
-#graph.idle-only .node:not(.idle), #graph.idle-only .edge { opacity: .16; }
-#graph.has-selection .node:not(.lit), #graph.has-selection .edge:not(.lit) { opacity: .18; }
-#graph.has-hover .node:not(.hover), #graph.has-hover .edge:not(.hover) { opacity: .14; }
-#graph.has-hover .node.hover, #graph.has-hover .edge.hover { opacity: 1; }
+:is(#graph, #lift-graph).faint:not(.has-hover):not(.has-selection) .edge:not(.trunk):not(.violating) { opacity: .35; }
+:is(#graph, #lift-graph).violations-only .node:not(.violating), :is(#graph, #lift-graph).violations-only .edge:not(.violating) { opacity: .16; }
+:is(#graph, #lift-graph).idle-only .node:not(.idle), :is(#graph, #lift-graph).idle-only .edge { opacity: .16; }
+:is(#graph, #lift-graph).has-selection .node:not(.lit), :is(#graph, #lift-graph).has-selection .edge:not(.lit) { opacity: .18; }
+:is(#graph, #lift-graph).has-hover .node:not(.hover), :is(#graph, #lift-graph).has-hover .edge:not(.hover) { opacity: .14; }
+:is(#graph, #lift-graph).has-hover .node.hover, :is(#graph, #lift-graph).has-hover .edge.hover { opacity: 1; }
 
 /* Inspector: two stacked panes; the second is reserved for a file viewer. */
 .inspector { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; background: var(--sheet); border-left: 1.5px solid var(--frame); }
@@ -572,7 +579,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
 }
 @media (prefers-reduced-motion: reduce) {
   #loading::before { left: 0; width: 100%; opacity: .5; animation: none; }
-  #graph, #graph .node, #graph .edge, .sidebar, .inspector { transition: none !important; }
+  :is(#graph, #lift-graph), :is(#graph, #lift-graph) .node, :is(#graph, #lift-graph) .edge, .sidebar, .inspector { transition: none !important; }
 }
 @media (max-width: 1100px) {
   :root { --side-w: 260px; --insp-w: 340px; }

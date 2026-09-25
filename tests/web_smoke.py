@@ -300,19 +300,24 @@ def main():
         page.keyboard.press("ArrowDown")
         moved = page.evaluate("document.activeElement.getAttribute('aria-label')")
         assert moved != start and page.locator("#graph .node[tabindex='0']").count() == 1, (start, moved)
+        page.mouse.move(0, 0)
         page.get_by_role("button", name="API", exact=True).focus()
         page.keyboard.press("Enter")
         assert "Depends on (2)" in page.locator("#details").inner_text()
-        # Selecting an entry dims everything it is not connected to.
-        assert page.locator("#graph.has-selection").count() == 1
-        assert page.locator("#graph .node.lit").count() == 3
+        # Selecting an entry dims everything it is not connected to: the
+        # drawing's layer is dimmed and copies of the lit entries and wires
+        # are drawn over it, while the drawing itself is left alone.
+        # (The focused entry lights the same neighbourhood as a hover.)
+        assert page.locator("#viewport.lifted").count() == 1 and page.evaluate("selection.nodes.size") == 3
+        assert page.locator("#lift-graph .node").count() == 3
+        assert page.locator("#graph .lit, #graph .hover, #graph.has-selection, #graph.has-hover").count() == 0
         # A row in the details and its entry on the canvas light each other.
         row = page.locator("#details .dependency", has_text="app.domain")
         row.hover()
-        assert page.locator("#graph.has-hover").count() == 1
-        assert page.locator("#graph .node.hover").evaluate_all("els => els.map(e => e.getAttribute('aria-label')).sort()") == ["API", "Domain"]
+        assert page.locator("#lift-graph.has-hover").count() == 1
+        assert page.locator("#lift-graph .node.hover").evaluate_all("els => els.map(e => e.getAttribute('aria-label')).sort()") == ["API", "Domain"]
         page.mouse.move(0, 0)
-        assert page.locator("#graph.has-hover").count() == 0
+        assert page.locator("#lift-graph.has-hover").count() == 0 and page.locator("#lift-graph.has-selection").count() == 1
         page.get_by_role("button", name="Domain", exact=True).hover()
         assert "linked" in row.get_attribute("class")
         assert page.locator("#details .dependency.linked").count() == 1
@@ -338,7 +343,7 @@ def main():
         world = ((px - x1) / k1, (py - y1) / k1)
         page.mouse.move(stage["x"] + px, stage["y"] + py)
         page.mouse.wheel(0, -240)
-        # During the gesture only the viewport layer moves; the drawing takes
+        # During the gesture only the stage layer moves; the drawing takes
         # the new camera once the wheel pauses.
         assert page.locator("#viewport").evaluate("e => e.style.transform") != ""
         page.wait_for_timeout(300)
@@ -748,7 +753,7 @@ def main():
         assert all(len(line) >= 3 for group in lines for line in group), lines
         assert len(lines[0]) == 1 and lines[0][0].endswith("…") and lines[2] == ["test_solver_", "progress.py"], lines
         page.locator("#graph .node[data-id='file:w/a.ts']").hover()
-        assert page.locator("#graph .edge.hover .edge-label").first.evaluate("e => getComputedStyle(e).display") != "none"
+        assert page.locator("#lift-graph .edge.hover .edge-label").first.evaluate("e => getComputedStyle(e).display") != "none"
         page.mouse.move(0, 0)
         page.locator("#zoom-fit").click()
         checks.append("zoomed out, titles and wire labels keep a minimum size on screen and stay inside their cards; far out cards show only their title and labels only on hover")
@@ -832,8 +837,8 @@ def main():
             page.locator("#zoom-fit").click()
             # Hovering the trunk lights its six wires and their entries.
             page.locator("#graph [data-trunk-tag] .trunk-tag").hover()
-            assert page.locator("#graph .edge.branch.hover").count() == 6, mode
-            assert page.locator("#graph .node.hover").count() == 7, mode
+            assert page.locator("#lift-graph .edge.branch.hover").count() == 6, mode
+            assert page.locator("#lift-graph .node.hover").count() == 7, mode
             page.mouse.move(0, 0)
         page.locator("#graph [data-trunk-tag] .trunk-tag").click()
         details = page.locator("#details").inner_text()
@@ -842,7 +847,7 @@ def main():
         assert "Observed dependency" in page.locator("#details").inner_text()
         assert page.locator("#graph .edge.branch.selected").count() == 1
         # One wire selected: its own strand shows over the dimmed trunk.
-        assert page.locator("#graph .edge.trunk .trunk-overlay .trunk-strand").count() == 1
+        assert page.locator("#lift-graph .edge.trunk .trunk-overlay .trunk-strand").count() == 1
         # Coloured by kind, one strand per kind (all six are IMPORTS).
         page.locator("#colour-by").select_option("kind")
         assert page.evaluate(ribbon)["classes"] == 1
@@ -880,8 +885,12 @@ def main():
             assert opacity("#graph .edge.trunk[data-trunk]") == 1 and opacity("#graph .edge.trunk .trunk-body") == 1
         page.locator("#graph .node[data-id='file:d/f05.ts']").hover()
         page.wait_for_timeout(300)
-        assert opacity(own) == 1 and opacity(other) < 0.3, (opacity(own), opacity(other))
+        lifted = lambda selector: selector.replace("#graph", "#lift-graph")
+        assert opacity(lifted(own)) == 1 and page.locator(lifted(other)).count() == 0, opacity(lifted(own))
+        assert opacity("#stage") < 0.3
         page.mouse.move(0, 0)
+        page.wait_for_timeout(300)
+        assert opacity("#stage") == 1
         page.locator("#focus-mode").click()
         page.wait_for_timeout(300)
         assert page.locator("#graph.faint").count() == 0 and opacity(other) == 1
@@ -889,9 +898,32 @@ def main():
         assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1')).focus") is False
         page.locator("#focus-mode").click()
         assert page.locator("#graph.faint").count() == 1
+        checks.append("focus mode: above 60 wires the others are dimmed to .35 while trunks and violations stay at full strength, an entry's own wires light up on hover; the toggle is remembered")
+
+        # Hovering and zooming stay cheap on a large level: a hover changes
+        # nothing in the drawing itself (no class or attribute on any of its
+        # elements, so nothing is restyled or repainted there), and neither
+        # routes nor lays trunks out; a wheel gesture only moves the stage
+        # layer until it pauses.
+        page.evaluate("""() => { window.__calls = { route: 0, layoutTrunk: 0, drawScene: 0 };
+            for (const name of Object.keys(window.__calls)) { const f = window[name]; window[name] = function (...a) { window.__calls[name]++; return f.apply(this, a); }; }
+            window.__mutations = 0; new MutationObserver((list) => { window.__mutations += list.length; }).observe(document.getElementById('graph'), { subtree: true, attributes: true, childList: true }); }""")
+        for node_id in ("file:d/f02.ts", "file:d/f05.ts", "file:d/f09.ts"):
+            page.locator(f"#graph .node[data-id='{node_id}']").hover()
+            page.locator(f"#graph .edge[data-from='{node_id}']").first.hover(force=True)
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(100)
+        assert page.evaluate("window.__mutations") == 0 and page.evaluate("window.__calls") == {"route": 0, "layoutTrunk": 0, "drawScene": 0}, (page.evaluate("window.__mutations"), page.evaluate("window.__calls"))
+        stage = page.locator("#stage").bounding_box()
+        page.mouse.move(stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2)
+        for _ in range(2):
+            page.mouse.wheel(0, -120)
+        assert page.evaluate("window.__mutations") == 0 and page.evaluate("window.__calls")["layoutTrunk"] == 0, (page.evaluate("window.__mutations"), page.evaluate("window.__calls"))
+        page.wait_for_timeout(400)
+        assert page.evaluate("window.__mutations") > 0
+        checks.append("a hover changes nothing in the drawing and neither routes nor lays out trunks; a wheel gesture only moves the stage layer until it pauses")
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
-        checks.append("focus mode: above 60 wires the others are dimmed to .35 while trunks and violations stay at full strength, an entry's own wires light up on hover; the toggle is remembered")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.
