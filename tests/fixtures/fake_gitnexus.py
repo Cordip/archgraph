@@ -37,8 +37,8 @@ if mode == "query_failure":
 match = re.search(r"SKIP (\d+) LIMIT (\d+)$", query)
 if match is None:
     sys.exit("missing pagination")
-if "CodeRelation {type: 'IMPORTS'}" not in query or "ORDER BY source, target" not in query:
-    sys.exit("unexpected import query")
+if "r.type IN ['IMPORTS']" not in query or "ORDER BY source, target, kind, reason" not in query:
+    sys.exit("unexpected dependency query")
 offset, size = map(int, match.groups())
 rows = []
 if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_large"):
@@ -46,11 +46,11 @@ if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_larg
 if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
 page = rows[offset:offset + size]
-table = "| source | target | confidence | reason |\n| --- | --- | --- | --- |"
+table = "| source | target | kind | confidence | reason |\n| --- | --- | --- | --- | --- |"
 for source, target in page:
     confidence = "NaN" if mode == "bad_confidence" else "1.0"
     reason = "x" * 200_000 if mode == "node_like_large" else "static\\|import"
-    table += f"\n| {source} | {target} | {confidence} | {reason} |"
+    table += f"\n| {source} | {target} | IMPORTS | {confidence} | {reason} |"
 count = len(page) + (1 if mode == "bad_count" else 0)
 payload = json.dumps({"markdown": table, "row_count": count}) + "\n"
 if mode == "node_like_large":

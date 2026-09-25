@@ -27,6 +27,7 @@ pub struct GitNexusCliProvider {
     root: PathBuf,
     repository: Option<String>,
     page_size: usize,
+    edge_types: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -65,10 +66,11 @@ fn present(value: &str) -> bool {
     !value.is_empty() && !value.eq_ignore_ascii_case("null")
 }
 
-pub fn parse_import_page(stdout: &str) -> Result<Vec<CodeEdge>> {
+pub fn parse_edge_page(stdout: &str) -> Result<Vec<CodeEdge>> {
     let page = parse_wrapper(stdout)?;
     let source = page.table.column("source")?;
     let target = page.table.column("target")?;
+    let kind = page.table.optional_column("kind");
     let confidence = page.table.optional_column("confidence");
     let reason = page.table.optional_column("reason");
     let mut edges = Vec::with_capacity(page.row_count);
@@ -103,7 +105,16 @@ pub fn parse_import_page(stdout: &str) -> Result<Vec<CodeEdge>> {
             // anomalies can be reported against the discovered file universe.
             from_file: row[source].replace('\\', "/"),
             to_file: row[target].replace('\\', "/"),
-            kind: "IMPORTS".into(),
+            kind: match kind {
+                Some(column) if present(&row[column]) => row[column].clone(),
+                Some(_) => {
+                    return Err(compatibility(format!(
+                        "row {} has an empty/null relation kind",
+                        index + 1
+                    )))
+                }
+                None => "IMPORTS".into(),
+            },
             confidence,
             reason: reason
                 .map(|column| row[column].clone())
@@ -113,11 +124,20 @@ pub fn parse_import_page(stdout: &str) -> Result<Vec<CodeEdge>> {
     Ok(edges)
 }
 
-pub fn import_query(offset: usize, page_size: usize) -> String {
+/// File-level relations of the given types. Symbol endpoints are lifted to
+/// their files and grouped, so every row is unique and SKIP/LIMIT paging is
+/// stable. Edge types are validated identifiers (`config::valid_edge_type`).
+pub fn edge_query(edge_types: &[String], offset: usize, page_size: usize) -> String {
+    let types = edge_types
+        .iter()
+        .map(|kind| format!("'{kind}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
     format!(
-        "MATCH (a:File)-[r:CodeRelation {{type: 'IMPORTS'}}]->(b:File) \
-RETURN a.filePath AS source, b.filePath AS target, r.confidence AS confidence, r.reason AS reason \
-ORDER BY source, target SKIP {offset} LIMIT {page_size}"
+        "MATCH (a)-[r:CodeRelation]->(b) WHERE r.type IN [{types}] \
+AND a.filePath IS NOT NULL AND b.filePath IS NOT NULL AND a.filePath <> b.filePath \
+RETURN a.filePath AS source, b.filePath AS target, r.type AS kind, r.reason AS reason, max(r.confidence) AS confidence \
+ORDER BY source, target, kind, reason SKIP {offset} LIMIT {page_size}"
     )
 }
 
@@ -143,6 +163,7 @@ impl GitNexusCliProvider {
             root: root.to_path_buf(),
             repository: config.repo.clone(),
             page_size: config.page_size,
+            edge_types: config.edge_types.clone(),
         })
     }
 
@@ -244,15 +265,15 @@ impl CodeGraphProvider for GitNexusCliProvider {
         })
     }
 
-    async fn import_edges(&self) -> Result<Vec<CodeEdge>> {
+    async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {
         let mut edges = Vec::new();
         let mut offset: usize = 0;
         loop {
             let stdout = self
-                .query(&import_query(offset, self.page_size))
+                .query(&edge_query(&self.edge_types, offset, self.page_size))
                 .await
-                .with_context(|| format!("failed to read IMPORTS page at offset {offset}"))?;
-            let mut page = parse_import_page(&stdout)?;
+                .with_context(|| format!("failed to read dependency page at offset {offset}"))?;
+            let mut page = parse_edge_page(&stdout)?;
             let row_count = page.len(); // Strict wrapper parsing checked equality.
             if row_count > self.page_size {
                 return Err(compatibility(
@@ -301,7 +322,7 @@ mod tests {
     use super::*;
     #[test]
     fn parses_wrapper_and_optional_values() {
-        let edges = parse_import_page(include_str!("../../tests/fixtures/imports.json")).unwrap();
+        let edges = parse_edge_page(include_str!("../../tests/fixtures/imports.json")).unwrap();
         assert_eq!(edges.len(), 2);
         assert_eq!(edges[0].confidence, Some(0.9));
         assert_eq!(edges[0].reason.as_deref(), Some("static|import"));
@@ -317,13 +338,13 @@ mod tests {
             "{\"markdown\":\"| source | target |\\n| --- | --- |\",\"row_count\":1}",
             "{\"markdown\":\"| source | target |\\n| --- | --- |\",\"row_count\":\"0\"}",
         ] {
-            assert!(parse_import_page(output).is_err(), "accepted {output:?}");
+            assert!(parse_edge_page(output).is_err(), "accepted {output:?}");
         }
     }
     #[test]
     fn columns_can_be_reordered_and_optional_columns_omitted() {
         let output = serde_json::json!({"markdown":"| target | source |\n| --- | --- |\n| b | a |", "row_count": 1});
-        let edges = parse_import_page(&output.to_string()).unwrap();
+        let edges = parse_edge_page(&output.to_string()).unwrap();
         assert_eq!(edges[0].from_file, "a");
         assert_eq!(edges[0].confidence, None);
     }
@@ -335,7 +356,7 @@ mod tests {
             "| source | target |\n| --- | --- |\n| a | null |",
         ] {
             let count = table.lines().count() - 2;
-            assert!(parse_import_page(
+            assert!(parse_edge_page(
                 &serde_json::json!({"markdown":table,"row_count":count}).to_string()
             )
             .is_err());
@@ -348,6 +369,7 @@ mod tests {
             root: ".".into(),
             repository: None,
             page_size: 2,
+            edge_types: vec!["IMPORTS".into()],
         };
         assert_eq!(provider.query_args("a query with spaces").len(), 2);
         provider.repository = Some("repo with spaces; not a shell".into());
@@ -355,6 +377,8 @@ mod tests {
             provider.query_args("query")[3],
             "repo with spaces; not a shell"
         );
-        assert!(import_query(1000, 1000).ends_with("SKIP 1000 LIMIT 1000"));
+        let query = edge_query(&["CALLS".into(), "IMPORTS".into()], 1000, 1000);
+        assert!(query.contains("r.type IN ['CALLS', 'IMPORTS']"));
+        assert!(query.ends_with("ORDER BY source, target, kind, reason SKIP 1000 LIMIT 1000"));
     }
 }

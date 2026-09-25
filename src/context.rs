@@ -80,8 +80,8 @@ pub fn markdown(context: &AgentContext) -> String {
     let mut out = format!("# Architecture context: {}\n\n", p.focus.id);
     let _ = writeln!(
         out,
-        "**{}** — {} files in this subtree.\n",
-        p.focus.title, p.focus.descendant_file_count
+        "**{}** — {} files in this subtree, {} with observed dependencies.\n",
+        p.focus.title, p.focus.descendant_file_count, p.focus.observed_file_count
     );
     let _ = writeln!(
         out,
@@ -100,9 +100,10 @@ pub fn markdown(context: &AgentContext) -> String {
             .unwrap_or(&node.id);
         let _ = writeln!(
             out,
-            "- `{identity}` — {} — {} file(s){}",
+            "- `{identity}` — {} — {} file(s){}{}",
             node.title,
             node.file_count,
+            projection::observed_suffix(node),
             if node.violation_rule_ids.is_empty() {
                 ""
             } else {

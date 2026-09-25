@@ -10,7 +10,7 @@ use async_trait::async_trait;
 pub trait CodeGraphProvider: Send + Sync {
     /// Verify availability, indexing, and the expected query schema.
     async fn info(&self) -> Result<ProviderInfo>;
-    async fn import_edges(&self) -> Result<Vec<CodeEdge>>;
+    async fn dependency_edges(&self) -> Result<Vec<CodeEdge>>;
     async fn reindex(&self) -> Result<()> {
         bail!("this code-graph provider does not support reindexing; index it externally before compiling")
     }
@@ -35,7 +35,7 @@ impl CodeGraphProvider for InMemoryProvider {
             repository: None,
         })
     }
-    async fn import_edges(&self) -> Result<Vec<CodeEdge>> {
+    async fn dependency_edges(&self) -> Result<Vec<CodeEdge>> {
         if let Some(message) = &self.failure {
             bail!("{message}");
         }

@@ -3,6 +3,9 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, collections::BTreeMap};
 
 pub const EVIDENCE_LIMIT: usize = 20;
+/// Rules over subtrees where fewer files than this have any observed
+/// dependency get a coverage warning.
+pub const COVERAGE_WARNING_RATIO: f64 = 0.5;
 pub const EVIDENCE_NOTICE: &str = "Only observed dependencies are checked. No observed edge is not proof that no runtime dependency exists.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -73,6 +76,9 @@ pub struct CompiledNode {
     pub children: Vec<String>,
     pub direct_files: Vec<String>,
     pub descendant_file_count: usize,
+    /// Descendant files with at least one resolved observed dependency, in
+    /// either direction. A low ratio means a clean check is weak evidence.
+    pub observed_file_count: usize,
     pub interfaces: Vec<Interface>,
 }
 
@@ -209,8 +215,14 @@ pub struct CompileStats {
     pub mapped_file_count: usize,
     pub unassigned_file_count: usize,
     pub ambiguous_file_count: usize,
-    pub observed_import_count: usize,
-    pub resolved_import_count: usize,
+    /// Rows returned by the provider before filtering and collapsing.
+    pub provider_row_count: usize,
+    /// Rows dropped by provider.edge_types, exclude_reasons or min_confidence.
+    pub filtered_edge_count: usize,
+    /// Distinct file-level observations (file pair + relation kind).
+    pub observed_edge_count: usize,
+    /// Observations whose both files map to architecture nodes.
+    pub resolved_edge_count: usize,
     pub aggregated_architecture_edge_count: usize,
     pub violation_count: usize,
 }

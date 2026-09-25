@@ -14,7 +14,9 @@ provider:
   kind: gitnexus
   command: gitnexus
   repo: null
-  page_size: 1000
+  page_size: 5000
+  edge_types: [IMPORTS]
+  exclude_reasons: [markdown-link]
 
 policies:
   unassigned_files: warn

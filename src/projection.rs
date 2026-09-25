@@ -24,8 +24,16 @@ pub struct NodeSummary {
     pub kind: NodeKind,
     pub description: Option<String>,
     pub descendant_file_count: usize,
+    pub observed_file_count: usize,
     pub interfaces: Vec<Interface>,
 }
+/// " (N observed)" for architecture entries; empty for files and synthetic entries.
+pub fn observed_suffix(node: &ProjectionNode) -> String {
+    node.observed_file_count
+        .map(|count| format!(" ({count} observed)"))
+        .unwrap_or_default()
+}
+
 impl From<&CompiledNode> for NodeSummary {
     fn from(node: &CompiledNode) -> Self {
         Self {
@@ -34,6 +42,7 @@ impl From<&CompiledNode> for NodeSummary {
             kind: node.kind,
             description: node.description.clone(),
             descendant_file_count: node.descendant_file_count,
+            observed_file_count: node.observed_file_count,
             interfaces: node.interfaces.clone(),
         }
     }
@@ -49,6 +58,8 @@ pub struct ProjectionNode {
     pub node_kind: Option<NodeKind>,
     pub file_path: Option<String>,
     pub file_count: usize,
+    /// Architecture entries only: files with any observed dependency.
+    pub observed_file_count: Option<usize>,
     pub description: Option<String>,
     pub interfaces: Vec<Interface>,
     pub outside_focus: bool,
@@ -82,6 +93,7 @@ fn architecture_entry(node: &CompiledNode, outside: bool) -> ProjectionNode {
         node_kind: Some(node.kind),
         file_path: None,
         file_count: node.descendant_file_count,
+        observed_file_count: Some(node.observed_file_count),
         description: node.description.clone(),
         interfaces: node.interfaces.clone(),
         outside_focus: outside,
@@ -97,6 +109,7 @@ fn file_entry(path: &str, node: &CompiledNode) -> ProjectionNode {
         node_kind: None,
         file_path: Some(path.into()),
         file_count: 1,
+        observed_file_count: None,
         description: None,
         interfaces: Vec::new(),
         outside_focus: false,
@@ -112,6 +125,7 @@ fn direct_entry(focus: &CompiledNode) -> ProjectionNode {
         node_kind: Some(focus.kind),
         file_path: None,
         file_count: focus.direct_files.len(),
+        observed_file_count: None,
         description: Some(
             "Files mapped directly to this focus, rather than an authored child.".into(),
         ),
@@ -124,6 +138,7 @@ fn boundary_entry(focus: &CompiledNode) -> ProjectionNode {
     ProjectionNode { id: format!("boundary:{}", focus.id), title: format!("{} (boundary)", focus.title), entry_kind: EntryKind::Boundary,
         architecture_id: Some(focus.id.clone()), node_kind: Some(focus.kind), file_path: None,
         file_count: focus.descendant_file_count,
+        observed_file_count: None,
         description: Some("An authored manual edge names the focus itself; it cannot be attributed to a particular child or file.".into()),
         interfaces: focus.interfaces.clone(), outside_focus: false, violation_rule_ids: Vec::new() }
 }

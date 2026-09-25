@@ -166,10 +166,20 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     }))?
                 );
             } else {
-                println!("Architecture compiled\n  architecture nodes:  {}\n  mapped files:        {}\n  unassigned files:    {}\n  ambiguous files:     {}\n  observed imports:    {}\n  resolved imports:    {}\n  architecture edges:  {}\n  violations:          {}\n\nIR: {}",
-                    ir.stats.architecture_node_count, ir.stats.mapped_file_count, ir.stats.unassigned_file_count,
-                    ir.stats.ambiguous_file_count, ir.stats.observed_import_count, ir.stats.resolved_import_count,
-                    ir.stats.aggregated_architecture_edge_count, ir.stats.violation_count, ir_path.display());
+                println!(
+                    "Architecture compiled\n  architecture nodes:  {}\n  mapped files:        {}\n  unassigned files:    {}\n  ambiguous files:     {}\n  provider rows:       {}\n  filtered out:        {}\n  observed edges:      {}\n  resolved edges:      {}\n  architecture edges:  {}\n  violations:          {}\n\nIR: {}",
+                    ir.stats.architecture_node_count,
+                    ir.stats.mapped_file_count,
+                    ir.stats.unassigned_file_count,
+                    ir.stats.ambiguous_file_count,
+                    ir.stats.provider_row_count,
+                    ir.stats.filtered_edge_count,
+                    ir.stats.observed_edge_count,
+                    ir.stats.resolved_edge_count,
+                    ir.stats.aggregated_architecture_edge_count,
+                    ir.stats.violation_count,
+                    ir_path.display()
+                );
                 println!("\n{}", ir.evidence_notice);
             }
             Ok(0)
@@ -260,7 +270,9 @@ provider:
   kind: gitnexus
   command: gitnexus
   repo: null
-  page_size: 1000
+  page_size: 5000
+  edge_types: [IMPORTS]
+  exclude_reasons: [markdown-link]
 policies:
   unassigned_files: warn
   ambiguous_mapping: error

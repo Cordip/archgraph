@@ -150,7 +150,7 @@ fn provider_output_larger_than_a_pipe_buffer_is_not_truncated() {
         String::from_utf8_lossy(&output.stderr)
     );
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["stats"]["observed_import_count"], 1);
+    assert_eq!(value["stats"]["observed_edge_count"], 1);
 }
 
 #[test]
@@ -164,7 +164,7 @@ fn pagination_uses_argv_cwd_and_a_final_empty_page() {
         String::from_utf8_lossy(&output.stderr)
     );
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["stats"]["observed_import_count"], 2);
+    assert_eq!(value["stats"]["observed_edge_count"], 2);
     let logs = fixture.logs();
     let queries: Vec<_> = logs
         .iter()

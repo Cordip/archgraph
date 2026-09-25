@@ -10,9 +10,10 @@ pub fn render(projection: &Projection) -> String {
     for node in &projection.nodes {
         let _ = writeln!(
             out,
-            "  {} — {} file(s){}{}",
+            "  {} — {} file(s){}{}{}",
             node.title,
             node.file_count,
+            crate::projection::observed_suffix(node),
             if node.outside_focus {
                 " [outside focus]"
             } else {

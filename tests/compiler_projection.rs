@@ -124,8 +124,8 @@ async fn unknown_and_unassigned_provider_paths_are_diagnostics() {
         ],
     )
     .await;
-    assert_eq!(ir.stats.observed_import_count, 2);
-    assert_eq!(ir.stats.resolved_import_count, 0);
+    assert_eq!(ir.stats.observed_edge_count, 2);
+    assert_eq!(ir.stats.resolved_edge_count, 0);
     assert_eq!(ir.diagnostics.provider_anomalies.len(), 2);
     assert!(!ir.diagnostics.warnings.is_empty());
 }

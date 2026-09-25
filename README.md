@@ -43,11 +43,13 @@ Open `http://127.0.0.1:7331`. Use a validated, pinned GitNexus version in CI:
 upstream output changes must pass the strict compatibility adapter before they
 can be used to report a clean architecture.
 
-**Validation of this source delivery:** the implementation and Rust tests were
-written without a Rust toolchain. They have not been compiled or executed here.
-See [IMPLEMENTATION.md](IMPLEMENTATION.md) for the validation record and first
-Rust validation commands. Do not treat the included tests as evidence of a
-successful build until they have actually run.
+**Validation status:** the MVP was first written without a Rust toolchain. It
+has since been built with Rust 1.98, its test suite run, and it has been
+exercised with GitNexus 1.6.12 against [zammad](https://github.com/zammad/zammad).
+That run exposed and fixed a truncation bug in the GitNexus adapter and led to
+configurable edge types, reason/confidence filters and coverage warnings. See
+[examples/zammad/README.md](examples/zammad/README.md) and
+[IMPLEMENTATION.md](IMPLEMENTATION.md).
 
 ## Architecture source
 
@@ -65,7 +67,10 @@ provider:
   kind: gitnexus
   command: gitnexus
   repo: null
-  page_size: 1000
+  page_size: 5000
+  edge_types: [IMPORTS]            # add CALLS, EXTENDS, IMPLEMENTS for Ruby/Rails-style code
+  exclude_reasons: [markdown-link] # documentation links are reported as IMPORTS
+  min_confidence: null             # e.g. 0.6 drops GitNexus name-guessing
 policies:
   unassigned_files: warn
   ambiguous_mapping: error
@@ -232,16 +237,52 @@ when null, the flag is omitted. Reindexing is precisely:
 ```
 
 The adapter captures optional `--version` metadata, then probes
-`MATCH (f:File) RETURN f.filePath AS path LIMIT 1`. It fetches only the needed
-`File --CodeRelation {type: 'IMPORTS'}--> File` edges, sorted by source and target,
-using `SKIP`/`LIMIT`. It does not access LadybugDB, fetch `/api/graph`, invoke a
-shell, or load GitNexus's complete symbol graph.
+`MATCH (f:File) RETURN f.filePath AS path LIMIT 1`. It fetches only the
+`CodeRelation` types listed in `provider.edge_types` (default `[IMPORTS]`).
+Symbol-level relations such as `CALLS` are lifted to the files containing
+their endpoints and grouped per file pair, kind and reason, so every row is
+unique and `SKIP`/`LIMIT` paging is stable. Query output is captured in a
+temporary file: GitNexus exits before draining a pipe, which truncates results
+at 64 KiB. It does not access LadybugDB, fetch `/api/graph`, invoke a shell, or
+load GitNexus's complete symbol graph.
+
+### Choosing what to observe
+
+`IMPORTS` alone is only meaningful where dependencies are explicit imports.
+Validation against [zammad](https://github.com/zammad/zammad) (see
+[examples/zammad](examples/zammad/)) showed why the other options exist:
+
+- Rails autoloads constants, so `app/models/ticket.rb` has no `IMPORTS` at all.
+  With only `IMPORTS`, a rule set over the Rails backend passed with zero
+  violations while the layers were in fact cyclic. Add `CALLS`, `EXTENDS` and
+  `IMPLEMENTS`.
+- GitNexus labels guessed relations with a `reason`. `global-name-fallback`
+  (confidence 0.5) and `property-dispatch` (0.7, which links `el.focus()` to
+  any function named `focus`) produced every frontend violation in zammad, all
+  false. Drop them with `min_confidence: 0.6` and/or `exclude_reasons`. A
+  trailing `*` in `exclude_reasons` matches a prefix.
+- A rule whose `edge_types` names a relation not in `provider.edge_types` is a
+  configuration error, since it could never fail.
+
+Rows are collapsed to one observation per file pair and kind (maximum
+confidence, all surviving reasons). `stats` report provider rows, filtered
+rows, observations and resolved observations.
+
+### Observation coverage
+
+Every node records `observed_file_count`: descendant files with at least one
+resolved dependency. `show`, `context` and the UI display it. When fewer than
+half the files under a rule's node are observed, compilation warns that a
+passing check there is weak evidence. In zammad, 99% of the CoffeeScript UI
+(a language GitNexus does not parse) and 96% of the Ruby GraphQL layer
+(constant references GitNexus could not resolve) had no observed dependency.
 
 The supported Cypher stdout contract is one JSON object containing a `markdown`
 string and nonnegative integer `row_count`. The Markdown must have a header and
-separator row, including on empty result pages. Import pages require `source`
-and `target`; `confidence` and `reason` are optional. Columns are found by name,
-escaped pipes are supported, null/empty confidence means absent, and malformed
+separator row, including on empty result pages. Dependency pages require `source`
+and `target`; `kind`, `confidence` and `reason` are optional. Columns are found by name,
+escaped pipes are supported, null/empty confidence means absent, a missing
+`kind` column means `IMPORTS`, and malformed
 rows, invalid numbers, missing columns, or mismatched row counts fail closed.
 Pages continue until `row_count < page_size`. Query timeout is five minutes;
 indexing itself has no imposed timeout. Keep the provider index quiescent while

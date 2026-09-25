@@ -69,7 +69,8 @@ function addEvidence(parent, evidence, total) {
 function showNode(node, element) {
   select(element);
   const panel = detailsTitle(node.title, node.file_path || node.architecture_id || node.id);
-  panel.append(html("p", `${node.file_count} mapped file(s)${node.outside_focus ? " · outside current focus" : ""}`));
+  const observed = node.observed_file_count === null || node.observed_file_count === undefined ? "" : ` (${node.observed_file_count} observed)`;
+  panel.append(html("p", `${node.file_count} mapped file(s)${observed}${node.outside_focus ? " · outside current focus" : ""}`));
   if (node.description) panel.append(html("p", node.description));
   if ((node.interfaces || []).length) { panel.append(html("h3", "Interfaces")); interfacesInto(panel, node.interfaces); }
   if (node.entry_kind === "architecture") {
@@ -203,7 +204,7 @@ function drawGraph(projection) {
     const title = `${node.violation_rule_ids.length ? "⚠ " : ""}${compact(node.title, 25)}`;
     group.append(svg("text", { x: 13, y: 27, class: "node-title" }, title));
     group.append(svg("text", { x: 13, y: 46, class: "node-subtitle" }, compact(node.file_path || node.architecture_id || node.entry_kind, 32)));
-    group.append(svg("text", { x: 13, y: 63, class: "node-subtitle" }, `${node.file_count} file(s)${node.outside_focus ? " · outside" : ""}${node.node_kind === "external" ? " · external" : ""}`));
+    group.append(svg("text", { x: 13, y: 63, class: "node-subtitle" }, `${node.file_count} file(s)${node.observed_file_count === null || node.observed_file_count === undefined ? "" : ` · ${node.observed_file_count} observed`}${node.outside_focus ? " · outside" : ""}${node.node_kind === "external" ? " · external" : ""}`));
     group.append(svg("title", {}, `${node.title}\n${node.architecture_id || node.file_path || ""}\n${node.description || ""}`));
     group.addEventListener("click", () => showNode(node, group));
     group.addEventListener("dblclick", () => { if (node.entry_kind === "architecture") loadFocus(node.architecture_id); });
@@ -229,7 +230,7 @@ async function loadFocus(id, pushHistory = true) {
     }
     $("focus-id").textContent = projection.focus.id;
     $("focus-title").textContent = projection.focus.title;
-    $("focus-count").textContent = `${projection.focus.descendant_file_count} mapped files`;
+    $("focus-count").textContent = `${projection.focus.descendant_file_count} mapped files, ${projection.focus.observed_file_count} with observed dependencies`;
     $("description").textContent = projection.focus.description || "No description authored for this node.";
     $("interfaces").replaceChildren();
     interfacesInto($("interfaces"), projection.focus.interfaces);

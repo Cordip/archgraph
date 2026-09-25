@@ -11,7 +11,10 @@ fn default_command() -> String {
     "gitnexus".into()
 }
 fn default_page_size() -> usize {
-    1000
+    5000
+}
+fn default_excluded_reasons() -> Vec<String> {
+    vec!["markdown-link".into()]
 }
 fn yes() -> bool {
     true
@@ -58,6 +61,41 @@ pub struct ProviderConfig {
     pub repo: Option<String>,
     #[serde(default = "default_page_size")]
     pub page_size: usize,
+    /// GitNexus relation types to observe. Symbol-level relations (CALLS,
+    /// EXTENDS, ...) are lifted to the files that contain their endpoints.
+    #[serde(default = "imports")]
+    pub edge_types: Vec<String>,
+    /// Provider `reason` values to drop, e.g. `markdown-link` (documentation
+    /// links reported as IMPORTS). A trailing `*` matches a prefix.
+    #[serde(default = "default_excluded_reasons")]
+    pub exclude_reasons: Vec<String>,
+    /// Drop observations below this provider confidence, e.g. 0.6 to skip
+    /// GitNexus name-guessing (`global-name-fallback`, 0.5).
+    pub min_confidence: Option<f64>,
+}
+
+impl ProviderConfig {
+    /// Whether an observation survives the configured reason/confidence filters.
+    pub fn accepts(&self, reason: Option<&str>, confidence: Option<f64>) -> bool {
+        let excluded = reason.is_some_and(|reason| {
+            self.exclude_reasons
+                .iter()
+                .any(|pattern| match pattern.strip_suffix('*') {
+                    Some(prefix) => reason.starts_with(prefix),
+                    None => reason == pattern,
+                })
+        });
+        let too_weak = self
+            .min_confidence
+            .is_some_and(|minimum| confidence.is_some_and(|value| value < minimum));
+        !excluded && !too_weak
+    }
+}
+
+/// Edge types are interpolated into provider queries, so they are restricted
+/// to GitNexus-style upper-case identifiers.
+pub fn valid_edge_type(kind: &str) -> bool {
+    !kind.is_empty() && kind.bytes().all(|c| c.is_ascii_uppercase() || c == b'_')
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -298,6 +336,29 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     if config.provider.page_size == 0 {
         bail!("provider.page_size must be greater than zero");
     }
+    if config.provider.edge_types.is_empty() {
+        bail!("provider.edge_types must list at least one relation type, e.g. [IMPORTS]");
+    }
+    for kind in &config.provider.edge_types {
+        if !valid_edge_type(kind) {
+            bail!("provider.edge_types entry `{kind}` must be an upper-case relation type such as IMPORTS or CALLS");
+        }
+    }
+    config.provider.edge_types.sort();
+    config.provider.edge_types.dedup();
+    if config
+        .provider
+        .exclude_reasons
+        .iter()
+        .any(|reason| reason.trim().is_empty())
+    {
+        bail!("provider.exclude_reasons entries must not be empty");
+    }
+    if let Some(minimum) = config.provider.min_confidence {
+        if !(0.0..=1.0).contains(&minimum) {
+            bail!("provider.min_confidence must be between 0 and 1");
+        }
+    }
     if config.project.source_roots.is_empty() {
         bail!("project.source_roots must contain at least one path; use ['.'] for repository root");
     }
@@ -376,6 +437,19 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
                 rule.id()
             );
         }
+        // A rule over a relation the provider never fetches could only ever
+        // pass, so it would report a clean architecture without checking it.
+        if let Some(kind) = rule
+            .edge_types()
+            .iter()
+            .find(|kind| !config.provider.edge_types.contains(kind))
+        {
+            bail!(
+                "rule `{}` checks edge type `{kind}`, which is not observed; add it to provider.edge_types (currently {:?})",
+                rule.id(),
+                config.provider.edge_types
+            );
+        }
         for reference in rule.references() {
             if !config.nodes.contains_key(reference) {
                 bail!("rule `{}` references missing node `{reference}`", rule.id());
@@ -436,5 +510,46 @@ mod tests {
         .is_err());
         assert!(parse(&format!("{BASE}  app.bad: {{maps: ['[']}}\n")).is_err());
         assert!(parse(&BASE.replace("kind: gitnexus", "kind: gitnexus, pag_size: 4")).is_err());
+        assert!(parse(&BASE.replace(
+            "kind: gitnexus",
+            "kind: gitnexus, edge_types: [\"x') RETURN 1 //\"]"
+        ))
+        .is_err());
+        assert!(
+            parse(&BASE.replace("kind: gitnexus", "kind: gitnexus, min_confidence: 2")).is_err()
+        );
+    }
+    #[test]
+    fn rules_over_unobserved_edge_types_are_rejected() {
+        let rule = "rules:\n- {id: calls, kind: no_cycles, within: app, edge_types: [CALLS]}\n";
+        let err = parse(&format!("{BASE}{rule}")).unwrap_err();
+        assert!(err.to_string().contains("not observed"), "{err}");
+        let observed = BASE.replace(
+            "kind: gitnexus",
+            "kind: gitnexus, edge_types: [IMPORTS, CALLS]",
+        );
+        assert!(parse(&format!("{observed}{rule}")).is_ok());
+    }
+    #[test]
+    fn reason_and_confidence_filters() {
+        let c = parse(&BASE.replace(
+            "kind: gitnexus",
+            "kind: gitnexus, exclude_reasons: [markdown-link, 'scope-resolution: unique-name*'], min_confidence: 0.6",
+        ))
+        .unwrap();
+        let p = &c.config.provider;
+        assert!(!p.accepts(Some("markdown-link"), Some(1.0)));
+        assert!(!p.accepts(
+            Some("scope-resolution: unique-name property (ranked): read"),
+            Some(1.0)
+        ));
+        assert!(p.accepts(Some("scope-resolution: inherits"), Some(0.85)));
+        assert!(!p.accepts(Some("global-name-fallback"), Some(0.5)));
+        assert!(p.accepts(None, None));
+        let defaults = parse(BASE).unwrap();
+        assert!(!defaults
+            .config
+            .provider
+            .accepts(Some("markdown-link"), Some(0.8)));
     }
 }
