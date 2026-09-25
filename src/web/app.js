@@ -1365,20 +1365,111 @@ function nodeLines(node) {
 }
 // Card text is cut by its drawn width, not by a character count: a wide name
 // such as `@fontsource/ibm-plex-sans` fits 26 characters but runs under the
-// glyph in the card's corner. Measuring needs the card in the document, so
-// drawNode leaves a character-count cut and a list of fits for afterwards.
-function fitText(element, full, width, fromStart) {
+// glyph in the card's corner. Widths come from a canvas measuring the text in
+// the element's own font: no layout, so a thousand cards fit quickly and
+// again whenever the zoom changes their size. The font is read once the
+// element is in the document, so drawNode leaves the fitting for afterwards.
+const measureFonts = new Map();
+let measureContext = null;
+function fontOf(element) {
+  const key = element.getAttribute("class") || "";
+  if (measureFonts.has(key)) return measureFonts.get(key);
+  const style = getComputedStyle(element);
+  const font = style.fontFamily ? { spec: `${style.fontStyle} ${style.fontWeight} 100px ${style.fontFamily}`, size: parseFloat(style.fontSize) || 14 } : null;
+  if (font) measureFonts.set(key, font);
+  return font;
+}
+// The drawn width of `text` in the element's font, at `size` px or the
+// element's own size; null when the font is unknown (not in the document).
+function textWidth(element, text, size) {
+  const font = fontOf(element);
+  if (!font) return null;
+  measureContext ||= document.createElement("canvas").getContext("2d");
+  if (measureContext.font !== font.spec) measureContext.font = font.spec;
+  // A small margin: canvas and SVG may round glyph advances differently.
+  return measureContext.measureText(text).width * (size || font.size) / 100 * 1.02;
+}
+// The longest cut of `full` (at its end, or its start for paths) that fits.
+function fitLine(element, full, width, fromStart, size) {
   const cut = (length) => (fromStart ? compactStart(full, length) : compact(full, length));
-  element.textContent = full;
-  if (!element.getComputedTextLength()) { element.textContent = cut(fromStart ? 30 : 26); return; }
-  if (element.getComputedTextLength() <= width) return;
+  const fits = (text) => textWidth(element, text, size) <= width;
+  if (textWidth(element, full, size) === null) return cut(fromStart ? 30 : 26);
+  if (fits(full)) return full;
   let low = 2, high = full.length - 1;
   while (low < high) {
     const middle = Math.ceil((low + high) / 2);
-    element.textContent = cut(middle);
-    if (element.getComputedTextLength() <= width) low = middle; else high = middle - 1;
+    if (fits(cut(middle))) low = middle; else high = middle - 1;
   }
-  element.textContent = cut(low);
+  return cut(low);
+}
+function fitText(element, full, width, fromStart) {
+  element.textContent = fitLine(element, full, width, fromStart);
+}
+// A title on up to two lines. It breaks after a separator (or before a
+// capital): where both lines fit, at the most even such break; otherwise
+// at the last one that fits, and the second line is cut to fit.
+function twoLines(element, full, width, size) {
+  const fits = (text) => { const measured = textWidth(element, text, size); return measured === null || measured <= width; };
+  if (fits(full)) return [full];
+  const breaks = [];
+  for (let at = 1; at < full.length; at++) {
+    if (/[_./\-\s]/.test(full[at - 1]) || (/[a-z0-9]/.test(full[at - 1]) && /[A-Z]/.test(full[at]))) breaks.push(at);
+  }
+  const both = breaks.filter((at) => fits(full.slice(0, at)) && fits(full.slice(at)));
+  if (both.length) {
+    const at = both.reduce((best, at) => (Math.min(at, full.length - at) > Math.min(best, full.length - best) ? at : best));
+    return [full.slice(0, at), full.slice(at)];
+  }
+  let end = 1;
+  while (end < full.length && fits(full.slice(0, end + 1))) end++;
+  const at = breaks.filter((at) => at <= end && at > end * 0.55).pop() || end;
+  return [full.slice(0, at), fitLine(element, full.slice(at), width, false, size)];
+}
+
+// ---------------------------------------------------------------- text size
+// Card titles and wire labels keep a readable size on screen. Below 100%
+// they grow as the view zooms out, in steps (each step refits the titles),
+// up to a size set by the card: 22 px on a full card; below COMPACT_ZOOM a
+// card shows only its title, on up to two lines of up to 32 px. Past those
+// caps the text shrinks with the card. Wire labels grow likewise and hide
+// in compact cards' zoom range except on the highlighted wires; trunk tags
+// stay down to TAG_ZOOM.
+const TEXT = { title: 17, label: 14, minTitle: 12, minLabel: 11, maxTitle: 22, maxCompactTitle: 32, maxLabel: 20 };
+const COMPACT_ZOOM = 0.6, TAG_ZOOM = 0.2;
+const textStep = (size, base) => base * Math.pow(1.1, Math.max(0, Math.ceil(Math.log(size / base) / Math.log(1.1) - 1e-9)));
+function textTier(k) {
+  const compact = k < COMPACT_ZOOM;
+  const want = TEXT.minTitle / k;
+  const title = compact ? Math.min(TEXT.maxCompactTitle, textStep(want, TEXT.title)) : Math.min(TEXT.maxTitle, textStep(Math.max(want, TEXT.title), TEXT.title));
+  const label = Math.min(TEXT.maxLabel, textStep(Math.max(TEXT.minLabel / k, TEXT.label), TEXT.label));
+  const tag = Math.min(2, textStep(Math.max(TEXT.minTitle / k, TEXT.label), TEXT.label) / TEXT.label);
+  const up = (value, digits) => Math.ceil(value * digits - 1e-6) / digits;
+  return { compact, title: up(title, 10), label: up(label / TEXT.label, 100), tag: up(tag, 100), key: `${compact}:${up(title, 10)}` };
+}
+function updateText() {
+  if (!scene || !scene.cards) return;
+  const tier = textTier(camera.k), graph = $("graph");
+  graph.style.setProperty("--label-scale", String(tier.label));
+  graph.style.setProperty("--tag-scale", String(tier.tag));
+  graph.classList.toggle("compact", tier.compact);
+  graph.classList.toggle("tagless", camera.k < TAG_ZOOM);
+  if (scene.textKey === tier.key) return;
+  scene.textKey = tier.key;
+  graph.style.setProperty("--title-size", `${tier.title}px`);
+  for (const card of scene.cards) fitTitle(card, tier);
+}
+function fitTitle(card, tier) {
+  const { element, full, box } = card;
+  if (!tier.compact) {
+    element.textContent = fitLine(element, full, card.width, false, tier.title);
+    element.setAttribute("y", card.y);
+    return;
+  }
+  const lines = twoLines(element, full, card.compactWidth, tier.title);
+  const lead = tier.title * 1.08;
+  const first = box.height / 2 - (lines.length - 1) * lead / 2 + tier.title * 0.35;
+  element.setAttribute("y", round(first));
+  element.replaceChildren(...lines.map((line, i) => svg("tspan", { x: 14, y: round(first + i * lead) }, line)));
 }
 // ---------------------------------------------------------------- wires
 // How the canvas draws wires: the routing mode (curves, a PCB board with
@@ -1488,7 +1579,7 @@ function drawScene() {
       if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
     }
   }
-  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [] });
+  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], cards: [], textKey: null });
   graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
@@ -1514,6 +1605,7 @@ function drawScene() {
     graph.append(element);
     for (const fit of element.fits) fitText(...fit);
   });
+  updateText();
   drawLegend();
 }
 // Marker ids: arrowheads (and vias on a board) take the wire's colour.
@@ -1632,7 +1724,10 @@ function drawNode(node, box, first) {
   if (mark) group.append(mark.element);
   // The corner glyph or group toggle starts 34px from the right edge.
   const corner = node.entry_kind === "package" || node.entry_kind === "group" ? 54 : mark ? 26 + mark.width : 26;
-  group.fits = [[titleText, title, box.width - corner, false], [subtitleText, subtitle, box.width - 26, node.entry_kind === "file" || node.entry_kind === "group"]];
+  // The title is fitted for the zoom (updateText); the other lines once.
+  scene.cards.push({ element: titleText, full: title, box, width: box.width - corner, y: facts === null ? 37 : 30,
+    compactWidth: box.width - 28 - (node.entry_kind === "group" ? 30 : 0) });
+  group.fits = [[subtitleText, subtitle, box.width - 26, node.entry_kind === "file" || node.entry_kind === "group"]];
   if (facts) {
     const usageClass = node.entry_kind === "file" && node.usage ? ` usage-${node.usage}` : "";
     const factsText = svg("text", { x: 14, y: 70, class: `node-facts${usageClass}` }, compact(facts, 30));
@@ -1771,6 +1866,7 @@ function applyCamera() {
   $("grid").setAttribute("patternTransform", transform);
   $("stage").classList.toggle("coarse", camera.k < 0.45);
   $("zoom-level").textContent = `${Math.round(camera.k * 100)}%`;
+  updateText();
   updateMinimapView();
 }
 function setCamera(target) {

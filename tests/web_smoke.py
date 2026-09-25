@@ -629,6 +629,34 @@ def main():
         assert page.locator("#graph .node .box").first.evaluate("e => e.tagName") == "path"
         checks.append("Hex mode: hexagonal cards, every segment at a multiple of 60°")
 
+        # Zoomed out, titles and wire labels keep a readable size on screen,
+        # still fitted inside their cards; far out a card shows only its
+        # title and wire labels wait for a hover.
+        page.locator("#mode-curves").click()
+        text_state = """() => ({
+            titles: [...document.querySelectorAll('#graph .node-title')].map((t) => {
+                const box = scene.positions.get(t.closest('.node').dataset.id), b = t.getBBox();
+                return [parseFloat(getComputedStyle(t).fontSize) * camera.k, b.x + b.width, box.width, t.textContent]; }),
+            label: parseFloat(getComputedStyle(document.querySelector('#graph .edge:not(.crowded) .edge-label')).fontSize) * camera.k,
+            labelShown: getComputedStyle(document.querySelector('#graph .edge:not(.crowded) .edge-label')).display !== 'none',
+            subtitle: getComputedStyle(document.querySelector('#graph .node-subtitle')).display,
+            compact: document.getElementById('graph').classList.contains('compact')})"""
+        for k in (0.8, 0.65, 0.5, 0.4):
+            page.evaluate(f"setCamera({{k: {k}, x: 0, y: 0}})")
+            state = page.evaluate(text_state)
+            assert all(size >= 11.99 for size, *_ in state["titles"]), (k, state["titles"])
+            assert all(right <= width - 8 for _, right, width, _ in state["titles"]), (k, state["titles"])
+            assert state["compact"] == (k < 0.6) and (state["subtitle"] == "none") == (k < 0.6), (k, state)
+            if k >= 0.6:
+                assert state["label"] >= 10.99 and state["labelShown"], (k, state)
+            else:
+                assert not state["labelShown"], (k, state)
+        page.locator("#graph .node[data-id='file:w/a.ts']").hover()
+        assert page.locator("#graph .edge.hover .edge-label").first.evaluate("e => getComputedStyle(e).display") != "none"
+        page.mouse.move(0, 0)
+        page.locator("#zoom-fit").click()
+        checks.append("zoomed out, titles and wire labels keep a minimum size on screen and stay inside their cards; far out cards show only their title and labels only on hover")
+
         # A violation stays red over any wire colour, in every mode.
         page.evaluate("loadFocus('app')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
