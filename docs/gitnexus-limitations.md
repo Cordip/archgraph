@@ -117,6 +117,12 @@ while compiling" instead of reporting the mix. Rerun when indexing has
 finished. Writing `.archgraph/` inside the repository is itself a file change
 such a service may react to.
 
+Every `analyze` rewrites `meta.json` and `lbug`, even one that reports "index
+current" and changes nothing. ArchGraph's provider cache is keyed on the same
+fingerprint, so a periodic reindex sweep invalidates it: results are reused
+only between sweeps. That is conservative; a content hash of the 500 MB
+database would cost more than the queries it saves.
+
 ## 8. Some directory names are never indexed
 
 GitNexus skips a hard-coded list of directory names at any depth
