@@ -197,7 +197,13 @@ impl GitNexusCliProvider {
             root: root.to_path_buf(),
             repository: config.repo.clone(),
             page_size: config.page_size,
-            edge_types: config.edge_types.clone(),
+            // Relation kinds ArchGraph extracts itself are not in the index.
+            edge_types: config
+                .edge_types
+                .iter()
+                .filter(|kind| !super::css::EDGE_TYPES.contains(&kind.as_str()))
+                .cloned()
+                .collect(),
         })
     }
 

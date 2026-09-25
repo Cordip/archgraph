@@ -484,6 +484,12 @@ async fn read_only_http_endpoints_share_projection_and_do_not_expose_source_or_c
 fn distributed_example_and_fixture_obey_schema() {
     assert!(config::parse(CONFIG).is_ok());
     assert!(config::parse(include_str!("../architecture.example.yaml")).is_ok());
+    for example in [
+        include_str!("../examples/zammad/architecture.yaml"),
+        include_str!("../examples/lct-task3/architecture.yaml"),
+    ] {
+        config::parse(example).unwrap();
+    }
 }
 
 #[tokio::test]

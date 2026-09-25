@@ -1,0 +1,112 @@
+# Desired architecture for lct-task3, a field-service planning app: a Python
+# backend (FastAPI, OR-Tools) and a React + TypeScript frontend with one
+# global stylesheet. Layers follow the repository's docs/architecture.md.
+#
+#   archgraph --root /path/to/lct-task3 \
+#       --config examples/lct-task3/architecture.yaml check
+version: 1
+project:
+  name: lct-task3
+  root: lct
+  source_roots: [backend, frontend, tools]
+  exclude:
+    - "**/node_modules/**"
+    - "frontend/dist/**"
+    - "**/*.{json,md,html,lock,tsbuildinfo}"
+provider:
+  kind: gitnexus
+  command: gitnexus
+  repo: null
+  page_size: 5000
+  edge_types: &observed [IMPORTS, CALLS, EXTENDS, IMPLEMENTS, USES_CLASS]
+  # Both are GitNexus guesses that are false here (see README.md).
+  exclude_reasons: [markdown-link, property-dispatch, callable-value-flow]
+  min_confidence: 0.6
+  # GitNexus parses no CSS; ArchGraph reads the stylesheet and class names.
+  css: true
+policies:
+  unassigned_files: warn
+  ambiguous_mapping: error
+nodes:
+  lct:
+    title: Field-service planner
+  lct.backend:
+    title: Python backend
+  lct.backend.ingest:
+    title: Data preparation
+    description: Offline. Turns the raw export into scenario files; not used while serving.
+    maps: ["backend/planner/ingest/**"]
+  lct.backend.core:
+    title: Planning core
+    description: Solver, validator (the only source of times and metrics), replanning, explanations.
+    maps: ["backend/planner/core/**"]
+  lct.backend.api:
+    title: Web service
+    description: FastAPI endpoints, background jobs, candidate previews, plan store.
+    maps: ["backend/planner/api/**"]
+  lct.backend.cli:
+    title: Command line
+    description: Wires data preparation, core and scenarios together outside the service.
+    maps: ["backend/planner/cli.py", "backend/planner/__*.py"]
+  lct.backend.paths:
+    title: Data locations
+    maps: ["backend/planner/paths.py"]
+  lct.frontend:
+    title: Frontend
+  lct.frontend.app:
+    title: App state and orchestration
+    maps: ["frontend/src/App.tsx", "frontend/src/main.tsx", "frontend/src/use*.ts"]
+  lct.frontend.client:
+    title: HTTP client
+    description: The only code that talks to the backend.
+    maps: ["frontend/src/api.ts"]
+  lct.frontend.types:
+    title: API types
+    description: Shapes of the backend's JSON.
+    maps: ["frontend/src/types.ts"]
+  lct.frontend.logic:
+    title: View logic
+    description: Pure helpers deriving what the components show.
+    maps: ["frontend/src/{derive,candidates,geo,sim,labels,colors}.ts"]
+  lct.frontend.components:
+    title: Components
+    maps: ["frontend/src/components/**"]
+  lct.frontend.styles:
+    title: Stylesheet
+    maps: ["frontend/src/**/*.css"]
+  lct.frontend.build:
+    title: Build configuration
+    maps: ["frontend/*.ts"]
+  lct.tests:
+    title: Backend tests
+    maps: ["backend/tests/**"]
+  lct.tools:
+    title: Demo tooling
+    maps: ["tools/**"]
+edges: []
+rules:
+  # Data preparation builds core models; the core computes plans and must
+  # not reach back into preparation or the service.
+  - id: backend-layers
+    kind: layers
+    layers:
+      - [lct.backend.cli, lct.backend.api]
+      - lct.backend.ingest
+      - lct.backend.core
+      - lct.backend.paths
+    edge_types: *observed
+  - id: production-code-does-not-use-tests
+    kind: deny_dependency
+    from: lct.backend
+    to: lct.tests
+    edge_types: *observed
+  # State and orchestration on top, components below, then pure helpers and
+  # the client, then the shared types and the stylesheet.
+  - id: frontend-layers
+    kind: layers
+    layers:
+      - lct.frontend.app
+      - lct.frontend.components
+      - [lct.frontend.logic, lct.frontend.client]
+      - [lct.frontend.types, lct.frontend.styles]
+    edge_types: *observed

@@ -25,6 +25,7 @@ has the reasons for each change. Agent workflow rules and known gotchas are in
 | `archgraph check [NODE]` | Fresh compilation, optional subtree filtering, text or `--json`; exit 0 for no matching violations, 1 for failure (including coverage below `policies.min_observed_ratio` under `low_coverage: error`), 2 for matching violations. With a baseline file only observations missing from it count; `--baseline`, `--no-baseline`, `--reindex[=full]`. CLI usage errors also exit 1, not 2. |
 | `archgraph baseline` | Accepts all current violations into `<config stem>.baseline.json`, at file-level observation granularity. |
 | `archgraph show [NODE]` | Shared semantic focus projection; `--format text`, `json`, or `mermaid`. Defaults to the configured project root. |
+| `archgraph styles [NODE]` | With `provider.css: true`: undefined, unused, possibly dynamic and shared CSS classes and unresolved class expressions, whole or for a subtree, text or `--json`. |
 | `archgraph context NODE` | Agent-oriented Markdown or `--json`; configurable `--evidence-limit`; interfaces, counts, coverage, dependency direction, rules, violations with suggested cuts, concrete evidence, and agent contract. |
 | `archgraph serve` | Read-only UI with embedded HTML/CSS/JavaScript that recompiles when the index fingerprint or configuration changes (`--refresh-seconds`, 0 for a fixed snapshot), `--reindex[=full]`, `--host`, `--port`; loopback by default. |
 
@@ -40,12 +41,13 @@ head`) exits quietly with status 141.
 
 | Area | Files | Implemented acceptance criteria |
 | --- | --- | --- |
-| Crate/entry point | `Cargo.toml`, `src/lib.rs`, `src/main.rs`, `src/error.rs` | One Rust crate; explicit error boundary; no unsafe code; no database, LLM client, language parser, or frontend build. |
+| Crate/entry point | `Cargo.toml`, `src/lib.rs`, `src/main.rs`, `src/error.rs` | One Rust crate; explicit error boundary; no unsafe code; no database, LLM client or frontend build. The only parsers are lightningcss and tree-sitter, for the CSS provider. |
 | Schema/hierarchy | `src/config.rs` | Version 1 schema, project/provider/policies, arbitrary dotted nodes, node `priority` for cross-cutting mappings such as co-located tests, optional metadata/interfaces, manual typed edges, four rule variants with per-rule `edge_types`, provider `edge_types`/`exclude_reasons`/`min_confidence`, coverage policy, actionable reference/parent/glob validation. A rule observing relation kinds the provider does not query is rejected. |
 | Paths/discovery | `src/paths.rs`, `src/discovery.rs` | Repository location, source roots, exclusions, repository ignore semantics, UTF-8 forward-slash paths, Windows verbatim/UNC root handling, no Git internals traversal. |
 | Membership | `src/mapping.rs` | Compiled glob sets, highest priority then deepest match in an ancestor chain, unrelated-branch ambiguity, unassigned policy, deterministic diagnostics. |
 | Provider abstraction | `src/provider/mod.rs` | Object-safe async `CodeGraphProvider` and injectable in-memory test provider: info, dependency edges, indexed files, index fingerprint, query identity, incremental or full reindex. |
 | GitNexus boundary | `src/provider/gitnexus.rs`, `src/provider/markdown_table.rs` | Executable override, separate argv, repository cwd, optional repo argument, stdout captured in a file (GitNexus truncates piped stdout at 64 KiB), version/probe, paginated `CodeRelation` query over the configured relation kinds with reason and confidence, paginated indexed-file listing, a guard against providers that ignore `SKIP`, index fingerprint from `meta.json`/`lbug`, `--force --no-parse-cache` for full reindexing, strict JSON wrapper/table adapter, fail-closed errors. |
+| CSS provider | `src/provider/css/*` | Opt-in (`provider.css`). Stylesheet class definitions and `@import`s via lightningcss with error recovery reported as warnings; stylesheet imports and class names in TypeScript/JavaScript via tree-sitter (JSX attributes, object keys, `classList`, `className` assignments, markup strings, conditionals, helper calls, arrays, same-file constants, prefixes of template classes); package stylesheets from `node_modules`; `IMPORTS`/`USES_CLASS` edges with reason and confidence; the class report. |
 | Compiler/IR | `src/compiler.rs`, `src/model.rs` | Filtering by reason and confidence, membership and observed file graph resolution, out-of-scope edge counting, anomaly diagnostics, per-node mapped/observed/unindexed file counts, coverage issues, detection of an index rewritten mid-compile, observed/manual separation, aggregation, bounded deterministic evidence, rules, timestamp-free JSON, `.archgraph/architecture.ir.json`. |
 | Provider cache | `src/cache.rs` | Raw provider results in `.archgraph/cache/provider.json`, keyed on index fingerprint and query identity; configuration and discovery are never cached. |
 | Rules | `src/rules.rs` | `deny_dependency`, `allow_only`, immediate-child `no_cycles`, ordered `layers` with peer groups, iterative Kosaraju, self-edge omission, minimum-weight feedback arc set (exact up to 16 members, greedy above) giving the cheapest cut and the resulting layer order, SCC and per-architecture-edge concrete evidence, precise scoped violation ownership. |
@@ -53,7 +55,7 @@ head`) exits quietly with status 141.
 | Draft architecture | `src/suggest.rs` | `init --suggest`: nodes from code directories, generic `no_cycles` rules, non-code exclusions, Ruby relation kinds, coverage comments. |
 | Shared projection | `src/projection.rs` | Immediate children or leaf files, lossless edge projection, collapsed self-edge omission, aggregated duplicates, cross-boundary entries, dependency layers, breadcrumbs, violation and suggested-cut annotations. |
 | Agent/rendering | `src/context.rs`, `src/render/*` | Markdown/JSON context, text/JSON/Mermaid focus output, deterministic concrete examples, descriptions/interfaces, incoming/outgoing dependencies, affected rules, suggested cuts, post-edit verification contract (never regenerating the baseline unasked). |
-| CLI/init | `src/cli.rs` | All seven commands, fresh compilation, required exit statuses, baseline comparison, structured cycle output, summaries, reindex options, skill installation and preservation. |
+| CLI/init | `src/cli.rs` | All eight commands, fresh compilation, required exit statuses, baseline comparison, structured cycle output, summaries, reindex options, skill installation and preservation. |
 | HTTP/browser | `src/server.rs`, `src/web/*` | Read-only Axum 0.8 routes, loopback default, embedded assets, SVG directed graphs laid out by dependency layer, merged parallel edges with per-kind breakdown, suggested cuts drawn dashed, breadcrumbs, click/double-click navigation, search, focus deep links, details/evidence panels, explicit violation markers, safely created DOM text. |
 | Agent skill | `skills/archgraph/SKILL.md` | Context-first workflow, GitNexus symbol investigation, edit/reindex/check loop, baseline rules, no completion on exit 2, no architecture edits without explicit authorization. |
 | Documentation | `README.md`, `DESIGN.md`, `AGENTS.md`, `docs/gitnexus-limitations.md`, `examples/zammad/`, `architecture.example.yaml`, `LICENSE` | Quick start, full example, all commands, desired vs observed architecture, provider limitations with evidence, a real-repository example with findings, agent rules and gotchas, provider licensing boundary. |
@@ -67,9 +69,9 @@ no authentication.
 
 ## Tests
 
-There are **92 Rust test functions**: 54 unit tests, 20 CLI process tests, 16
-compiler/projection integration tests, and two opt-in contract tests against a
-real GitNexus (TypeScript and Ruby). All pass with `cargo test --all-targets`
+There are **102 Rust test functions**: 62 unit tests, 21 CLI process tests, 16
+compiler/projection integration tests, and three opt-in contract tests against a
+real GitNexus (TypeScript, Ruby and stylesheet imports). All pass with `cargo test --all-targets`
 (the contract tests are `#[ignore]`d and run explicitly). CI runs everything
 on Linux and, except the Unix-only CLI process tests, on Windows. Some functions check multiple configurations
 or CLI invocations.
@@ -82,7 +84,7 @@ ambiguous/unassigned policies, reason/confidence filtering and collapsing of
 observations, aggregation, sorted/capped evidence, all four rules, SCC
 behavior, cheapest-cut optimality against brute force, provider wrapper
 compatibility, escaped-pipe Markdown parsing, malformed rows, the provider
-cache, draft generation, CLI argument/exit semantics, skill preservation, and
+cache, draft generation, CSS selectors and class-name expressions, CLI argument/exit semantics, skill preservation, and
 Mermaid label escaping.
 
 `tests/compiler_projection.rs` adds in-memory provider compilation, provider
@@ -99,7 +101,8 @@ and a provider that ignores `SKIP`, output larger than a pipe buffer from a
 Node-like provider, a closed stdout, repository cwd, spaced
 executable/repository arguments, incremental and full reindexing without
 corrupting JSON stdout, baselines, the coverage policy, unindexed and
-out-of-scope files, the provider cache, `init --suggest`, and cycle output.
+out-of-scope files, the provider cache, `init --suggest`, cycle output, and
+CSS edges with the `styles` report.
 These tests use the explicitly test-only `tests/fixtures/fake_gitnexus.py`
 executable and require Python 3. Core Rust tests do not require GitNexus or
 Python. Production ArchGraph is Rust and embedded JavaScript, not Python.
@@ -107,7 +110,9 @@ Python. Production ArchGraph is Rust and embedded JavaScript, not Python.
 `tests/gitnexus_contract.rs` indexes a generated 500-feature TypeScript
 repository with the real GitNexus CLI under an isolated `HOME` and checks the
 assumptions the fake provider encodes: output size, relation kinds, Markdown
-link filtering, and a stable index fingerprint.
+link filtering, and a stable index fingerprint. The Ruby test checks that
+autoloaded dependencies arrive as `CALLS`, `EXTENDS` and `IMPLEMENTS`; the
+stylesheet test checks that GitNexus still drops `import './x.css'`.
 
 The separate optional `tests/web_smoke.py` harness exercises the embedded
 browser code in Chromium with mocked fetch and history interfaces, including
@@ -153,6 +158,10 @@ production dependency.
 10. **Baselines.** Legacy repositories start with violations. A baseline
     accepts the current file-level observations so `check` fails only on new
     ones; regenerating it is a deliberate act, never an agent's default.
+11. **CSS is parsed by ArchGraph.** The design leaves all parsing to
+    GitNexus, which has no CSS grammar. `provider.css` adds a small provider
+    for stylesheets and class names instead; it produces ordinary
+    `CodeEdge`s, so the compiler and rules are unchanged.
 
 No required command, rule, provider adapter, context surface, or UI feature was
 intentionally omitted.
@@ -163,6 +172,7 @@ intentionally omitted.
 | --- | --- |
 | Rust compilation, tests, rustfmt, Clippy | Rust 1.98 on Linux: all tests pass, rustfmt clean, no Clippy warnings. |
 | Windows | Rust 1.97 (MSVC) on Windows 11: unit, integration and both real-GitNexus contract tests pass (GitNexus 1.6.12 launched through `gitnexus.cmd`). The CLI process tests are Unix-only. |
+| Python/TypeScript/CSS target | GitNexus 1.6.12 against lct-task3 with the configuration in [examples/lct-task3](examples/lct-task3/): findings checked against the source. |
 | Real GitNexus | GitNexus 1.6.12 against zammad (about 14,000 files) with the configuration in [examples/zammad](examples/zammad/), plus the contract test above. Findings about zammad and about GitNexus are in [examples/zammad/README.md](examples/zammad/README.md) and [docs/gitnexus-limitations.md](docs/gitnexus-limitations.md). Three consecutive compiles produce byte-identical IR, cached or not. |
 | `node --check src/web/app.js` | Passes. |
 | Browser | `tests/web_smoke.py` passes in Playwright Chromium; `archgraph serve` on zammad renders with no console errors and was inspected by screenshot. |

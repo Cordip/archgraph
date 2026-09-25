@@ -281,6 +281,10 @@ pub struct CompileStats {
     pub out_of_scope_edge_count: usize,
     #[serde(default)]
     pub unindexed_file_count: usize,
+    /// Rows ArchGraph extracted from stylesheets and scripts (`provider.css`),
+    /// before filtering; not included in `provider_row_count`.
+    #[serde(default)]
+    pub stylesheet_row_count: usize,
     pub aggregated_architecture_edge_count: usize,
     pub violation_count: usize,
 }
@@ -299,6 +303,90 @@ pub struct ArchitectureIr {
     pub diagnostics: Diagnostics,
     pub stats: CompileStats,
     pub evidence_notice: String,
+    /// Present when `provider.css` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub css: Option<CssReport>,
+}
+
+/// Stylesheet facts ArchGraph reads itself, since GitNexus does not parse
+/// CSS: where each class is defined, where it is used, and which class
+/// expressions could not be resolved statically.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct CssReport {
+    pub stylesheets: Vec<Stylesheet>,
+    pub classes: Vec<CssClass>,
+    /// Class expressions with a runtime part, e.g. `` `em-${status}` ``.
+    pub dynamic_uses: Vec<DynamicClassUse>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Stylesheet {
+    /// Repository path, or the import specifier of a package stylesheet.
+    pub path: String,
+    /// Imported from a package (e.g. `leaflet/dist/leaflet.css`); its classes
+    /// count as defined, but it is not part of the architecture.
+    pub external: bool,
+    pub class_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CssClass {
+    pub name: String,
+    pub status: ClassStatus,
+    /// Definitions in repository stylesheets.
+    pub definitions: Vec<SourceLine>,
+    /// Also (or only) defined by a package stylesheet.
+    pub external: bool,
+    pub uses: Vec<ClassUse>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassStatus {
+    Used,
+    /// Used, but no stylesheet defines it: a typo or a leftover.
+    Undefined,
+    /// Defined, never used, and no dynamic expression could produce it.
+    Unused,
+    /// Defined and never used literally, but a dynamic expression with a
+    /// matching prefix may produce it.
+    PossiblyDynamic,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct SourceLine {
+    pub file: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ClassUse {
+    pub file: String,
+    pub line: usize,
+    pub certainty: ClassCertainty,
+}
+
+/// How a class name was found in a script, from most to least certain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClassCertainty {
+    /// A complete string in a `className`/`class` attribute or property.
+    Literal,
+    /// A string inside an expression: a branch of `?:`, an array element, a
+    /// static part of a template string, a local constant.
+    Expression,
+    /// A `class="..."` attribute inside an HTML string.
+    Markup,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct DynamicClassUse {
+    pub file: String,
+    pub line: usize,
+    pub expression: String,
+    /// Static text before the runtime part (`em-` in `em-${status}`);
+    /// `None` when nothing about the class name is known.
+    pub prefix: Option<String>,
 }
 
 #[cfg(test)]

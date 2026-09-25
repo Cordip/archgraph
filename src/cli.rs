@@ -116,6 +116,13 @@ pub enum Commands {
         #[arg(long, value_enum, default_value = "text")]
         format: ShowFormat,
     },
+    /// Compile fresh and report CSS classes (needs `provider.css: true`):
+    /// undefined, unused, possibly dynamic, unresolved and shared ones.
+    Styles {
+        node: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Compile fresh and emit agent-oriented architecture context.
     Context {
         node: String,
@@ -198,10 +205,18 @@ pub async fn run(cli: Cli) -> Result<u8> {
     }
     let validated = config::load(&config_path)?;
     let requested_node = match &cli.command {
-        Commands::Check { node, .. } | Commands::Show { node, .. } => node.as_deref(),
+        Commands::Check { node, .. }
+        | Commands::Show { node, .. }
+        | Commands::Styles { node, .. } => node.as_deref(),
         Commands::Context { node, .. } => Some(node.as_str()),
         _ => None,
     };
+    if matches!(cli.command, Commands::Styles { .. }) && !validated.config.provider.css {
+        bail!(
+            "`archgraph styles` needs `provider.css: true` in {}",
+            config_path.display()
+        );
+    }
     if let Some(id) = requested_node {
         if !validated.config.nodes.contains_key(id) {
             bail!("unknown architecture node `{id}`; inspect architecture.yaml or use UI search");
@@ -421,6 +436,32 @@ pub async fn run(cli: Cli) -> Result<u8> {
                 ShowFormat::Text => out!("{}", render::text::render(&view)),
                 ShowFormat::Json => outln!("{}", render::json::render(&view)?),
                 ShowFormat::Mermaid => out!("{}", render::mermaid::render(&view)),
+            }
+            Ok(0)
+        }
+        Commands::Styles { node, json } => {
+            let report = ir
+                .css
+                .as_ref()
+                .context("internal error: provider.css is on but the IR has no CSS report")?;
+            let selected = render::styles::select(&ir, report, node.as_deref());
+            if json {
+                let shared: Vec<serde_json::Value> = render::styles::shared(&ir, &selected)
+                    .into_iter()
+                    .map(|(class, nodes)| serde_json::json!({"class": class, "nodes": nodes}))
+                    .collect();
+                outln!(
+                    "{}",
+                    render::json::render(&serde_json::json!({
+                        "node": node, "stylesheets": selected.stylesheets, "classes": selected.classes,
+                        "dynamic_uses": selected.dynamic_uses, "shared": shared
+                    }))?
+                );
+            } else {
+                out!(
+                    "{}",
+                    render::styles::render(&ir, &selected, node.as_deref())
+                );
             }
             Ok(0)
         }

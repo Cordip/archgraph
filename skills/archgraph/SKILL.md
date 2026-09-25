@@ -20,6 +20,11 @@ Use GitNexus `context`, `impact`, or `query` for deeper symbol-level investigati
 ArchGraph deliberately does not parse source languages or provide an AST view.
 Inspect relevant source and preserve behavior while editing code.
 
+When `provider.css: true` is set, `archgraph styles <node>` lists CSS classes
+that are used but undefined, defined but unused, and shared between nodes.
+Class expressions it could not resolve may use any class: check them before
+removing a class reported unused.
+
 After source edits, from the repository root:
 
 ```bash

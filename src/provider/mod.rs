@@ -1,4 +1,5 @@
 //! External indexing/querying is isolated here; core graph code is provider-neutral.
+pub mod css;
 pub mod gitnexus;
 pub mod markdown_table;
 

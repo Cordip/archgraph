@@ -244,3 +244,63 @@ fn ruby_dependencies_arrive_as_calls_extends_and_implements() {
         assert!(edges.contains(&expected), "{expected:?} missing: {edges:?}");
     }
 }
+
+const CSS_YAML: &str = r#"version: 1
+project: {name: styled, root: app, source_roots: [src]}
+provider: {kind: gitnexus, edge_types: [IMPORTS, USES_CLASS], css: true}
+nodes:
+  app: {}
+  app.ui: {maps: ["src/*.tsx"]}
+  app.styles: {maps: ["src/*.css"]}
+"#;
+
+/// GitNexus parses no CSS and drops `import './x.css'`, which is why
+/// `provider.css` exists. If this starts failing, GitNexus learned CSS and
+/// the two sources would report the same import twice.
+#[test]
+#[ignore = "needs a real GitNexus installation; run with --ignored"]
+fn gitnexus_drops_stylesheet_imports_and_archgraph_supplies_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let repo = temp.path().join("repo");
+    write(
+        &repo,
+        "src/app.tsx",
+        "import './styles.css'\nimport { label } from './label'\n\nexport const App = () => <p className=\"panel\">{label}</p>\n",
+    );
+    write(&repo, "src/label.tsx", "export const label = 'hello'\n");
+    write(&repo, "src/styles.css", ".panel { margin: 0 }\n");
+    write(&repo, "architecture.yaml", CSS_YAML);
+    analyze(&repo, &home);
+
+    let compile = archgraph(&repo, &home, &["compile"]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let ir = ir(&repo);
+    let mut edges: Vec<(&str, &str, &str)> = ir["resolved_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|edge| {
+            (
+                edge["evidence"]["to_file"].as_str().unwrap(),
+                edge["kind"].as_str().unwrap(),
+                edge["evidence"]["reason"].as_str().unwrap_or(""),
+            )
+        })
+        .collect();
+    edges.sort();
+    assert_eq!(
+        edges,
+        [
+            ("src/label.tsx", "IMPORTS", "typescript-scope: import"),
+            ("src/styles.css", "IMPORTS", "css-import"),
+            ("src/styles.css", "USES_CLASS", "classname-literal"),
+        ],
+        "{:#}",
+        ir["resolved_edges"]
+    );
+}

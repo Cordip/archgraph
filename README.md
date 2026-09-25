@@ -14,7 +14,9 @@ There are no fixed C4 levels. IDs such as `app.billing.domain.invoicing` encode
 an arbitrary-depth hierarchy. Logical nodes may collect files from unrelated
 filesystem directories. GitNexus—not ArchGraph—owns language parsing and symbol
 resolution, whether the source is Python, Rust, C/C++, or another supported
-language.
+language. The one exception is CSS, which GitNexus does not parse: with
+`provider.css: true` ArchGraph reads stylesheets and class names itself (see
+[Stylesheets and CSS classes](#stylesheets-and-css-classes)).
 
 ## Prerequisites and quick start
 
@@ -251,6 +253,9 @@ archgraph show app.billing --format mermaid
 archgraph context app.billing
 archgraph context app.billing --json --evidence-limit 50
 
+archgraph styles
+archgraph styles app.web --json
+
 archgraph serve
 archgraph serve --reindex --port 7331 --host 127.0.0.1
 ```
@@ -395,6 +400,54 @@ provider ignores `SKIP`. They are never silently guessed into
 logical nodes. Source paths are metadata only and are not dereferenced by the
 provider adapter.
 
+## Stylesheets and CSS classes
+
+GitNexus has no CSS grammar and drops `import './styles.css'` (see
+[docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)), so a frontend's
+dependency on its styles is invisible to it. With `provider.css: true`,
+ArchGraph reads every discovered `.css` file (with
+[lightningcss](https://github.com/parcel-bundler/lightningcss)) and every
+TypeScript/JavaScript file (with tree-sitter) and adds its own observations
+next to the GitNexus ones:
+
+| Kind | Reason | Confidence | From |
+| --- | --- | --- | --- |
+| `IMPORTS` | `css-import` | 1.0 | `import './x.css'` in a script |
+| `IMPORTS` | `css-at-import` | 1.0 | `@import './x.css'` in a stylesheet |
+| `USES_CLASS` | `classname-literal` | 1.0 | `className="panel"`, `class: 'panel'`, `classList.add('panel')`, same-file constants |
+| `USES_CLASS` | `classname-expression` | 0.8 | a class from a branch of `a ? 'x' : 'y'`, `ok && 'x'`, `clsx(...)`, arrays joined with `' '` |
+| `USES_CLASS` | `classname-markup` | 0.8 | `class="..."` inside an HTML string or template |
+| `USES_CLASS` | `classname-ambiguous` | 0.5 | the class is defined by more than one repository stylesheet |
+
+`USES_CLASS` goes from the script to every repository stylesheet that defines
+the class, because stylesheets are global. List it in `provider.edge_types`
+to fetch it; GitNexus is never asked for it, and listing it without
+`css: true` is a configuration error. `min_confidence` and `exclude_reasons`
+apply as to GitNexus relations, so `min_confidence: 0.6` drops ambiguous
+classes. Package stylesheets (`import 'leaflet/dist/leaflet.css'`) are read
+from the nearest `node_modules` for their class names only; they are not
+architecture nodes.
+
+`archgraph styles [NODE] [--json]` reports the classes, whole or for the
+classes a node's subtree defines or uses:
+
+- **undefined**: used, but no stylesheet defines them;
+- **unused**: defined in the repository, never used;
+- **possibly used dynamically**: never used literally, but a class built at
+  runtime has their prefix, e.g. `` `em-${status}` `` for `.em-idle`;
+- **unresolved class expressions**: classes computed from props or data
+  (`className={item.status}`); any class may come from them, so an unused
+  report is a lead, not proof;
+- **shared**: classes used from more than one architecture node.
+
+A class a package stylesheet defines counts as used: the package applies it
+at runtime and the repository rule overrides it. Every compile warns with the
+counts. [examples/lct-task3](examples/lct-task3/) shows the report on a real
+React frontend.
+
+Not covered: CSS Modules (`styles.panel`), Sass/Less, Vue/Svelte templates,
+`url()` and custom-property references, and class names in `.html` files.
+
 ## Human focus UI
 
 The embedded HTML/CSS/plain JavaScript UI includes breadcrumbs, purpose and
@@ -521,14 +574,16 @@ including live reloads. They use an in-memory provider and temporary
 repositories. The CLI process tests run the real binary against
 `tests/fixtures/fake_gitnexus.py` and need `python3`; they are Unix-only. The
 contract tests index generated TypeScript and Ruby repositories with the real
-GitNexus CLI and check the assumptions the fake encodes. The browser smoke test
+GitNexus CLI and check the assumptions the fake encodes, including that
+GitNexus still ignores stylesheet imports. The browser smoke test
 loads the embedded UI with mocked fetch and history. There is no production
 Python component.
 
 ## Limitations and licensing
 
 ArchGraph covers one repository per configuration and observes the GitNexus
-relation kinds listed in `provider.edge_types`. Symbol/function/AST exploration
+relation kinds listed in `provider.edge_types`, plus stylesheets and CSS
+classes with `provider.css: true`. Symbol/function/AST exploration
 is delegated to GitNexus. Interfaces and manual relationships are descriptive,
 the UI is read-only, and there is no application database or architecture
 editor. Very large file-only focuses may need further authored child nodes for

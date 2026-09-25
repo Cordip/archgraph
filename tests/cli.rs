@@ -565,6 +565,118 @@ fn check_prints_a_cycle_as_members_cut_and_layers() {
     assert!(!text.contains("SCC"), "{text}");
 }
 
+const CSS_YAML: &str = r#"version: 1
+project: {name: css-fixture, root: app, source_roots: [src]}
+provider: {kind: gitnexus, command: intentionally-missing-fallback, edge_types: [IMPORTS, USES_CLASS], css: true}
+policies: {unassigned_files: ignore}
+nodes:
+  app: {}
+  app.ui: {maps: ["src/app.tsx"]}
+  app.menu: {maps: ["src/menu.tsx"]}
+  app.styles: {maps: ["src/*.css"]}
+rules:
+  - {id: menu-unstyled, kind: deny_dependency, from: app.menu, to: app.styles, edge_types: [USES_CLASS]}
+"#;
+
+#[test]
+fn css_classes_become_edges_and_the_styles_report() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    std::fs::write(root.join("architecture.yaml"), CSS_YAML).unwrap();
+    std::fs::write(
+        root.join("src/app.tsx"),
+        "import './styles.css'\nexport const App = () => <div className=\"panel missing\" />\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/menu.tsx"),
+        "export const Menu = () => <nav className={`panel tone-${level}`} />\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/styles.css"),
+        ".panel { margin: 0 }\n.unused { margin: 0 }\n.tone-high { color: red }\n",
+    )
+    .unwrap();
+
+    // The fake provider fails any query other than IMPORTS, so USES_CLASS
+    // must never reach GitNexus.
+    let check = fixture.run(&["check"], "clean");
+    let text = String::from_utf8_lossy(&check.stdout);
+    assert_eq!(check.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("src/menu.tsx -> src/styles.css  (classname-expression, confidence 0.8)"),
+        "{text}"
+    );
+    let ir: Value = serde_json::from_slice(
+        &std::fs::read(root.join(".archgraph/architecture.ir.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(ir["stats"]["stylesheet_row_count"], 3);
+    let evidence = ir["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|edge| edge["from"] == "app.ui" && edge["kind"] == "IMPORTS")
+        .unwrap();
+    assert_eq!(evidence["evidence"][0]["reason"], "css-import");
+
+    let styles = fixture.run(&["styles"], "clean");
+    let report = String::from_utf8_lossy(&styles.stdout);
+    assert_eq!(styles.status.code(), Some(0), "{report}");
+    for expected in [
+        "Classes: 1 used, 1 undefined, 1 unused, 1 possibly used dynamically",
+        "  .missing  src/app.tsx:2",
+        "  .unused  src/styles.css:2",
+        "  .tone-high  src/styles.css:3 (`tone-…` at src/menu.tsx:1)",
+        "  .panel  app.menu, app.ui",
+    ] {
+        assert!(
+            report.contains(expected),
+            "missing {expected:?} in\n{report}"
+        );
+    }
+    let scoped: Value = serde_json::from_slice(
+        &fixture
+            .run(&["styles", "app.menu", "--json"], "clean")
+            .stdout,
+    )
+    .unwrap();
+    let names: Vec<&str> = scoped["classes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|class| class["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["panel"]);
+    assert_eq!(scoped["dynamic_uses"][0]["prefix"], "tone-");
+    assert_eq!(
+        scoped["shared"],
+        serde_json::json!([{"class": "panel", "nodes": ["app.menu", "app.ui"]}])
+    );
+
+    // Without `css: true`, USES_CLASS could never be observed.
+    std::fs::write(
+        root.join("architecture.yaml"),
+        CSS_YAML.replace(", css: true", ""),
+    )
+    .unwrap();
+    let invalid = fixture.run(&["check"], "clean");
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("only `provider.css: true` observes"));
+    std::fs::write(
+        root.join("architecture.yaml"),
+        CSS_YAML
+            .replace(", css: true", "")
+            .replace(", USES_CLASS]", "]")
+            .replace("edge_types: [USES_CLASS]", "edge_types: [IMPORTS]"),
+    )
+    .unwrap();
+    let styles = fixture.run(&["styles"], "clean");
+    assert_eq!(styles.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&styles.stderr).contains("needs `provider.css: true`"));
+}
+
 #[test]
 fn a_file_moved_since_the_baseline_keeps_its_accepted_observations() {
     let fixture = Fixture::new();

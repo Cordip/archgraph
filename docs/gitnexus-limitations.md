@@ -2,7 +2,8 @@
 
 ArchGraph sees only what GitNexus reports. This page lists known gaps,
 how to detect them and what to do about them. Every entry is backed by the
-zammad validation run ([examples/zammad](../examples/zammad/README.md)),
+zammad validation run ([examples/zammad](../examples/zammad/README.md)) or,
+for CSS, by lct-task3 ([examples/lct-task3](../examples/lct-task3/README.md)),
 GitNexus 1.6.12. Record new findings here; see [AGENTS.md](../AGENTS.md).
 
 Detect gaps with `observed_file_count` (shown by `show`, `context` and the UI)
@@ -158,6 +159,28 @@ and back with plain incremental `analyze` produced one again.
 ("provider returned an empty file path") with a warning pointing here, and
 the rest of the graph compiles. The file is not guessed from the node ID.
 Run `archgraph compile --reindex=full` to clear them.
+
+## 10. CSS is not parsed, and stylesheet imports are dropped
+
+**Symptom.** In lct-task3 (React + TypeScript, one global `styles.css`),
+`main.tsx` has `import './styles.css'`, but GitNexus reports no relation to
+the stylesheet at all. A frontend's dependency on its styles is invisible.
+
+**Cause.** GitNexus 1.6.12 has no CSS grammar: `SupportedLanguages` has no
+CSS entry, and `.css` appears only in the UI's syntax-highlighting map.
+Stylesheets still become `File` nodes, so they are not reported as
+unindexed. Import resolution only targets files that were parsed
+(`allFilePaths` in `dist/core/ingestion/scope-resolution/pipeline/run.js`),
+so the side-effect import of a stylesheet resolves to nothing and is
+dropped. Upstream issue #1198 ("Support CSS files") is open; 1.6.13-rc.34
+behaves the same. The contract test
+`gitnexus_drops_stylesheet_imports_and_archgraph_supplies_them` fails once
+this changes.
+
+**What ArchGraph does.** `provider.css: true` makes ArchGraph read
+stylesheets and class names itself and add `IMPORTS` and `USES_CLASS`
+edges (README, "Stylesheets and CSS classes"). It never asks GitNexus for
+`USES_CLASS`.
 
 ## ArchGraph-side limitations
 

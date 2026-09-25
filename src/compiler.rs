@@ -30,6 +30,31 @@ pub struct Compiled {
     pub cached: bool,
 }
 
+/// One summary line per kind of class problem, pointing to `archgraph styles`.
+fn css_warnings(report: &CssReport) -> Vec<String> {
+    let count = |status| {
+        report
+            .classes
+            .iter()
+            .filter(|class| class.status == status)
+            .count()
+    };
+    let unresolved = report
+        .dynamic_uses
+        .iter()
+        .filter(|dynamic| dynamic.prefix.is_none())
+        .count();
+    [
+        (count(ClassStatus::Undefined), "CSS class(es) are used but defined in no stylesheet"),
+        (count(ClassStatus::Unused), "CSS class(es) are defined but never used"),
+        (unresolved, "class expression(s) could not be resolved statically, so some classes reported unused may be used"),
+    ]
+    .into_iter()
+    .filter(|(count, _)| *count > 0)
+    .map(|(count, what)| format!("{count} {what}; see `archgraph styles`"))
+    .collect()
+}
+
 /// No process APIs live here. Even reindexing goes through the provider contract.
 pub async fn compile(
     root: &Path,
@@ -137,12 +162,28 @@ pub async fn compile_with(
     let (
         Snapshot {
             info: provider_info,
-            edges: provided,
+            edges: mut provided,
             indexed_files: indexed_paths,
         },
         cached,
     ) = observe(provider, options).await?;
     let provider_row_count = provided.len();
+    let css = if validated.config.provider.css {
+        let extraction = crate::provider::css::extract(&root, &discovered)
+            .context("cannot read stylesheets or class names (provider.css)")?;
+        diagnostics.warnings.extend(extraction.warnings);
+        Some((extraction.edges, extraction.report))
+    } else {
+        None
+    };
+    let stylesheet_row_count = css.as_ref().map_or(0, |(edges, _)| edges.len());
+    let css_report = css.map(|(edges, report)| {
+        provided.extend(edges);
+        report
+    });
+    if let Some(report) = &css_report {
+        diagnostics.warnings.extend(css_warnings(report));
+    }
     let (observed, filtered_edge_count) =
         select_observations(provided, &validated.config.provider)?;
     let observed_edge_count = observed.len();
@@ -371,6 +412,7 @@ pub async fn compile_with(
         resolved_edge_count: resolved.len(),
         out_of_scope_edge_count,
         unindexed_file_count: diagnostics.unindexed_files.len(),
+        stylesheet_row_count,
         aggregated_architecture_edge_count: edges.len(),
         violation_count: violations.len(),
     };
@@ -387,6 +429,7 @@ pub async fn compile_with(
         diagnostics,
         stats,
         evidence_notice: EVIDENCE_NOTICE.into(),
+        css: css_report,
     };
     Ok(Compiled { ir, cached })
 }

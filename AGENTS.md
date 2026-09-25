@@ -8,7 +8,10 @@ changing anything, and add to **Gotchas** whenever something surprises you.
 ArchGraph is a single Rust crate (`archgraph` binary). It compiles a desired
 architecture (`architecture.yaml`) against file-level dependencies observed by
 the external GitNexus CLI, checks rules and serves a read-only UI. Language
-parsing belongs to GitNexus; ArchGraph never parses source code. See
+parsing belongs to GitNexus. The one exception is CSS, which GitNexus cannot
+parse: with `provider.css`, `src/provider/css/` reads stylesheets
+(lightningcss) and class names in scripts (tree-sitter). Do not extend it to
+anything GitNexus parses. See
 [README.md](README.md) for behavior, [DESIGN.md](DESIGN.md) for the original
 design and [docs/](docs/) for provider limitations.
 
@@ -143,3 +146,12 @@ Add new entries at the end: what happened, why, and what to do.
     test source got `\r\n` and `CONFIG.replace("...\n...")` silently matched
     nothing: a local Windows run from a `git archive` copy passed, CI failed.
     `.gitattributes` now forces LF. Test Windows from a real checkout.
+19. **An "unused" CSS class may still be used.** A class computed from data
+    (`` `ev ${item.status}` `` in lct-task3) cannot be resolved statically:
+    `.failed` looked unused, but `status` can be `'failed'`. `archgraph
+    styles` lists such expressions as unresolved. Read them before calling a
+    class dead, and never delete CSS on the report alone.
+20. **`min_confidence` also filters ArchGraph's own CSS edges.** A class
+    defined in two stylesheets gives `classname-ambiguous` edges at 0.5, which
+    `min_confidence: 0.6` drops (they are counted in
+    `stats.filtered_edge_count`).

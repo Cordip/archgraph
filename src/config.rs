@@ -72,6 +72,11 @@ pub struct ProviderConfig {
     /// Drop observations below this provider confidence, e.g. 0.6 to skip
     /// GitNexus name-guessing (`global-name-fallback`, 0.5).
     pub min_confidence: Option<f64>,
+    /// Read stylesheets and the class names scripts use (GitNexus parses no
+    /// CSS): adds `IMPORTS` to and between stylesheets and `USES_CLASS`, and
+    /// the class report of `archgraph styles`.
+    #[serde(default)]
+    pub css: bool,
 }
 
 impl ProviderConfig {
@@ -411,6 +416,16 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     }
     config.provider.edge_types.sort();
     config.provider.edge_types.dedup();
+    if !config.provider.css {
+        if let Some(kind) = config
+            .provider
+            .edge_types
+            .iter()
+            .find(|kind| crate::provider::css::EDGE_TYPES.contains(&kind.as_str()))
+        {
+            bail!("provider.edge_types lists {kind}, which only `provider.css: true` observes");
+        }
+    }
     if config
         .provider
         .exclude_reasons
