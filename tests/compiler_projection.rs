@@ -526,3 +526,178 @@ async fn layers_put_dependents_above_their_dependencies() {
     let inside = view.nodes.iter().filter(|node| !node.outside_focus).count();
     assert_eq!(view.layers.iter().map(Vec::len).sum::<usize>(), inside);
 }
+
+const PACKAGES_CONFIG: &str = r#"version: 1
+project: {name: packages, root: app, source_roots: [src]}
+provider: {kind: gitnexus, packages: true}
+nodes:
+  app: {maps: ["src/**"]}
+  app.api: {maps: ["src/api/**"]}
+  app.core: {maps: ["src/core/**"]}
+  libs: {kind: external, title: Libraries}
+  libs.solver: {kind: external, title: OR-Tools, maps: ["package:python/ortools"]}
+rules:
+  - {id: only-core-solves, kind: deny_dependency, from: app.api, to: libs.solver}
+"#;
+
+fn package_repository() -> tempfile::TempDir {
+    let temp = tempfile::tempdir().unwrap();
+    for (path, source) in [
+        (
+            "src/api/routes.py",
+            "import fastapi\nfrom ortools.sat.python import cp_model\nfrom core import plan\n",
+        ),
+        (
+            "src/core/plan.py",
+            "from ortools.constraint_solver import pywrapcp\nimport dataclasses\n",
+        ),
+        ("src/core/__init__.py", ""),
+    ] {
+        let path = temp.path().join(path);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, source).unwrap();
+    }
+    temp
+}
+
+#[tokio::test]
+async fn imported_packages_are_mapped_ruled_projected_and_kept_out_of_coverage() {
+    let temp = package_repository();
+    let validated = config::parse(PACKAGES_CONFIG).unwrap();
+    let provider = InMemoryProvider {
+        edges: vec![edge("src/api/routes.py", "src/core/plan.py")],
+        ..Default::default()
+    };
+    let ir = compiler::compile(temp.path(), &validated, &provider, None)
+        .await
+        .unwrap();
+    let report = ir.packages.as_ref().unwrap();
+    let owners: Vec<(&str, Option<&str>)> = report
+        .packages
+        .iter()
+        .map(|package| (package.id.as_str(), package.node.as_deref()))
+        .collect();
+    assert_eq!(
+        owners,
+        [
+            ("package:python/fastapi", Some("packages")),
+            ("package:python/ortools", Some("libs.solver")),
+        ]
+    );
+    assert_eq!(ir.nodes["packages"].packages, ["package:python/fastapi"]);
+    assert_eq!(ir.nodes["libs"].descendant_package_count, 1);
+    assert_eq!(ir.stats.package_row_count, 3);
+    // No file counts a package, and an import of one is no coverage.
+    assert_eq!(ir.nodes["app"].descendant_file_count, 3);
+    assert_eq!(ir.nodes["app.api"].observed_file_count, 1);
+    assert_eq!(ir.stats.unassigned_file_count, 0);
+    assert_eq!(ir.violations.len(), 1, "{:#?}", ir.violations);
+    let violation = &ir.violations[0];
+    assert_eq!(violation.to.as_deref(), Some("libs.solver"));
+    assert_eq!(violation.evidence[0].from_file, "src/api/routes.py");
+    assert_eq!(violation.evidence[0].to_file, "package:python/ortools");
+    assert_eq!(
+        violation.evidence[0].reason.as_deref(),
+        Some("package-import")
+    );
+
+    // Outside the root, the owners appear like any external node.
+    let root = projection::project(&ir, "app", 20).unwrap();
+    let outside: Vec<(&str, usize)> = root
+        .nodes
+        .iter()
+        .filter(|node| node.outside_focus)
+        .map(|node| (node.id.as_str(), node.package_count))
+        .collect();
+    assert_eq!(outside, [("node:libs.solver", 1), ("node:packages", 1)]);
+    // At its owner, each package is an entry that knows who imports it.
+    let packages = projection::project(&ir, "packages", 20).unwrap();
+    let fastapi = packages
+        .nodes
+        .iter()
+        .find(|node| node.entry_kind == EntryKind::Package)
+        .unwrap();
+    assert_eq!(fastapi.id, "package:python/fastapi");
+    assert_eq!(fastapi.title, "fastapi");
+    let imports = &fastapi.package.as_ref().unwrap().imports;
+    assert_eq!(
+        (
+            imports[0].file.as_str(),
+            imports[0].line,
+            imports[0].node.as_deref()
+        ),
+        ("src/api/routes.py", 1, Some("app.api"))
+    );
+    assert!(packages
+        .edges
+        .iter()
+        .any(|edge| edge.edge.from == "node:app.api" && edge.edge.to == "package:python/fastapi"));
+    let text = archgraph::render::text::render(&packages);
+    assert!(
+        text.contains("fastapi — Python package\n    package:python/fastapi"),
+        "{text}"
+    );
+    let context = context::build(&ir, "app.api", 20).unwrap();
+    let markdown = context::markdown(&context);
+    assert!(markdown.contains("- `ortools` (Python, `package:python/ortools`, node `libs.solver`): `src/api/routes.py:2`"), "{markdown}");
+
+    let again = compiler::compile(temp.path(), &validated, &provider, None)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_vec(&ir).unwrap(),
+        serde_json::to_vec(&again).unwrap()
+    );
+}
+
+#[tokio::test]
+async fn without_provider_packages_the_ir_has_no_trace_of_them() {
+    let temp = package_repository();
+    let config = PACKAGES_CONFIG
+        .replace(", packages: true", "")
+        .replace(", maps: [\"package:python/ortools\"]", "");
+    let ir = compiler::compile(
+        temp.path(),
+        &config::parse(&config).unwrap(),
+        &InMemoryProvider::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    let json = serde_json::to_string(&ir).unwrap();
+    for absent in ["package:", "package_", "\"packages\":"] {
+        assert!(!json.contains(absent), "{absent} in {json}");
+    }
+}
+
+#[tokio::test]
+async fn the_package_endpoint_lists_packages_for_search() {
+    let temp = package_repository();
+    let ir = compiler::compile(
+        temp.path(),
+        &config::parse(PACKAGES_CONFIG).unwrap(),
+        &InMemoryProvider::default(),
+        None,
+    )
+    .await
+    .unwrap();
+    let response = server::router(Arc::new(ir))
+        .oneshot(
+            Request::builder()
+                .uri("/api/packages")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["enabled"], true);
+    assert_eq!(value["packages"][1]["name"], "ortools");
+    assert_eq!(value["packages"][1]["node"], "libs.solver");
+    assert_eq!(value["packages"][1]["file_count"], 2);
+    assert_eq!(
+        value["packages"][1]["nodes"],
+        serde_json::json!(["app.api", "app.core"])
+    );
+}

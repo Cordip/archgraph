@@ -14,12 +14,15 @@ There are no fixed C4 levels. IDs such as `app.billing.domain.invoicing` encode
 an arbitrary-depth hierarchy. Logical nodes may collect files from unrelated
 filesystem directories. GitNexus—not ArchGraph—owns language parsing and symbol
 resolution, whether the source is Python, Rust, C/C++, or another supported
-language. The exceptions are two gaps GitNexus leaves in a web application:
-CSS, which it does not parse, and HTTP calls from a frontend, which it links
-to backend routes only for `fetch('/literal')`. With `provider.css: true` and
-`provider.http: true`, ArchGraph reads stylesheets, class names and client
-HTTP calls itself (see [Stylesheets and CSS classes](#stylesheets-and-css-classes)
-and [HTTP calls between frontend and backend](#http-calls-between-frontend-and-backend)).
+language. The exceptions are three gaps GitNexus leaves in a web
+application: CSS, which it does not parse; HTTP calls from a frontend, which
+it links to backend routes only for `fetch('/literal')`; and imports of
+third-party packages, which it drops. With `provider.css: true`,
+`provider.http: true` and `provider.packages: true`, ArchGraph reads
+stylesheets, class names, client HTTP calls and import statements itself
+(see [Stylesheets and CSS classes](#stylesheets-and-css-classes),
+[HTTP calls between frontend and backend](#http-calls-between-frontend-and-backend)
+and [Imported packages](#imported-packages)).
 
 ## Prerequisites and quick start
 
@@ -135,7 +138,9 @@ Every dotted parent must exist, including `external` for `external.stripe`.
 Node IDs use ASCII letters, digits, underscores and hyphens separated by dots.
 `app.foo` is not an ancestor of `app.foobar`. External nodes cannot have file
 maps; internal nodes cannot be placed under external nodes. Project root must
-reference an internal node. Unknown YAML fields, missing references, invalid
+reference an internal node. External nodes may map imported packages
+(`package:` globs, see [Imported packages](#imported-packages)). Unknown YAML
+fields, missing references, invalid
 globs, duplicate rule/manual-edge IDs, and zero page sizes are errors.
 
 Paths and globs are repository-relative. Paths normalize to `/` on every
@@ -261,6 +266,9 @@ archgraph styles app.web --json
 
 archgraph http
 archgraph http app.web --json
+
+archgraph packages
+archgraph packages ortools --json
 
 archgraph serve
 archgraph serve --reindex --port 7331 --host 127.0.0.1
@@ -494,6 +502,122 @@ of `archgraph http` against the backend), calls through wrappers defined in
 another file, GraphQL and other non-path protocols, and calls made by Python
 or other backend code.
 
+## Imported packages
+
+GitNexus keeps an `IMPORTS` edge only when an import resolves to a
+repository file; `from ortools.constraint_solver import pywrapcp` or
+`import L from 'leaflet'` leaves no trace in its index (see
+[docs/gitnexus-limitations.md](docs/gitnexus-limitations.md)), so it cannot
+say who uses OR-Tools. With `provider.packages: true`, ArchGraph reads the
+import statements of every discovered Python and TypeScript/JavaScript file
+with tree-sitter and adds an `IMPORTS` edge from the importing file to the
+package:
+
+| Reason | Confidence | Import |
+| --- | --- | --- |
+| `package-import` | 1.0 | `import a.b`, `from a.b import c`, `importlib.import_module('a')`, `__import__('a')`; `import … from 'x'`, `import 'x'`, `export … from 'x'`, `import x = require('x')`, `import('x')`, `require('x')` |
+| `package-type-import` | 1.0 | `import type … from 'x'`, `export type … from 'x'`, and Python imports under `if TYPE_CHECKING:` |
+
+The edge's target is the package's pseudo-path `package:python/<top-level
+module>` or `package:npm/<name>`: `from ortools.constraint_solver import
+pywrapcp` imports `package:python/ortools`, `import
+'leaflet/dist/leaflet.css'` imports `package:npm/leaflet`, and
+`@tanstack/react-query/devtools` imports `package:npm/@tanstack/react-query`.
+The ecosystem is part of the name because one name can be two libraries
+(`yaml` in Python and in npm). `import { type A } from 'x'` still counts as
+a runtime import: under `verbatimModuleSyntax` it loads `x`.
+
+**Local or package.** An import becomes a package only when it is clearly
+not local. ArchGraph decides from the repository's own files, walked like
+discovery but regardless of `exclude` and `source_roots` (an excluded module
+is still local):
+
+- Python: relative imports are local. An absolute import is local when its
+  top-level module (`name.py`, or a directory holding Python files) sits
+  beside the importing file, in a directory above it, or in a `src/`
+  directory there: the roots a script or test runner started there imports
+  from. A standard-library module is no package. A top-level name the
+  repository defines only somewhere else, such as `import redis` in
+  `app/cache.py` next to `tools/redis.py`, is ambiguous. Anything else is a
+  package. (GitNexus links that `import redis` to `tools/redis.py` by a
+  repository-wide name match; ArchGraph does not follow its Python
+  resolution.)
+- TypeScript/JavaScript: relative, absolute and `#` subpath specifiers are
+  local, and so is a specifier that cannot be an npm package name (`@/x`,
+  `~/x`, `$lib/x`: path aliases). The `name` of any `package.json` in the
+  repository is a local workspace package. Otherwise a bare specifier is a
+  package when a `package.json` beside the importing file or above it
+  declares it, or its `@types/` package, in `dependencies`,
+  `devDependencies`, `peerDependencies` or `optionalDependencies`. An
+  undeclared specifier is local when GitNexus resolved it to a repository
+  file (a tsconfig path alias: `@app/utils/date` to
+  `src/app/utils/date.ts`), no package when it is a Node.js built-in (`fs`,
+  `node:fs`), and ambiguous otherwise: an alias GitNexus did not resolve, or
+  a package used without being declared. `virtual:` and other scheme
+  specifiers are ambiguous too.
+
+Ambiguous imports and dynamic imports of a computed module (`import(name)`)
+are never observed. Every compile warns with their counts, and `archgraph
+packages` lists them with the reason.
+
+**Packages in the architecture.** Packages are not files: they count in no
+file total, never make a file unassigned, and importing one does not make a
+file observed for coverage (a file whose only dependencies are packages
+still tells nothing about the repository-internal edges a rule checks).
+Each package belongs to one node, which owns it the way a node owns files:
+
+- An external node may map packages with `package:` globs, e.g.
+  `maps: ["package:python/ortools"]`. `*` does not cross `/`, so
+  `package:npm/@tanstack/*` maps a scope and `package:npm/**` every npm
+  package; `package:*/yaml` matches both ecosystems. `priority` and the
+  deepest-match rule apply as for files. Internal nodes cannot map packages
+  and external nodes cannot map files. A package glob that matches no
+  imported package is a warning, since a rule about it could never fail.
+- Every package no node maps belongs to `packages`, "External packages",
+  which ArchGraph adds as an external root node. Define `packages` yourself
+  (it must be external) to retitle it or to put package nodes below it; a
+  node of that name that is not external is an error.
+
+Rules work on package nodes unchanged, since a package import is an
+ordinary `IMPORTS` observation:
+
+```yaml
+nodes:
+  libs: {kind: external, title: Third-party libraries}
+  libs.ortools: {kind: external, title: OR-Tools, maps: ["package:python/ortools"]}
+rules:
+  # Only the planning core (and its tests) may use the solver.
+  - {id: api-solves-through-the-core, kind: deny_dependency, from: lct.backend.api, to: libs.ortools}
+  - {id: the-frontend-uses-no-solver, kind: deny_dependency, from: lct.frontend, to: libs.ortools}
+```
+
+`allow_only` restricts packages too: its source may depend only on its
+targets, so list `packages` or the package nodes it may use in `to`.
+`no_cycles` and `layers` are unaffected unless their nodes include package
+nodes. `provider.packages` needs `IMPORTS` in `provider.edge_types`;
+`exclude_reasons: [package-type-import]` drops type-only imports. The IR
+lists every package with its node and every import (`packages` in the IR,
+`packages` and `descendant_package_count` on nodes); without
+`provider.packages` none of these fields appear.
+
+**Where they show.** In `show`, `context` and the UI the owning node is an
+entry like any external node: "External packages" outside the focus, with
+an edge from each importing node. At the owner's own level each package is
+an entry of its own, whose details list every importing file and line with
+its node. `context` also lists the packages a subtree imports.
+`archgraph packages [PACKAGE] [--json]` prints every package with its node,
+the importing nodes and each `file:line`, then the ambiguous and dynamic
+imports; `archgraph packages ortools` shows one package (in both ecosystems
+if both have the name; `python/ortools` picks one).
+
+Not covered: Ruby (Rails and Bundler load gems without an import statement,
+and `require` is not read either), `.vue` and `.svelte` single-file
+components, CoffeeScript, versions, and runtime loading through entry points
+or plugin registries. A Python package is named by its top-level module, not
+its distribution: PyYAML is `yaml`, and every `google.cloud.*` library is
+`google`. A local module that exists only after a build or is ignored by Git
+looks like a package.
+
 ## Human focus UI
 
 The embedded HTML/CSS/plain JavaScript UI works offline (no external fonts or
@@ -563,6 +687,7 @@ GET /api/nodes
 GET /api/focus/{node_id}
 GET /api/violations
 GET /api/search?q=...
+GET /api/packages
 ```
 
 There is no arbitrary Cypher endpoint, source-file endpoint, mutation endpoint,
@@ -660,8 +785,8 @@ repositories. The CLI process tests run the real binary against
 `tests/fixtures/fake_gitnexus.py` and need `python3`; they are Unix-only. The
 contract tests index generated TypeScript and Ruby repositories with the real
 GitNexus CLI and check the assumptions the fake encodes, including that
-GitNexus still ignores stylesheet imports and links routes only to literal
-`fetch` calls. The browser smoke test
+GitNexus still ignores stylesheet imports, links routes only to literal
+`fetch` calls and drops imports of packages. The browser smoke test
 loads the embedded UI with mocked fetch and history. There is no production
 Python component.
 
@@ -669,8 +794,8 @@ Python component.
 
 ArchGraph covers one repository per configuration and observes the GitNexus
 relation kinds listed in `provider.edge_types`, plus stylesheets and CSS
-classes with `provider.css: true` and client HTTP calls with
-`provider.http: true`. Symbol/function/AST exploration
+classes with `provider.css: true`, client HTTP calls with
+`provider.http: true` and imported packages with `provider.packages: true`. Symbol/function/AST exploration
 is delegated to GitNexus. Interfaces and manual relationships are descriptive,
 the UI is read-only, and there is no application database or architecture
 editor. Very large file-only focuses may need further authored child nodes for

@@ -1,6 +1,6 @@
 use crate::{
-    config::{overlaps, RuleConfig},
-    model::ArchitectureIr,
+    config::{is_within, overlaps, RuleConfig},
+    model::{ArchitectureIr, PackageUse},
     projection::{self, EntryKind, Projection, ProjectionEdge},
 };
 use anyhow::Result;
@@ -16,6 +16,29 @@ pub struct AgentContext {
     pub observed_internal: Vec<ProjectionEdge>,
     pub diagnostics: Vec<String>,
     pub agent_contract: Vec<String>,
+    /// With `provider.packages`: packages imported from this subtree (with
+    /// those imports) or owned by it (with all imports).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packages: Option<Vec<PackageUse>>,
+}
+
+fn packages_here(ir: &ArchitectureIr, node: &str) -> Option<Vec<PackageUse>> {
+    let report = ir.packages.as_ref()?;
+    let within =
+        |owner: &Option<String>| owner.as_deref().is_some_and(|owner| is_within(owner, node));
+    Some(
+        report
+            .packages
+            .iter()
+            .filter_map(|package| {
+                let mut package = package.clone();
+                if !within(&package.node) {
+                    package.imports.retain(|import| within(&import.node));
+                }
+                (!package.imports.is_empty()).then_some(package)
+            })
+            .collect(),
+    )
 }
 
 pub fn build(ir: &ArchitectureIr, node: &str, limit: usize) -> Result<AgentContext> {
@@ -73,6 +96,7 @@ pub fn build(ir: &ArchitectureIr, node: &str, limit: usize) -> Result<AgentConte
         observed_internal: internal,
         diagnostics: ir.diagnostics.warnings.clone(),
         agent_contract,
+        packages: packages_here(ir, node),
     })
 }
 
@@ -94,16 +118,12 @@ pub fn markdown(context: &AgentContext) -> String {
     );
     out.push_str("## Children and files\n\n");
     for node in p.nodes.iter().filter(|node| !node.outside_focus) {
-        let identity = node
-            .file_path
-            .as_deref()
-            .or(node.architecture_id.as_deref())
-            .unwrap_or(&node.id);
+        let identity = projection::identity(node);
         let _ = writeln!(
             out,
-            "- `{identity}` — {} — {} file(s){}{}",
+            "- `{identity}` — {} — {}{}{}",
             node.title,
-            node.file_count,
+            projection::size(node),
             projection::observed_suffix(node),
             if node.violation_rule_ids.is_empty() {
                 ""
@@ -157,6 +177,36 @@ pub fn markdown(context: &AgentContext) -> String {
         }
         for projected in edges {
             append_edge(&mut out, p, projected);
+        }
+    }
+    if let Some(packages) = &context.packages {
+        out.push_str("\n## Imported packages\n\n");
+        if packages.is_empty() {
+            out.push_str("No imported package is used or owned here.\n");
+        }
+        for package in packages {
+            const SHOWN: usize = 10;
+            let places = package
+                .imports
+                .iter()
+                .take(SHOWN)
+                .map(|import| format!("`{}:{}`", import.file, import.line))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let more = package.imports.len().saturating_sub(SHOWN);
+            let _ = writeln!(
+                out,
+                "- `{}` ({}, `{}`, node `{}`): {places}{}",
+                package.name,
+                package.ecosystem.title(),
+                package.id,
+                package.node.as_deref().unwrap_or("ambiguous"),
+                if more > 0 {
+                    format!(" and {more} more")
+                } else {
+                    String::new()
+                }
+            );
         }
     }
     out.push_str("\n## Manual relationships (descriptive intent)\n\n");

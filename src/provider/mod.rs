@@ -3,6 +3,7 @@ pub mod css;
 pub mod gitnexus;
 pub mod http;
 pub mod markdown_table;
+pub mod packages;
 pub mod typescript;
 
 use crate::model::{CodeEdge, ProviderInfo, Route};

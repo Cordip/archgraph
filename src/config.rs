@@ -1,4 +1,7 @@
-use crate::paths::normalize_relative;
+use crate::{
+    model::{PACKAGES_NODE, PACKAGE_PREFIX},
+    paths::normalize_relative,
+};
 use anyhow::{bail, Context, Result};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use serde::{Deserialize, Serialize};
@@ -83,6 +86,13 @@ pub struct ProviderConfig {
     /// of `archgraph http`. Needs `FETCHES` in `edge_types`.
     #[serde(default)]
     pub http: bool,
+    /// Read import statements in Python and TypeScript/JavaScript (GitNexus
+    /// drops imports it cannot resolve to a repository file): adds `IMPORTS`
+    /// from the importing file to `package:<ecosystem>/<name>`, owned by the
+    /// node whose `maps` match it or else by `packages`, and the report of
+    /// `archgraph packages`. Needs `IMPORTS` in `edge_types`.
+    #[serde(default)]
+    pub packages: bool,
 }
 
 impl ProviderConfig {
@@ -339,6 +349,11 @@ pub struct ValidatedConfig {
     pub config: ArchitectureConfig,
     pub mapping_globs: GlobSet,
     pub mapping_owners: Vec<String>,
+    /// `maps` entries starting with `package:`, matched against package IDs
+    /// only, never against files.
+    pub package_globs: GlobSet,
+    pub package_owners: Vec<String>,
+    pub package_patterns: Vec<String>,
     pub exclude_globs: GlobSet,
 }
 
@@ -442,6 +457,37 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     {
         bail!("provider.http adds {http_kind} edges, but provider.edge_types does not list {http_kind}, so none would be observed");
     }
+    if config.provider.packages
+        && !config
+            .provider
+            .edge_types
+            .iter()
+            .any(|kind| kind == "IMPORTS")
+    {
+        bail!("provider.packages adds IMPORTS edges to imported packages, but provider.edge_types does not list IMPORTS, so none would be observed");
+    }
+    if config.provider.packages {
+        match config.nodes.get(PACKAGES_NODE) {
+            None => {
+                config.nodes.insert(
+                    PACKAGES_NODE.into(),
+                    NodeConfig {
+                        title: Some("External packages".into()),
+                        kind: NodeKind::External,
+                        description: Some(
+                            "Imported third-party packages that no node maps (provider.packages)."
+                                .into(),
+                        ),
+                        ..NodeConfig::default()
+                    },
+                );
+            }
+            Some(node) if node.kind != NodeKind::External => {
+                bail!("node `{PACKAGES_NODE}` holds the imported packages no node maps when provider.packages is on, so it must be `kind: external`; rename your node or make it external");
+            }
+            Some(_) => {}
+        }
+    }
     if config
         .provider
         .exclude_reasons
@@ -475,6 +521,9 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
     }
     let mut mappings = GlobSetBuilder::new();
     let mut owners = Vec::new();
+    let mut package_mappings = GlobSetBuilder::new();
+    let mut package_owners = Vec::new();
+    let mut package_patterns = Vec::new();
     for (id, node) in &config.nodes {
         if !valid_node_id(id) {
             bail!("invalid node ID `{id}`; use dot-separated ASCII letters, digits, underscores or hyphens");
@@ -488,8 +537,25 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
                 bail!("internal node `{id}` cannot have external parent `{parent}`");
             }
         }
-        if node.kind == NodeKind::External && !node.maps.is_empty() {
-            bail!("external node `{id}` cannot own source files; remove its maps");
+        for pattern in &node.maps {
+            let Some(package) = pattern.strip_prefix(PACKAGE_PREFIX) else {
+                if node.kind == NodeKind::External {
+                    bail!("external node `{id}` cannot own source files; remove `{pattern}` from its maps (external nodes may map only imported packages, `package:...`)");
+                }
+                continue;
+            };
+            if !config.provider.packages {
+                bail!("node `{id}` maps `{pattern}`, but only `provider.packages: true` observes imported packages, so it could never match");
+            }
+            if node.kind != NodeKind::External {
+                bail!("node `{id}` maps the package glob `{pattern}`, but packages are outside the repository; map them to an external node");
+            }
+            if !["python/", "npm/", "*", "{"]
+                .iter()
+                .any(|start| package.starts_with(start))
+            {
+                bail!("node `{id}`: package glob `{pattern}` names no ecosystem; write `package:python/{package}` or `package:npm/{package}` (`package:*/{package}` matches both)");
+            }
         }
         for interface in &node.interfaces {
             if interface.name.trim().is_empty() || interface.kind.trim().is_empty() {
@@ -497,8 +563,14 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
             }
         }
         for pattern in &node.maps {
-            add_glob(&mut mappings, pattern, &format!("node `{id}`"))?;
-            owners.push(id.clone());
+            if pattern.starts_with(PACKAGE_PREFIX) {
+                add_glob(&mut package_mappings, pattern, &format!("node `{id}`"))?;
+                package_owners.push(id.clone());
+                package_patterns.push(pattern.clone());
+            } else {
+                add_glob(&mut mappings, pattern, &format!("node `{id}`"))?;
+                owners.push(id.clone());
+            }
         }
     }
     let mut exclusions = GlobSetBuilder::new();
@@ -572,6 +644,9 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
         config,
         mapping_globs: mappings.build()?,
         mapping_owners: owners,
+        package_globs: package_mappings.build()?,
+        package_owners,
+        package_patterns,
         exclude_globs: exclusions.build()?,
     })
 }
@@ -686,5 +761,65 @@ mod tests {
             .config
             .provider
             .accepts(Some("markdown-link"), Some(0.8)));
+    }
+    #[test]
+    fn packages_add_their_node_and_package_globs_are_checked() {
+        let on = BASE.replace("{kind: gitnexus}", "{kind: gitnexus, packages: true}");
+        let valid = parse(&format!(
+            "{on}  libs: {{kind: external}}\n  libs.solver: {{kind: external, maps: ['package:python/ortools', 'package:*/yaml']}}\n"
+        ))
+        .unwrap();
+        let added = &valid.config.nodes[PACKAGES_NODE];
+        assert_eq!(added.kind, NodeKind::External);
+        assert_eq!(added.title.as_deref(), Some("External packages"));
+        assert_eq!(valid.package_owners, ["libs.solver", "libs.solver"]);
+        assert!(valid.mapping_owners.is_empty());
+        assert!(valid.package_globs.is_match("package:npm/yaml"));
+        assert!(!parse(BASE)
+            .unwrap()
+            .config
+            .nodes
+            .contains_key(PACKAGES_NODE));
+        for (config, message) in [
+            (
+                on.replace(
+                    "gitnexus, packages",
+                    "gitnexus, edge_types: [CALLS], packages",
+                ),
+                "does not list IMPORTS",
+            ),
+            (
+                format!("{on}  packages: {{}}\n"),
+                "must be `kind: external`",
+            ),
+            (
+                format!("{on}  app.lib: {{maps: ['package:python/ortools']}}\n"),
+                "map them to an external node",
+            ),
+            (
+                format!("{on}  libs: {{kind: external, maps: ['package:ortools']}}\n"),
+                "names no ecosystem",
+            ),
+            (
+                format!("{on}  libs: {{kind: external, maps: ['src/**']}}\n"),
+                "cannot own source files",
+            ),
+            (
+                format!("{BASE}  libs: {{kind: external, maps: ['package:python/ortools']}}\n"),
+                "only `provider.packages: true` observes",
+            ),
+        ] {
+            let error = format!("{:#}", parse(&config).unwrap_err());
+            assert!(error.contains(message), "{message}: {error}");
+        }
+        // The user's own `packages` node collects unmapped packages instead.
+        let own = parse(&format!(
+            "{on}  packages: {{kind: external, title: Third party}}\n"
+        ))
+        .unwrap();
+        assert_eq!(
+            own.config.nodes[PACKAGES_NODE].title.as_deref(),
+            Some("Third party")
+        );
     }
 }

@@ -131,6 +131,16 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Compile fresh and report imported third-party packages (needs
+    /// `provider.packages: true`): the files and nodes importing each, and
+    /// imports that could not be attributed.
+    Packages {
+        /// A package name (`ortools`, `@tanstack/react-query`), optionally
+        /// with its ecosystem (`python/ortools`, `package:npm/react`).
+        package: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Compile fresh and emit agent-oriented architecture context.
     Context {
         node: String,
@@ -229,6 +239,12 @@ pub async fn run(cli: Cli) -> Result<u8> {
     if matches!(cli.command, Commands::Http { .. }) && !validated.config.provider.http {
         bail!(
             "`archgraph http` needs `provider.http: true` in {}",
+            config_path.display()
+        );
+    }
+    if matches!(cli.command, Commands::Packages { .. }) && !validated.config.provider.packages {
+        bail!(
+            "`archgraph packages` needs `provider.packages: true` in {}",
             config_path.display()
         );
     }
@@ -496,6 +512,27 @@ pub async fn run(cli: Cli) -> Result<u8> {
                 );
             } else {
                 out!("{}", render::http::render(&selected, node.as_deref()));
+            }
+            Ok(0)
+        }
+        Commands::Packages { package, json } => {
+            let report = ir.packages.as_ref().context(
+                "internal error: provider.packages is on but the IR has no package report",
+            )?;
+            let selected = render::packages::select(report, package.as_deref())?;
+            if json {
+                outln!(
+                    "{}",
+                    render::json::render(&serde_json::json!({
+                        "package": package, "packages": selected.packages,
+                        "ambiguous": selected.ambiguous, "unresolved": selected.unresolved
+                    }))?
+                );
+            } else {
+                out!(
+                    "{}",
+                    render::packages::render(&selected, package.as_deref())
+                );
             }
             Ok(0)
         }
@@ -895,6 +932,7 @@ mod tests {
             vec!["archgraph", "check", "app.a", "--json"],
             vec!["archgraph", "show", "--format", "mermaid"],
             vec!["archgraph", "context", "app", "--evidence-limit", "50"],
+            vec!["archgraph", "packages", "ortools", "--json"],
             vec!["archgraph", "serve", "--root", "/tmp"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());

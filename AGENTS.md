@@ -8,12 +8,15 @@ changing anything, and add to **Gotchas** whenever something surprises you.
 ArchGraph is a single Rust crate (`archgraph` binary). It compiles a desired
 architecture (`architecture.yaml`) against file-level dependencies observed by
 the external GitNexus CLI, checks rules and serves a read-only UI. Language
-parsing belongs to GitNexus. Two exceptions fill gaps GitNexus leaves in a
+parsing belongs to GitNexus. Three exceptions fill gaps GitNexus leaves in a
 web application: with `provider.css`, `src/provider/css/` reads stylesheets
 (lightningcss) and class names in scripts (tree-sitter); with
 `provider.http`, `src/provider/http/` reads client HTTP calls (tree-sitter)
-and matches them to GitNexus's routes. Do not extend them to anything
-GitNexus already observes. See
+and matches them to GitNexus's routes; with `provider.packages`,
+`src/provider/packages/` reads Python and TypeScript/JavaScript import
+statements (tree-sitter) for the third-party packages GitNexus drops. Do not
+extend them to anything GitNexus already observes: an import GitNexus
+resolves to a repository file stays GitNexus's edge. See
 [README.md](README.md) for behavior, [DESIGN.md](DESIGN.md) for the original
 design and [docs/](docs/) for provider limitations.
 
@@ -175,3 +178,13 @@ Add new entries at the end: what happened, why, and what to do.
     navigates to a routed fake origin. And Playwright's `inner_text()` of an
     element inside a closed `<details>` is empty; the coverage notes fold when
     there are many, so check them with `text_content()`.
+24. **tree-sitter comments are named nodes.** `arguments.named_child(0)` of
+    `import(\n  // why\n  '#mobile/x.vue'\n)` is the comment, so zammad's
+    literal dynamic import looked computed at runtime. Skip `comment` nodes
+    when looking for an argument (`packages::first_argument`).
+25. **GitNexus links a bare Python import to any file of that name.**
+    `import redis` in `app/cache.py` becomes `IMPORTS` to `tools/redis.py`
+    by a repository-wide suffix match, even though `tools/` is not on the
+    import path. Do not treat a GitNexus Python edge as proof that an import
+    is local; `provider.packages` decides from the directories above the
+    importing file (docs, section 12).

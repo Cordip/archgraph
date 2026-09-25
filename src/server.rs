@@ -14,6 +14,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
+    collections::BTreeSet,
     net::{IpAddr, SocketAddr},
     sync::{Arc, RwLock},
 };
@@ -90,6 +91,7 @@ pub fn live_router(live: Arc<Live>) -> Router {
         .route("/api/focus/{node_id}", get(focus))
         .route("/api/violations", get(violations))
         .route("/api/search", get(search))
+        .route("/api/packages", get(packages))
         .fallback(not_found)
         .layer(middleware::map_response(security_headers))
         .with_state(live)
@@ -195,6 +197,28 @@ async fn search(
             .map(NodeSummary::from)
             .collect(),
     )
+}
+/// Every imported package (`provider.packages`) with the node owning it and
+/// the nodes importing it, for search; the importing files and lines come
+/// with the package's entry in its owner's focus.
+async fn packages(State(live): State<Arc<Live>>) -> Json<Value> {
+    let ir = live.current();
+    let packages: Vec<Value> = ir
+        .packages
+        .iter()
+        .flat_map(|report| &report.packages)
+        .map(|package| {
+            let files: BTreeSet<&str> = package.imports.iter().map(|i| i.file.as_str()).collect();
+            let nodes: BTreeSet<&str> = package
+                .imports
+                .iter()
+                .filter_map(|import| import.node.as_deref())
+                .collect();
+            json!({"id": package.id, "name": package.name, "ecosystem": package.ecosystem,
+                "node": package.node, "file_count": files.len(), "nodes": nodes})
+        })
+        .collect();
+    Json(json!({"enabled": ir.packages.is_some(), "packages": packages}))
 }
 async fn not_found() -> impl IntoResponse {
     (

@@ -1,6 +1,7 @@
 pub mod http;
 pub mod json;
 pub mod mermaid;
+pub mod packages;
 pub mod styles;
 pub mod text;
 

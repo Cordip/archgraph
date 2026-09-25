@@ -80,6 +80,16 @@ pub struct CompiledNode {
     #[serde(default)]
     pub unindexed_file_count: usize,
     pub interfaces: Vec<Interface>,
+    /// Imported packages (`provider.packages`) this node owns directly, by
+    /// package ID; they are not files and count in no file total.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub packages: Vec<String>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub descendant_package_count: usize,
+}
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -289,6 +299,10 @@ pub struct CompileStats {
     /// (`provider.http`), before filtering; not included in `provider_row_count`.
     #[serde(default)]
     pub http_row_count: usize,
+    /// `IMPORTS` rows from files to imported packages (`provider.packages`),
+    /// before filtering; not included in `provider_row_count`.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub package_row_count: usize,
     pub aggregated_architecture_edge_count: usize,
     pub violation_count: usize,
 }
@@ -313,6 +327,9 @@ pub struct ArchitectureIr {
     /// Present when `provider.http` is on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http: Option<HttpReport>,
+    /// Present when `provider.packages` is on.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub packages: Option<PackageReport>,
 }
 
 /// Stylesheet facts ArchGraph reads itself, since GitNexus does not parse
@@ -448,6 +465,97 @@ pub enum CallProblem {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct UnresolvedCall {
+    pub file: String,
+    pub line: usize,
+    pub expression: String,
+}
+
+/// What an imported package's pseudo-path starts with: the `to_file` of a
+/// package import is `package:<ecosystem>/<name>`, e.g.
+/// `package:python/ortools`, and node `maps` globs match it.
+pub const PACKAGE_PREFIX: &str = "package:";
+
+/// The node holding every imported package no node maps. ArchGraph adds it
+/// when `provider.packages` is on and the configuration does not define it.
+pub const PACKAGES_NODE: &str = "packages";
+
+/// Where a package name comes from; the same name in two ecosystems is two
+/// different libraries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Ecosystem {
+    /// A top-level Python module outside the repository and the standard library.
+    Python,
+    /// A JavaScript/TypeScript package, as named in `package.json`.
+    Npm,
+}
+
+impl Ecosystem {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Python => "python",
+            Self::Npm => "npm",
+        }
+    }
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Python => "Python",
+            Self::Npm => "npm",
+        }
+    }
+}
+
+pub fn package_id(ecosystem: Ecosystem, name: &str) -> String {
+    format!("{PACKAGE_PREFIX}{}/{name}", ecosystem.as_str())
+}
+
+/// Third-party packages the repository imports, which GitNexus drops
+/// (docs/gitnexus-limitations.md), read by ArchGraph itself.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct PackageReport {
+    pub packages: Vec<PackageUse>,
+    /// Imports that may name a repository module or a package; not observed.
+    pub ambiguous: Vec<AmbiguousImport>,
+    /// Dynamic imports whose module is computed at runtime.
+    pub unresolved: Vec<UnresolvedImport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PackageUse {
+    /// `package:python/ortools`, `package:npm/@tanstack/react-query`.
+    pub id: String,
+    pub name: String,
+    pub ecosystem: Ecosystem,
+    /// The node owning the package: the deepest node whose `maps` match
+    /// `id`, else `packages`. `None` when unrelated nodes match it
+    /// (`ambiguous_mapping: warn`).
+    pub node: Option<String>,
+    pub imports: Vec<PackageImport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct PackageImport {
+    pub file: String,
+    pub line: usize,
+    /// As written: `ortools.constraint_solver`, `leaflet/dist/leaflet.css`.
+    pub specifier: String,
+    /// `import type`, `export type`, or inside `if TYPE_CHECKING:`.
+    pub type_only: bool,
+    /// The node owning the importing file, if any.
+    pub node: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct AmbiguousImport {
+    pub file: String,
+    pub line: usize,
+    pub specifier: String,
+    /// Why it is neither clearly local nor clearly a package.
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct UnresolvedImport {
     pub file: String,
     pub line: usize,
     pub expression: String,

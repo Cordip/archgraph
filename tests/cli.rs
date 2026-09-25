@@ -772,6 +772,130 @@ fn http_calls_reach_routes_as_fetches_edges_and_the_http_report() {
     assert!(String::from_utf8_lossy(&http.stderr).contains("needs `provider.http: true`"));
 }
 
+const PACKAGES_YAML: &str = r#"version: 1
+project: {name: packages-fixture, root: app, source_roots: [src]}
+provider: {kind: gitnexus, command: intentionally-missing-fallback, packages: true}
+policies: {unassigned_files: ignore}
+nodes:
+  app: {}
+  app.web: {maps: ["src/web/**"]}
+  app.py: {maps: ["src/py/**"]}
+  libs: {kind: external, title: Libraries}
+  libs.maps: {kind: external, title: Leaflet, maps: ["package:npm/leaflet"]}
+rules:
+  - {id: python-draws-no-maps, kind: deny_dependency, from: app.py, to: libs.maps}
+  - {id: web-draws-maps-elsewhere, kind: deny_dependency, from: app.web, to: libs.maps}
+"#;
+
+#[test]
+fn imported_packages_become_edges_rules_and_the_packages_report() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    std::fs::write(root.join("architecture.yaml"), PACKAGES_YAML).unwrap();
+    for directory in ["src/web/utils", "src/py"] {
+        std::fs::create_dir_all(root.join(directory)).unwrap();
+    }
+    std::fs::write(
+        root.join("src/web/package.json"),
+        r#"{"name": "web", "dependencies": {"leaflet": "1", "react": "19"}}"#,
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/web/utils/date.ts"),
+        "export const date = 1\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/web/app.tsx"),
+        "import { useState } from 'react'\n\
+         import L from 'leaflet'\n\
+         import { date } from '@app/utils/date'\n\
+         import { settings } from 'config'\n",
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/py/main.py"),
+        "import numpy as np\nimport json\n",
+    )
+    .unwrap();
+
+    let check = fixture.run(&["check"], "packages");
+    let text = String::from_utf8_lossy(&check.stdout);
+    assert_eq!(check.status.code(), Some(2), "{text}");
+    assert!(text.contains("[web-draws-maps-elsewhere]"), "{text}");
+    assert!(
+        text.contains("src/web/app.tsx -> package:npm/leaflet  (package-import, confidence 1)"),
+        "{text}"
+    );
+    let stderr = String::from_utf8_lossy(&check.stderr);
+    assert!(
+        stderr.contains("1 import(s) may name a repository module or a package"),
+        "{stderr}"
+    );
+
+    let report = fixture.run(&["packages"], "packages");
+    let report = String::from_utf8_lossy(&report.stdout);
+    for expected in [
+        "Packages: 3 imported by 2 file(s)",
+        "leaflet  (npm, package:npm/leaflet; node libs.maps)",
+        "  imported by 1 file(s) in app.web",
+        "  src/web/app.tsx:2  leaflet  app.web",
+        "numpy  (Python, package:python/numpy; node packages)",
+        "  src/py/main.py:1  numpy  app.py",
+        "Imports that may name a repository module or a package (1); not observed:",
+        "  src/web/app.tsx:4  config",
+    ] {
+        assert!(
+            report.contains(expected),
+            "missing {expected:?} in\n{report}"
+        );
+    }
+    assert!(
+        !report.contains("@app/utils"),
+        "the resolved alias is local:\n{report}"
+    );
+    let one: Value = serde_json::from_slice(
+        &fixture
+            .run(&["packages", "react", "--json"], "packages")
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(one["packages"].as_array().unwrap().len(), 1);
+    assert_eq!(one["packages"][0]["imports"][0]["line"], 1);
+    let missing = fixture.run(&["packages", "left-pad"], "packages");
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr)
+        .contains("no imported package is named `left-pad`"));
+    let show = fixture.run(&["show", "packages"], "packages");
+    let show = String::from_utf8_lossy(&show.stdout);
+    assert!(show.contains("numpy — Python package"), "{show}");
+    assert!(
+        show.contains("app.py -> package:python/numpy  IMPORTS × 1"),
+        "{show}"
+    );
+
+    // A package glob without `packages: true` could never match.
+    std::fs::write(
+        root.join("architecture.yaml"),
+        PACKAGES_YAML.replace(", packages: true", ""),
+    )
+    .unwrap();
+    let invalid = fixture.run(&["check"], "packages");
+    assert_eq!(invalid.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&invalid.stderr)
+        .contains("only `provider.packages: true` observes"));
+    std::fs::write(
+        root.join("architecture.yaml"),
+        PACKAGES_YAML
+            .replace(", packages: true", "")
+            .replace(", maps: [\"package:npm/leaflet\"]", ""),
+    )
+    .unwrap();
+    let packages = fixture.run(&["packages"], "packages");
+    assert_eq!(packages.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&packages.stderr).contains("needs `provider.packages: true`"));
+}
+
 #[test]
 fn the_work_directory_keeps_itself_out_of_git() {
     let fixture = Fixture::new();

@@ -29,6 +29,11 @@ When `provider.http: true` is set, `archgraph http <node>` lists the backend
 routes with the frontend calls reaching them, and calls that reach no route.
 A frontend's dependency on the backend appears as `FETCHES` edges.
 
+When `provider.packages: true` is set, `archgraph packages [name]` lists
+the third-party packages the code imports, with every importing file, line
+and node. Packages appear as `package:<ecosystem>/<name>` (for example
+`package:python/ortools`); unmapped ones belong to the `packages` node.
+
 After source edits, from the repository root:
 
 ```bash

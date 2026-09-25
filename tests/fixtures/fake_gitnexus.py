@@ -78,6 +78,9 @@ if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_larg
     rows.append(("src/a.rs", "src/b.rs"))
 if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
+if mode == "packages":
+    # GitNexus resolved a tsconfig path alias; it drops package imports.
+    rows.append(("src/web/app.tsx", "src/web/utils/date.ts"))
 if mode == "out_of_scope":
     rows.append(("src/a.rs", "vendor/lib.rs"))
 if mode == "violation_renamed":

@@ -55,6 +55,76 @@ fn css_warnings(report: &CssReport) -> Vec<String> {
     .collect()
 }
 
+/// One summary line per kind of import ArchGraph could not attribute,
+/// pointing to `archgraph packages`.
+fn package_warnings(report: &PackageReport) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !report.ambiguous.is_empty() {
+        warnings.push(format!(
+            "{} import(s) may name a repository module or a package, so they are not observed; see `archgraph packages`",
+            report.ambiguous.len()
+        ));
+    }
+    if !report.unresolved.is_empty() {
+        warnings.push(format!(
+            "{} dynamic import(s) load a module computed at runtime, so their packages are not observed; see `archgraph packages`",
+            report.unresolved.len()
+        ));
+    }
+    warnings
+}
+
+/// Packages the discovered files import (`provider.packages`), each with the
+/// node owning it and every import with the node owning the importing file,
+/// and the `IMPORTS` edges to them.
+fn imported_packages(
+    root: &Path,
+    validated: &ValidatedConfig,
+    discovered: &[String],
+    files: &[CompiledFile],
+    provided: &[CodeEdge],
+    diagnostics: &mut Diagnostics,
+) -> Result<(PackageReport, Vec<CodeEdge>)> {
+    if let Some(path) = discovered
+        .iter()
+        .find(|path| path.starts_with(PACKAGE_PREFIX))
+    {
+        bail!("file `{path}` would be taken for an imported package (`{PACKAGE_PREFIX}...`) with provider.packages on; rename it or exclude it");
+    }
+    let extraction = crate::provider::packages::extract(root, discovered, provided)
+        .context("cannot read imported packages (provider.packages)")?;
+    diagnostics.warnings.extend(extraction.warnings);
+    diagnostics
+        .warnings
+        .extend(package_warnings(&extraction.report));
+    let mut report = extraction.report;
+    let mut matched = vec![false; validated.package_patterns.len()];
+    let owners: HashMap<&str, Option<&str>> = files
+        .iter()
+        .map(|file| (file.path.as_str(), file.node.as_deref()))
+        .collect();
+    for package in &mut report.packages {
+        for index in validated.package_globs.matches(&package.id) {
+            matched[index] = true;
+        }
+        package.node = mapping::package_owner(&package.id, validated, diagnostics)?;
+        for import in &mut package.imports {
+            import.node = owners
+                .get(import.file.as_str())
+                .copied()
+                .flatten()
+                .map(str::to_owned);
+        }
+    }
+    for (index, _) in matched.iter().enumerate().filter(|(_, hit)| !**hit) {
+        diagnostics.warnings.push(format!(
+            "node `{}` maps `{}`, which matches no imported package; check the name and ecosystem in `archgraph packages`",
+            validated.package_owners[index], validated.package_patterns[index]
+        ));
+    }
+    Ok((report, extraction.edges))
+}
+
 /// No process APIs live here. Even reindexing goes through the provider contract.
 pub async fn compile(
     root: &Path,
@@ -234,13 +304,39 @@ pub async fn compile_with(
         provided.extend(edges);
         report
     });
+    let packages_on = validated.config.provider.packages;
+    let (package_report, package_row_count) = if packages_on {
+        let (report, edges) = imported_packages(
+            &root,
+            validated,
+            &discovered,
+            &files,
+            &provided,
+            &mut diagnostics,
+        )?;
+        let rows = edges.len();
+        provided.extend(edges);
+        (Some(report), rows)
+    } else {
+        (None, 0)
+    };
     let (observed, filtered_edge_count) =
         select_observations(provided, &validated.config.provider)?;
     let observed_edge_count = observed.len();
-    let membership: HashMap<&str, Option<&str>> = files
+    let mut membership: HashMap<&str, Option<&str>> = files
         .iter()
         .map(|file| (file.path.as_str(), file.node.as_deref()))
         .collect();
+    if let Some(report) = &package_report {
+        membership.extend(
+            report
+                .packages
+                .iter()
+                .map(|package| (package.id.as_str(), package.node.as_deref())),
+        );
+    }
+    // A package pseudo-path is not a file path; nothing else may start so.
+    let is_package = |path: &str| packages_on && path.starts_with(PACKAGE_PREFIX);
     let mut anomalies: BTreeMap<(String, String, String), usize> = BTreeMap::new();
     let mut resolved = Vec::new();
     // Edges to files the configuration deliberately leaves out (excluded,
@@ -249,6 +345,7 @@ pub async fn compile_with(
     let ignore_unassigned =
         validated.config.policies.unassigned_files == crate::config::FilePolicy::Ignore;
     let out_of_scope = |path: &str, owner: Option<&Option<&str>>| match owner {
+        _ if is_package(path) => false,
         None => {
             validated.exclude_globs.is_match(path)
                 || !validated
@@ -264,7 +361,11 @@ pub async fn compile_with(
     let mut out_of_scope_edge_count = 0;
     for mut edge in observed {
         let from_path = provider_path(&root, &edge.from_file);
-        let to_path = provider_path(&root, &edge.to_file);
+        let to_path = if is_package(&edge.to_file) {
+            Ok(edge.to_file.clone())
+        } else {
+            provider_path(&root, &edge.to_file)
+        };
         let (from_path, to_path) = match (from_path, to_path) {
             (Ok(from), Ok(to)) => (from, to),
             (from, to) => {
@@ -357,6 +458,8 @@ pub async fn compile_with(
                     observed_file_count: 0,
                     unindexed_file_count: 0,
                     interfaces: node.interfaces.clone(),
+                    packages: Vec::new(),
+                    descendant_package_count: 0,
                 },
             )
         })
@@ -370,8 +473,11 @@ pub async fn compile_with(
                 .push(id.clone());
         }
     }
+    // Coverage asks whether the provider sees a file's dependencies on other
+    // repository files; an import of a package says nothing about that.
     let observed_files: HashSet<&str> = resolved
         .iter()
+        .filter(|edge| !is_package(&edge.evidence.to_file))
         .flat_map(|edge| {
             [
                 edge.evidence.from_file.as_str(),
@@ -407,6 +513,26 @@ pub async fn compile_with(
                 node.descendant_file_count += 1;
                 node.observed_file_count += usize::from(observed);
                 node.unindexed_file_count += usize::from(unindexed);
+                current = parent_id(id);
+            }
+        }
+    }
+    if let Some(report) = &package_report {
+        for package in &report.packages {
+            let Some(owner) = &package.node else {
+                continue;
+            };
+            nodes
+                .get_mut(owner)
+                .context("package owner missing while compiling hierarchy")?
+                .packages
+                .push(package.id.clone());
+            let mut current = Some(owner.as_str());
+            while let Some(id) = current {
+                nodes
+                    .get_mut(id)
+                    .context("ancestor missing while counting packages")?
+                    .descendant_package_count += 1;
                 current = parent_id(id);
             }
         }
@@ -464,6 +590,7 @@ pub async fn compile_with(
         unindexed_file_count: diagnostics.unindexed_files.len(),
         stylesheet_row_count,
         http_row_count,
+        package_row_count,
         aggregated_architecture_edge_count: edges.len(),
         violation_count: violations.len(),
     };
@@ -482,6 +609,7 @@ pub async fn compile_with(
         evidence_notice: EVIDENCE_NOTICE.into(),
         css: css_report,
         http: http_report,
+        packages: package_report,
     };
     Ok(Compiled { ir, cached })
 }
@@ -677,6 +805,8 @@ mod tests {
                     observed_file_count: observed,
                     unindexed_file_count: (total - observed) / 2,
                     interfaces: Vec::new(),
+                    packages: Vec::new(),
+                    descendant_package_count: 0,
                 },
             )
         };

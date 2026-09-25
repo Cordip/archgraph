@@ -3,7 +3,8 @@
 ArchGraph sees only what GitNexus reports. This page lists known gaps,
 how to detect them and what to do about them. Every entry is backed by the
 zammad validation run ([examples/zammad](../examples/zammad/README.md)) or,
-for CSS, by lct-task3 ([examples/lct-task3](../examples/lct-task3/README.md)),
+for CSS, HTTP calls and packages, by lct-task3
+([examples/lct-task3](../examples/lct-task3/README.md)),
 GitNexus 1.6.12. Record new findings here; see [AGENTS.md](../AGENTS.md).
 
 Detect gaps with `observed_file_count` (shown by `show`, `context` and the UI)
@@ -207,6 +208,46 @@ A literal `fetch('/api/items')` does get a `FETCHES` edge (reason
 evaluating base constants and same-file wrappers, and matches them to the
 routes GitNexus reports (README, "HTTP calls between frontend and backend").
 Where GitNexus links a call too, the two observations merge.
+
+## 12. Imports of packages are dropped without a trace
+
+**Symptom.** lct-task3's `backend/planner/core/solver.py` has
+`from ortools.constraint_solver import pywrapcp, routing_enums_pb2`, and
+`backend/tests/test_solver_progress.py` imports it too, but no GitNexus
+query can say who uses OR-Tools: the index has no node for `ortools` and no
+relation from either file to anything outside the repository. The same holds
+for `react`, `leaflet`, `fastapi` and every other package.
+
+**Cause.** GitNexus 1.6.12 turns an import into an edge only when it
+resolves to a repository file. `makeEdgeDrafts`
+(`dist/_shared/scope-resolution/finalize-algorithm.js`) marks an import
+whose `resolveImportTarget` finds no file as `linkStatus: 'unresolved'`, and
+`emitImportEdges`
+(`dist/core/ingestion/scope-resolution/graph-bridge/imports-to-edges.js`)
+skips every edge with `targetFile === null`. The only record is an
+`unresolvedEdges` count that nothing reads. The resolvers say so
+themselves: for TypeScript, "an external package ... resolves to nothing"
+(`languages/typescript/module-resolution.js`); `node_modules` is on the
+default ignore list, so a package is never a target. The schema has no label
+or relation for a package (`dist/core/lbug/schema.js`; `Module` is used for
+COBOL and Ruby only), and the import specifier is kept on in-memory objects
+only: `File` stores `id`, `name`, `filePath` and `content`. The contract test
+`gitnexus_drops_package_imports_and_archgraph_supplies_them` fails once this
+changes.
+
+A related guess: a single-segment Python import resolves by a repository-wide
+suffix match (`resolveAbsoluteFromFiles` in
+`languages/python/import-target.js`), so `import redis` becomes an `IMPORTS`
+edge to any `…/redis.py` in the repository, even one that is not on the
+import path (reproduced: `app/cache.py` with `import redis` gets an edge to
+`tools/redis.py`).
+
+**What ArchGraph does.** `provider.packages: true` makes ArchGraph read
+import statements in Python and TypeScript/JavaScript itself and add
+`IMPORTS` edges from the importing file to `package:<ecosystem>/<name>`
+(README, "Imported packages"). It decides local or package from the
+repository's own files and `package.json` files, not from GitNexus's Python
+guess; an import that could be either is reported, not observed.
 
 ## ArchGraph-side limitations
 

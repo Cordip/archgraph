@@ -10,9 +10,9 @@ pub fn render(projection: &Projection) -> String {
     for node in &projection.nodes {
         let _ = writeln!(
             out,
-            "  {} — {} file(s){}{}{}",
+            "  {} — {}{}{}{}",
             node.title,
-            node.file_count,
+            crate::projection::size(node),
             crate::projection::observed_suffix(node),
             if node.outside_focus {
                 " [outside focus]"
@@ -25,14 +25,7 @@ pub fn render(projection: &Projection) -> String {
                 " [VIOLATION]"
             }
         );
-        let _ = writeln!(
-            out,
-            "    {}",
-            node.file_path
-                .as_deref()
-                .or(node.architecture_id.as_deref())
-                .unwrap_or(&node.id)
-        );
+        let _ = writeln!(out, "    {}", crate::projection::identity(node));
     }
     out.push_str("\nProjected dependencies\n");
     for projected in &projection.edges {

@@ -391,3 +391,117 @@ fn gitnexus_routes_and_archgraph_client_calls_meet() {
         ir["resolved_edges"]
     );
 }
+
+const PACKAGES_YAML: &str = r#"version: 1
+project: {name: packages, root: app, source_roots: [web, solver]}
+provider: {kind: gitnexus, packages: true}
+policies: {unassigned_files: ignore}
+nodes:
+  app: {}
+  app.web: {maps: ["web/**"]}
+  app.solver: {maps: ["solver/**"]}
+"#;
+
+/// GitNexus keeps an IMPORTS edge only when an import resolves to a
+/// repository file and drops every import of a package without a trace, which
+/// is why `provider.packages` exists. If this starts failing, GitNexus
+/// records packages itself and the two sources would have to be reconciled.
+#[test]
+#[ignore = "needs a real GitNexus installation; run with --ignored"]
+fn gitnexus_drops_package_imports_and_archgraph_supplies_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    let repo = temp.path().join("repo");
+    write(
+        &repo,
+        "web/package.json",
+        r#"{"name": "web", "dependencies": {"react": "19.0.0", "leaflet": "1.9.4"}}"#,
+    );
+    write(
+        &repo,
+        "web/src/app.tsx",
+        "import { useState } from 'react'\nimport L from 'leaflet'\nimport { label } from './label'\n\nexport const App = () => label + String(useState) + String(L)\n",
+    );
+    write(&repo, "web/src/label.ts", "export const label = 'hello'\n");
+    write(&repo, "solver/__init__.py", "");
+    write(&repo, "solver/helpers.py", "def helper():\n    return 1\n");
+    write(
+        &repo,
+        "solver/plan.py",
+        "import json\nfrom ortools.constraint_solver import pywrapcp\nfrom solver import helpers\n\n\ndef plan():\n    return pywrapcp, helpers.helper(), json\n",
+    );
+    write(&repo, "architecture.yaml", PACKAGES_YAML);
+    analyze(&repo, &home);
+
+    // GitNexus itself: every IMPORTS edge ends at a repository file.
+    let cypher = isolated(
+        Command::new(gitnexus())
+            .args([
+                "cypher",
+                "MATCH (a:File)-[r:CodeRelation {type: 'IMPORTS'}]->(b) RETURN a.filePath AS source, b.filePath AS target",
+            ])
+            .current_dir(&repo),
+        &home,
+    );
+    assert!(
+        cypher.status.success(),
+        "{}",
+        String::from_utf8_lossy(&cypher.stderr)
+    );
+    let payload: Value = serde_json::from_slice(&cypher.stdout).unwrap();
+    let markdown = payload["markdown"].as_str().unwrap();
+    let targets: Vec<&str> = markdown
+        .lines()
+        .skip(2)
+        .filter_map(|row| row.split('|').nth(2).map(str::trim))
+        .collect();
+    assert!(!targets.is_empty(), "{markdown}");
+    for target in &targets {
+        assert!(
+            repo.join(target).is_file(),
+            "IMPORTS to a non-file {target:?}: {markdown}"
+        );
+    }
+
+    let compile = archgraph(&repo, &home, &["compile"]);
+    assert!(
+        compile.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compile.stderr)
+    );
+    let ir = ir(&repo);
+    let mut packages: Vec<(&str, &str, &str)> = ir["resolved_edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|edge| {
+            edge["evidence"]["to_file"]
+                .as_str()
+                .unwrap()
+                .starts_with("package:")
+        })
+        .map(|edge| {
+            (
+                edge["evidence"]["from_file"].as_str().unwrap(),
+                edge["evidence"]["to_file"].as_str().unwrap(),
+                edge["evidence"]["reason"].as_str().unwrap(),
+            )
+        })
+        .collect();
+    packages.sort();
+    assert_eq!(
+        packages,
+        [
+            ("solver/plan.py", "package:python/ortools", "package-import"),
+            ("web/src/app.tsx", "package:npm/leaflet", "package-import"),
+            ("web/src/app.tsx", "package:npm/react", "package-import"),
+        ],
+        "{:#}",
+        ir["resolved_edges"]
+    );
+    assert!(
+        ir["packages"]["ambiguous"].as_array().unwrap().is_empty(),
+        "{:#}",
+        ir["packages"]
+    );
+}

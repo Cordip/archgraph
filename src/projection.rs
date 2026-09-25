@@ -15,6 +15,8 @@ pub enum EntryKind {
     File,
     DirectFiles,
     Boundary,
+    /// An imported package (`provider.packages`), at its owner's level.
+    Package,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,7 +28,14 @@ pub struct NodeSummary {
     pub descendant_file_count: usize,
     pub observed_file_count: usize,
     pub interfaces: Vec<Interface>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub descendant_package_count: usize,
 }
+
+fn is_zero(value: &usize) -> bool {
+    *value == 0
+}
+
 /// Human-facing identity of a projection entry: the architecture ID or file
 /// path, never the namespaced `node:`/`file:` UI identity.
 pub fn display_name(node: &ProjectionNode) -> String {
@@ -36,6 +45,20 @@ pub fn display_name(node: &ProjectionNode) -> String {
         EntryKind::Architecture => id.to_owned(),
         EntryKind::DirectFiles => format!("{id} (direct files)"),
         EntryKind::Boundary => format!("{id} (boundary)"),
+        EntryKind::Package => node.id.clone(),
+    }
+}
+
+/// What names an entry in a listing: its file path, package ID or
+/// architecture ID.
+pub fn identity(node: &ProjectionNode) -> &str {
+    match node.entry_kind {
+        EntryKind::Package => &node.id,
+        _ => node
+            .file_path
+            .as_deref()
+            .or(node.architecture_id.as_deref())
+            .unwrap_or(&node.id),
     }
 }
 
@@ -47,6 +70,18 @@ impl Projection {
             .find(|node| node.id == id)
             .map(display_name)
             .unwrap_or_else(|| id.to_owned())
+    }
+}
+
+/// "3 file(s)", with the packages a node owns, or what a package entry is.
+pub fn size(node: &ProjectionNode) -> String {
+    if let Some(package) = &node.package {
+        return format!("{} package", package.ecosystem.title());
+    }
+    match node.package_count {
+        0 => format!("{} file(s)", node.file_count),
+        packages if node.file_count == 0 => format!("{packages} package(s)"),
+        packages => format!("{} file(s), {packages} package(s)", node.file_count),
     }
 }
 
@@ -67,6 +102,7 @@ impl From<&CompiledNode> for NodeSummary {
             descendant_file_count: node.descendant_file_count,
             observed_file_count: node.observed_file_count,
             interfaces: node.interfaces.clone(),
+            descendant_package_count: node.descendant_package_count,
         }
     }
 }
@@ -87,6 +123,12 @@ pub struct ProjectionNode {
     pub interfaces: Vec<Interface>,
     pub outside_focus: bool,
     pub violation_rule_ids: Vec<String>,
+    /// Architecture entries: imported packages their subtree owns.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub package_count: usize,
+    /// Package entries: the package and every import of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package: Option<PackageUse>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -198,6 +240,8 @@ fn architecture_entry(node: &CompiledNode, outside: bool) -> ProjectionNode {
         interfaces: node.interfaces.clone(),
         outside_focus: outside,
         violation_rule_ids: Vec::new(),
+        package_count: node.descendant_package_count,
+        package: None,
     }
 }
 fn file_entry(path: &str, node: &CompiledNode) -> ProjectionNode {
@@ -214,6 +258,41 @@ fn file_entry(path: &str, node: &CompiledNode) -> ProjectionNode {
         interfaces: Vec::new(),
         outside_focus: false,
         violation_rule_ids: Vec::new(),
+        package_count: 0,
+        package: None,
+    }
+}
+/// An imported package, drawn at the level of the node owning it.
+fn package_entry(id: &str, owner: &CompiledNode, package: Option<&PackageUse>) -> ProjectionNode {
+    ProjectionNode {
+        id: id.into(),
+        title: package.map_or_else(
+            || id.trim_start_matches(PACKAGE_PREFIX).to_owned(),
+            |package| package.name.clone(),
+        ),
+        entry_kind: EntryKind::Package,
+        architecture_id: Some(owner.id.clone()),
+        node_kind: None,
+        file_path: None,
+        file_count: 0,
+        observed_file_count: None,
+        description: package.map(|package| {
+            format!(
+                "{} package imported by {} file(s).",
+                package.ecosystem.title(),
+                package
+                    .imports
+                    .iter()
+                    .map(|import| &import.file)
+                    .collect::<BTreeSet<_>>()
+                    .len()
+            )
+        }),
+        interfaces: Vec::new(),
+        outside_focus: false,
+        violation_rule_ids: Vec::new(),
+        package_count: 0,
+        package: package.cloned(),
     }
 }
 fn direct_entry(focus: &CompiledNode) -> ProjectionNode {
@@ -232,6 +311,8 @@ fn direct_entry(focus: &CompiledNode) -> ProjectionNode {
         interfaces: Vec::new(),
         outside_focus: false,
         violation_rule_ids: Vec::new(),
+        package_count: 0,
+        package: None,
     }
 }
 fn boundary_entry(focus: &CompiledNode) -> ProjectionNode {
@@ -240,11 +321,15 @@ fn boundary_entry(focus: &CompiledNode) -> ProjectionNode {
         file_count: focus.descendant_file_count,
         observed_file_count: None,
         description: Some("An authored manual edge names the focus itself; it cannot be attributed to a particular child or file.".into()),
-        interfaces: focus.interfaces.clone(), outside_focus: false, violation_rule_ids: Vec::new() }
+        interfaces: focus.interfaces.clone(), outside_focus: false, violation_rule_ids: Vec::new(),
+        package_count: 0, package: None }
 }
+
+type Packages<'a> = BTreeMap<&'a str, &'a PackageUse>;
 
 fn representative(
     ir: &ArchitectureIr,
+    packages: &Packages,
     focus: &CompiledNode,
     owner: &str,
     file: Option<&str>,
@@ -266,6 +351,11 @@ fn representative(
         return Ok(architecture_entry(child, false));
     }
     match file {
+        // Packages are few and not files: each is its own entry, also next
+        // to authored children.
+        Some(id) if id.starts_with(PACKAGE_PREFIX) && ir.packages.is_some() => {
+            Ok(package_entry(id, focus, packages.get(id).copied()))
+        }
         Some(path) if focus.children.is_empty() => Ok(file_entry(path, focus)),
         Some(_) => Ok(direct_entry(focus)),
         None => Ok(boundary_entry(focus)),
@@ -360,7 +450,17 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
     };
     let index = ViolationIndex::new(&all_violations);
     let mut rule_cache: BTreeMap<EdgeKey, EdgeMarks> = BTreeMap::new();
+    let packages: Packages = ir
+        .packages
+        .iter()
+        .flat_map(|report| &report.packages)
+        .map(|package| (package.id.as_str(), package))
+        .collect();
     let mut entries: BTreeMap<String, ProjectionNode> = BTreeMap::new();
+    for id in &focus.packages {
+        let entry = package_entry(id, focus, packages.get(id.as_str()).copied());
+        entries.insert(entry.id.clone(), entry);
+    }
     if focus.children.is_empty() {
         for path in &focus.direct_files {
             let entry = file_entry(path, focus);
@@ -385,8 +485,14 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         if !is_within(&edge.from, focus_id) && !is_within(&edge.to, focus_id) {
             continue;
         }
-        let from = representative(ir, focus, &edge.from, Some(&edge.evidence.from_file))?;
-        let to = representative(ir, focus, &edge.to, Some(&edge.evidence.to_file))?;
+        let from = representative(
+            ir,
+            &packages,
+            focus,
+            &edge.from,
+            Some(&edge.evidence.from_file),
+        )?;
+        let to = representative(ir, &packages, focus, &edge.to, Some(&edge.evidence.to_file))?;
         let from_id = from.id.clone();
         let to_id = to.id.clone();
         let marks = rule_cache
@@ -418,8 +524,8 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         if !is_within(&edge.from, focus_id) && !is_within(&edge.to, focus_id) {
             continue;
         }
-        let from = representative(ir, focus, &edge.from, None)?;
-        let to = representative(ir, focus, &edge.to, None)?;
+        let from = representative(ir, &packages, focus, &edge.from, None)?;
+        let to = representative(ir, &packages, focus, &edge.to, None)?;
         let from_id = from.id.clone();
         let to_id = to.id.clone();
         entries.entry(from_id.clone()).or_insert(from);
