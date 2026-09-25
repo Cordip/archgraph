@@ -116,6 +116,12 @@ rules:
     kind: no_cycles
     within: app
     edge_types: [IMPORTS]
+  # Upper to lower. Persistence implements the domain's ports, so it sits
+  # above the domain; a layer may use any layer below it.
+  - id: layering
+    kind: layers
+    layers: [app.api, app.persistence, app.domain]
+    edge_types: [IMPORTS]
 ```
 
 Every dotted parent must exist, including `external` for `external.stripe`.
@@ -161,6 +167,7 @@ Rules evaluate observed relationships only:
 | `deny_dependency` | Reject selected observed dependencies from the source to the target subtree. |
 | `allow_only` | Permit dependencies internal to the source subtree and to listed target subtrees; reject other selected outbound dependencies. |
 | `no_cycles` | Project to immediate children of `within`; report each strongly connected component containing at least two children, with a suggested cut (below). |
+| `layers` | `layers` lists nodes from upper to lower; an entry may be a list of peer nodes sharing a layer. Reject dependencies from a layer to any layer above it. Downward dependencies, skipping layers, dependencies between peers and dependencies involving unlisted nodes are allowed. Descendants belong to their node's layer; a node may appear in one layer only. |
 
 A cycle report alone does not say where to intervene, so each `no_cycles`
 violation also carries `layer_order` and `suggested_cuts`. The layer order puts

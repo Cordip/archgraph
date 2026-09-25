@@ -115,7 +115,7 @@ edits in the zammad checkout and a forced reindex), resolved TypeScript/Vue
 imports rose from about 1,900 to 8,627. Frontend coverage rose to 89–97%. The
 check then reports one more real violation and one more cycle:
 
-- `frontend-shared-does-not-know-apps-mobile`:
+- `frontend-apps-above-shared` (`shared` depends on the `mobile` app above it):
   `app/frontend/shared/composables/useStickyHeader.ts` has
   `import type LayoutHeader from '#mobile/components/layout/LayoutHeader.vue'`.
 - `no-frontend-cycles`: `mobile` and `shared` form a cycle of 994 observed

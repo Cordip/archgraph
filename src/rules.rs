@@ -1,7 +1,7 @@
 //! Rules operate only on observed edges. Manual architectural intent is never
 //! silently treated as source-code evidence.
 use crate::{
-    config::{immediate_child, is_within, RuleConfig},
+    config::{immediate_child, is_within, Layer, RuleConfig},
     model::*,
 };
 use std::collections::{BTreeMap, BTreeSet};
@@ -51,6 +51,18 @@ pub fn evaluate(rules: &[RuleConfig], edges: &[ResolvedEdge], limit: usize) -> V
                             .any(|target| in_scope(&edge.to, target, *include_descendants))
                 });
                 violations.extend(dependency_violations(rule, forbidden, limit));
+            }
+            RuleConfig::Layers {
+                layers, edge_types, ..
+            } => {
+                let upward = edges.iter().filter(|edge| {
+                    edge_types.contains(&edge.kind)
+                        && matches!(
+                            (layer_index(layers, &edge.from), layer_index(layers, &edge.to)),
+                            (Some(from), Some(to)) if to < from
+                        )
+                });
+                violations.extend(dependency_violations(rule, upward, limit));
             }
             RuleConfig::NoCycles {
                 within, edge_types, ..
@@ -163,6 +175,13 @@ pub fn evaluate(rules: &[RuleConfig], edges: &[ResolvedEdge], limit: usize) -> V
     violations
 }
 
+/// The layer (0 = upper) whose member is `node` or one of its ancestors.
+fn layer_index(layers: &[Layer], node: &str) -> Option<usize> {
+    layers
+        .iter()
+        .position(|layer| layer.nodes().iter().any(|member| is_within(node, member)))
+}
+
 fn dependency_violations<'a>(
     rule: &RuleConfig,
     edges: impl IntoIterator<Item = &'a ResolvedEdge>,
@@ -210,7 +229,9 @@ pub fn violation_observations<'a>(
     match rule {
         // Dependency rules decide by owner nodes and kind alone, and group
         // violations by exactly those, so equal owners and kind means included.
-        RuleConfig::DenyDependency { .. } | RuleConfig::AllowOnly { .. } => edges
+        RuleConfig::DenyDependency { .. }
+        | RuleConfig::AllowOnly { .. }
+        | RuleConfig::Layers { .. } => edges
             .iter()
             .filter(|edge| {
                 violation.from.as_ref() == Some(&edge.from)
@@ -507,6 +528,46 @@ mod tests {
             .iter()
             .all(|e| !e.evidence.is_empty()));
     }
+    #[test]
+    fn layers_reject_only_upward_dependencies_with_complete_observations() {
+        let rule = RuleConfig::Layers {
+            id: "layers".into(),
+            layers: vec![
+                Layer::Many(vec!["app.web".into(), "app.cli".into()]),
+                Layer::One("app.domain".into()),
+                Layer::One("app.db".into()),
+            ],
+            edge_types: vec!["IMPORTS".into()],
+        };
+        let edges = vec![
+            edge("app.web.x", "app.domain"),   // down: fine
+            edge("app.web.x", "app.db.y"),     // skipping a layer: fine
+            edge("app.web.x", "app.cli"),      // peers: fine
+            edge("app.domain.a", "app.web.x"), // up
+            edge("app.db.y", "app.domain.b"),  // up
+            edge("app.db.z", "app.domain.b"),  // up, same owners as above
+            edge("app.db.y", "app.other"),     // unlisted target: fine
+            edge("app.other", "app.web"),      // unlisted source: fine
+        ];
+        let found = evaluate(std::slice::from_ref(&rule), &edges, 20);
+        let pairs: Vec<_> = found
+            .iter()
+            .map(|v| (v.from.clone().unwrap(), v.to.clone().unwrap(), v.count))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("app.db.y".into(), "app.domain.b".into(), 1),
+                ("app.db.z".into(), "app.domain.b".into(), 1),
+                ("app.domain.a".into(), "app.web.x".into(), 1),
+            ]
+        );
+        assert!(found.iter().all(|v| v.kind == "layers"));
+        for violation in &found {
+            assert_eq!(violation_observations(&rule, violation, &edges).len(), 1);
+        }
+    }
+
     #[test]
     fn scc_handles_disjoint_cycles_and_dag() {
         let graph = BTreeMap::from([

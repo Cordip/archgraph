@@ -223,6 +223,31 @@ pub enum RuleConfig {
         #[serde(default = "imports")]
         edge_types: Vec<String>,
     },
+    /// Layers from upper to lower: a layer may depend on the layers below
+    /// it, never on one above. Descendants belong to their layer.
+    Layers {
+        id: String,
+        layers: Vec<Layer>,
+        #[serde(default = "imports")]
+        edge_types: Vec<String>,
+    },
+}
+
+/// One node, or several peer nodes sharing a layer.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Layer {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Layer {
+    pub fn nodes(&self) -> &[String] {
+        match self {
+            Self::One(node) => std::slice::from_ref(node),
+            Self::Many(nodes) => nodes,
+        }
+    }
 }
 
 impl RuleConfig {
@@ -230,7 +255,8 @@ impl RuleConfig {
         match self {
             Self::DenyDependency { id, .. }
             | Self::AllowOnly { id, .. }
-            | Self::NoCycles { id, .. } => id,
+            | Self::NoCycles { id, .. }
+            | Self::Layers { id, .. } => id,
         }
     }
     pub fn kind(&self) -> &str {
@@ -238,6 +264,7 @@ impl RuleConfig {
             Self::DenyDependency { .. } => "deny_dependency",
             Self::AllowOnly { .. } => "allow_only",
             Self::NoCycles { .. } => "no_cycles",
+            Self::Layers { .. } => "layers",
         }
     }
     pub fn references(&self) -> Vec<&str> {
@@ -249,13 +276,19 @@ impl RuleConfig {
                 refs
             }
             Self::NoCycles { within, .. } => vec![within],
+            Self::Layers { layers, .. } => layers
+                .iter()
+                .flat_map(Layer::nodes)
+                .map(String::as_str)
+                .collect(),
         }
     }
     pub fn edge_types(&self) -> &[String] {
         match self {
             Self::DenyDependency { edge_types, .. }
             | Self::AllowOnly { edge_types, .. }
-            | Self::NoCycles { edge_types, .. } => edge_types,
+            | Self::NoCycles { edge_types, .. }
+            | Self::Layers { edge_types, .. } => edge_types,
         }
     }
 }
@@ -487,6 +520,20 @@ pub fn validate(mut config: ArchitectureConfig) -> Result<ValidatedConfig> {
                 bail!("rule `{}` references missing node `{reference}`", rule.id());
             }
         }
+        if let RuleConfig::Layers { id, layers, .. } = rule {
+            if layers.len() < 2 || layers.iter().any(|layer| layer.nodes().is_empty()) {
+                bail!("rule `{id}`: layers needs at least two nonempty layers, upper first");
+            }
+            // A node inside another listed node would belong to two layers.
+            let members = rule.references();
+            for (index, a) in members.iter().enumerate() {
+                for b in &members[index + 1..] {
+                    if overlaps(a, b) {
+                        bail!("rule `{id}`: `{a}` and `{b}` overlap; each node may belong to one layer only");
+                    }
+                }
+            }
+        }
     }
     config.edges.sort_by(|a, b| a.id.cmp(&b.id));
     config.rules.sort_by(|a, b| a.id().cmp(b.id()));
@@ -513,6 +560,31 @@ mod tests {
         assert!(is_within("app.foo.bar", "app.foo"));
         assert!(!is_within("app.foobar", "app.foo"));
         assert_eq!(immediate_child("app.foo.bar", "app"), Some("app.foo"));
+    }
+    #[test]
+    fn layers_need_two_disjoint_layers_of_known_nodes() {
+        let nodes = "  app.a: {}\n  app.a.x: {}\n  app.b: {}\n  app.c: {}\n";
+        let with = |layers: &str| {
+            parse(&format!(
+                "{BASE}{nodes}rules:\n- {{id: l, kind: layers, layers: {layers}}}\n"
+            ))
+        };
+        let valid = with("[[app.a, app.b], app.c]").unwrap();
+        let RuleConfig::Layers { layers, .. } = &valid.config.rules[0] else {
+            panic!("not a layers rule");
+        };
+        assert_eq!(layers[0].nodes(), ["app.a", "app.b"]);
+        assert_eq!(layers[1].nodes(), ["app.c"]);
+        for (layers, message) in [
+            ("[app.a]", "at least two nonempty layers"),
+            ("[app.a, []]", "at least two nonempty layers"),
+            ("[app.a, app.a.x]", "overlap"),
+            ("[[app.a, app.b], app.a]", "overlap"),
+            ("[app.a, app.missing]", "missing node `app.missing`"),
+        ] {
+            let error = format!("{:#}", with(layers).unwrap_err());
+            assert!(error.contains(message), "{layers}: {error}");
+        }
     }
     #[test]
     fn missing_parent_is_actionable() {

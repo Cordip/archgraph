@@ -107,3 +107,10 @@ rules:
     kind: no_cycles
     within: app.billing
     edge_types: [IMPORTS]
+
+  # Upper to lower. Persistence implements the domain's ports, so it sits
+  # above the domain; a layer may use any layer below it.
+  - id: billing-layering
+    kind: layers
+    layers: [app.billing.api, app.billing.persistence, app.billing.domain]
+    edge_types: [IMPORTS]

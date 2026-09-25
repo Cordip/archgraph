@@ -121,15 +121,10 @@ rules:
     from: zammad.backend
     to: zammad.tests
     edge_types: *observed
-  - id: frontend-shared-does-not-know-apps-desktop
-    kind: deny_dependency
-    from: zammad.frontend.shared
-    to: zammad.frontend.desktop
-    edge_types: *observed
-  - id: frontend-shared-does-not-know-apps-mobile
-    kind: deny_dependency
-    from: zammad.frontend.shared
-    to: zammad.frontend.mobile
+  # The apps build on shared code; shared code knows neither app.
+  - id: frontend-apps-above-shared
+    kind: layers
+    layers: [[zammad.frontend.desktop, zammad.frontend.mobile], zammad.frontend.shared]
     edge_types: *observed
   - id: desktop-does-not-use-mobile
     kind: deny_dependency
