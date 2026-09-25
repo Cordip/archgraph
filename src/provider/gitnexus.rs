@@ -12,6 +12,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use std::{
     ffi::OsString,
+    io::{Read, Seek, SeekFrom},
     path::{Path, PathBuf},
     process::Stdio,
     time::Duration,
@@ -165,24 +166,44 @@ impl GitNexusCliProvider {
     }
 
     async fn query(&self, query: &str) -> Result<String> {
+        // GitNexus (Node) exits before draining a piped stdout, truncating
+        // results at the 64 KiB pipe buffer. A regular file receives everything.
+        let capture =
+            tempfile::tempfile().context("cannot create a temporary file for GitNexus output")?;
         let mut command = self.command();
-        command.args(self.query_args(query));
-        let result = timeout(Duration::from_secs(300), command.output())
+        command
+            .args(self.query_args(query))
+            .stdout(Stdio::from(
+                capture
+                    .try_clone()
+                    .context("cannot share the GitNexus output file")?,
+            ))
+            .stderr(Stdio::piped());
+        let execute_error = |source| ProviderError::Execute {
+            command: self.executable.to_string_lossy().into_owned(),
+            source,
+        };
+        // Not `Command::output()`: tokio would replace the file with a pipe.
+        let child = command.spawn().map_err(execute_error)?;
+        let result = timeout(Duration::from_secs(300), child.wait_with_output())
             .await
             .map_err(|_| ProviderError::Timeout("cypher query".into()))?
-            .map_err(|source| ProviderError::Execute {
-                command: self.executable.to_string_lossy().into_owned(),
-                source,
-            })?;
+            .map_err(execute_error)?;
+        let mut stdout = Vec::new();
+        let mut capture = capture;
+        capture
+            .seek(SeekFrom::Start(0))
+            .and_then(|_| capture.read_to_end(&mut stdout))
+            .context("cannot read captured GitNexus output")?;
         if !result.status.success() {
             return Err(ProviderError::Command {
                 operation: "cypher query".into(),
                 status: result.status.to_string(),
-                detail: failure_detail(&result.stdout, &result.stderr),
+                detail: failure_detail(&stdout, &result.stderr),
             }
             .into());
         }
-        String::from_utf8(result.stdout).map_err(|_| compatibility("stdout is not UTF-8"))
+        String::from_utf8(stdout).map_err(|_| compatibility("stdout is not UTF-8"))
     }
 }
 

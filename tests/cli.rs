@@ -140,6 +140,20 @@ fn json_show_context_and_check_are_machine_readable() {
 }
 
 #[test]
+fn provider_output_larger_than_a_pipe_buffer_is_not_truncated() {
+    let fixture = Fixture::new();
+    let output = fixture.run(&["compile", "--json"], "node_like_large");
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["stats"]["observed_import_count"], 1);
+}
+
+#[test]
 fn pagination_uses_argv_cwd_and_a_final_empty_page() {
     let fixture = Fixture::new();
     let output = fixture.run(&["compile", "--json"], "cycle");

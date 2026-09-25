@@ -41,7 +41,7 @@ if "CodeRelation {type: 'IMPORTS'}" not in query or "ORDER BY source, target" no
     sys.exit("unexpected import query")
 offset, size = map(int, match.groups())
 rows = []
-if mode in ("violation", "cycle", "bad_count", "bad_confidence"):
+if mode in ("violation", "cycle", "bad_count", "bad_confidence", "node_like_large"):
     rows.append(("src/a.rs", "src/b.rs"))
 if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
@@ -49,6 +49,17 @@ page = rows[offset:offset + size]
 table = "| source | target | confidence | reason |\n| --- | --- | --- | --- |"
 for source, target in page:
     confidence = "NaN" if mode == "bad_confidence" else "1.0"
-    table += f"\n| {source} | {target} | {confidence} | static\\|import |"
+    reason = "x" * 200_000 if mode == "node_like_large" else "static\\|import"
+    table += f"\n| {source} | {target} | {confidence} | {reason} |"
 count = len(page) + (1 if mode == "bad_count" else 0)
-print(json.dumps({"markdown": table, "row_count": count}))
+payload = json.dumps({"markdown": table, "row_count": count}) + "\n"
+if mode == "node_like_large":
+    # Like Node: non-blocking stdout, then exit without draining. A pipe keeps
+    # only what fits in its buffer; a regular file receives the whole payload.
+    os.set_blocking(1, False)
+    try:
+        os.write(1, payload.encode())
+    except BlockingIOError:
+        pass
+    os._exit(0)
+sys.stdout.write(payload)
