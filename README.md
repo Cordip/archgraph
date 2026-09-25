@@ -186,6 +186,17 @@ disappeared. `check --no-baseline` shows everything; `--baseline PATH`
 chooses another file. Regenerate the baseline deliberately after paying off
 debt, never to make a failing check pass.
 
+Moving files does not break the baseline. It records the Git commit it was
+taken at, and when observations are both new and missing, `check` asks Git
+which files were renamed between that commit and the working tree, committed
+or not, including untracked and edited moves (Git's usual 50% similarity).
+Accepted observations follow their files, and `check` reports how many did.
+Git's index and object store are left untouched: the detection runs on a
+temporary copy of the index. A shallow CI clone may lack the baseline commit;
+`check` then warns and treats moved files as new, so fetch enough history.
+Outside Git, or with a baseline written before this existed, there is no
+rename matching.
+
 On zammad, the backend cycle (202 observations) is accepted by the baseline.
 Checking the variant with resolved frontend imports against it fails with
 exactly one new observation for the dependency rule,

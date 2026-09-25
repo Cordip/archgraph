@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
 };
 
@@ -39,6 +39,10 @@ impl From<(&str, &EdgeEvidence)> for BaselineEntry {
 pub struct Baseline {
     pub schema_version: u32,
     pub note: String,
+    /// Git commit the baseline was taken at; lets `check` follow files
+    /// renamed since then.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
     pub entries: Vec<BaselineEntry>,
 }
 
@@ -91,10 +95,11 @@ pub fn load(path: &Path) -> Result<Option<Baseline>> {
     Ok(Some(baseline))
 }
 
-pub fn write(path: &Path, entries: &BTreeSet<BaselineEntry>) -> Result<()> {
+pub fn write(path: &Path, entries: &BTreeSet<BaselineEntry>, commit: Option<String>) -> Result<()> {
     let baseline = Baseline {
         schema_version: SCHEMA_VERSION,
         note: "Accepted architecture violations. `archgraph check` fails only on observations not listed here. Regenerate deliberately with `archgraph baseline`.".into(),
+        commit,
         entries: entries.iter().cloned().collect(),
     };
     let mut bytes = serde_json::to_vec_pretty(&baseline)?;
@@ -116,24 +121,52 @@ pub struct Comparison<'a> {
     pub accepted_entry_count: usize,
     /// Baseline entries no longer observed anywhere: debt that was paid off.
     pub fixed_entry_count: usize,
+    /// Baseline entries still observed, but under renamed file paths.
+    pub renamed_entry_count: usize,
 }
 
+impl Comparison<'_> {
+    /// Worth asking Git about renames: something is new and something is gone.
+    pub fn may_involve_renames(&self) -> bool {
+        !self.new.is_empty() && self.fixed_entry_count > 0
+    }
+}
+
+/// `renames` maps old to new file paths (see `vcs::renames_since`); an
+/// accepted observation keeps its acceptance when its files move.
 pub fn compare<'a>(
     ir: &ArchitectureIr,
     violations: &[&'a Violation],
     baseline: &Baseline,
+    renames: &BTreeMap<String, String>,
 ) -> Comparison<'a> {
-    let accepted: BTreeSet<&BaselineEntry> = baseline.entries.iter().collect();
+    let moved = |path: &String| renames.get(path).unwrap_or(path).clone();
     let current = current_entries(ir);
+    let mut renamed_entry_count = 0;
+    let accepted: BTreeSet<BaselineEntry> = baseline
+        .entries
+        .iter()
+        .map(|entry| {
+            let followed = BaselineEntry {
+                from_file: moved(&entry.from_file),
+                to_file: moved(&entry.to_file),
+                ..entry.clone()
+            };
+            if &followed != entry && current.contains(&followed) {
+                renamed_entry_count += 1;
+            }
+            followed
+        })
+        .collect();
     let mut comparison = Comparison {
         new: Vec::new(),
         accepted: Vec::new(),
         accepted_entry_count: baseline.entries.len(),
-        fixed_entry_count: baseline
-            .entries
+        fixed_entry_count: accepted
             .iter()
             .filter(|entry| !current.contains(entry))
             .count(),
+        renamed_entry_count,
     };
     for &violation in violations {
         let new_entries: Vec<_> = violation_entries(ir, violation)

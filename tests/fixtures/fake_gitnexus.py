@@ -63,6 +63,9 @@ if mode == "cycle":
     rows.append(("src/b.rs", "src/a.rs"))
 if mode == "out_of_scope":
     rows.append(("src/a.rs", "vendor/lib.rs"))
+if mode == "violation_renamed":
+    # The baseline's src/a.rs, moved to a path the same node still maps.
+    rows.append(("src/a_renamed.rs", "src/b.rs"))
 if mode == "violation_grown":
     rows.extend([("src/a.rs", "src/b.rs"), ("src/a2.rs", "src/b.rs")])
 page = rows[offset:offset + size]

@@ -7,7 +7,7 @@ use crate::{
     provider::{gitnexus::GitNexusCliProvider, ReindexMode},
     render,
     rules::violation_touches,
-    server, suggest,
+    server, suggest, vcs,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -264,9 +264,28 @@ pub async fn run(cli: Cli) -> Result<u8> {
             } else {
                 baseline::load(&baseline_path)?
             };
-            let comparison = loaded
+            let no_renames = std::collections::BTreeMap::new();
+            let mut comparison = loaded
                 .as_ref()
-                .map(|loaded| baseline::compare(&ir, &violations, loaded));
+                .map(|loaded| baseline::compare(&ir, &violations, loaded, &no_renames));
+            // Files moved since the baseline would otherwise turn accepted
+            // observations into new ones.
+            let mut rename_error = None;
+            if let (Some(first), Some(loaded)) = (&comparison, &loaded) {
+                if let (true, Some(commit)) = (first.may_involve_renames(), &loaded.commit) {
+                    match vcs::renames_since(&root, commit) {
+                        Ok(renames) if !renames.is_empty() => {
+                            comparison =
+                                Some(baseline::compare(&ir, &violations, loaded, &renames));
+                        }
+                        Ok(_) => {}
+                        Err(error) => rename_error = Some(format!("{error:#}")),
+                    }
+                }
+            }
+            if let Some(error) = &rename_error {
+                eprintln!("warning: renamed files cannot be matched to the baseline: {error}");
+            }
             let failing: Vec<&Violation> = match &comparison {
                 Some(comparison) => comparison.new.iter().map(|new| new.violation).collect(),
                 None => violations.clone(),
@@ -315,6 +334,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     "path": baseline_path.to_string_lossy().replace('\\', "/"),
                     "accepted_observations": comparison.accepted_entry_count,
                     "fixed_observations": comparison.fixed_entry_count,
+                    "renamed_observations": comparison.renamed_entry_count,
                     "accepted_violations": comparison.accepted.iter().map(|v| &v.rule_id).collect::<Vec<_>>(),
                 }));
                 outln!(
@@ -336,6 +356,12 @@ pub async fn run(cli: Cli) -> Result<u8> {
                         comparison.fixed_entry_count,
                         comparison.accepted.len()
                     );
+                    if comparison.renamed_entry_count > 0 {
+                        outln!(
+                            "{} accepted observation(s) follow files renamed since the baseline; run `archgraph baseline` to record the new paths.",
+                            comparison.renamed_entry_count
+                        );
+                    }
                     outln!(
                         "{} architecture violation(s) with observations not in the baseline",
                         failing.len()
@@ -374,7 +400,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
         } => {
             let path = baseline_file(&root, &config_path, baseline_arg);
             let entries = baseline::current_entries(&ir);
-            baseline::write(&path, &entries)?;
+            baseline::write(&path, &entries, vcs::head_commit(&root))?;
             outln!(
                 "Accepted {} observation(s) from {} violation(s) in {}",
                 entries.len(),

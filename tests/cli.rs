@@ -554,3 +554,49 @@ fn check_prints_a_cycle_as_members_cut_and_layers() {
     // The one-line summary stays in JSON, not in the text report.
     assert!(!text.contains("SCC"), "{text}");
 }
+
+#[test]
+fn a_file_moved_since_the_baseline_keeps_its_accepted_observations() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(root)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    // Git does not match empty files as renames.
+    let source: String = (0..30).map(|line| format!("fn f{line}() {{}}\n")).collect();
+    std::fs::write(root.join("src/a.rs"), &source).unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    assert!(fixture.run(&["baseline"], "violation").status.success());
+    let baseline_path = root.join("architecture.baseline.json");
+    let baseline: Value =
+        serde_json::from_str(&std::fs::read_to_string(&baseline_path).unwrap()).unwrap();
+    assert_eq!(baseline["commit"].as_str().unwrap().len(), 40);
+
+    // Moved and edited in the working tree, not committed.
+    std::fs::remove_file(root.join("src/a.rs")).unwrap();
+    std::fs::write(root.join("src/a_renamed.rs"), source + "fn extra() {}\n").unwrap();
+    let output = fixture.run(&["check"], "violation_renamed");
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(output.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("1 accepted observation(s) follow files renamed since the baseline"),
+        "{text}"
+    );
+
+    // Without the commit there is nothing to follow: the move looks new.
+    let mut without_commit = baseline.clone();
+    without_commit.as_object_mut().unwrap().remove("commit");
+    std::fs::write(&baseline_path, without_commit.to_string()).unwrap();
+    assert_eq!(
+        fixture.run(&["check"], "violation_renamed").status.code(),
+        Some(2)
+    );
+}
