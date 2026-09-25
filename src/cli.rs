@@ -141,6 +141,14 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Compile fresh and list mapped files that no observed code uses, by
+    /// node, without declared entry points (`project.entry_points`) and
+    /// unindexed files. Dead-code candidates, not proof.
+    Unused {
+        node: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
     /// Compile fresh and emit agent-oriented architecture context.
     Context {
         node: String,
@@ -226,7 +234,8 @@ pub async fn run(cli: Cli) -> Result<u8> {
         Commands::Check { node, .. }
         | Commands::Show { node, .. }
         | Commands::Styles { node, .. }
-        | Commands::Http { node, .. } => node.as_deref(),
+        | Commands::Http { node, .. }
+        | Commands::Unused { node, .. } => node.as_deref(),
         Commands::Context { node, .. } => Some(node.as_str()),
         _ => None,
     };
@@ -533,6 +542,15 @@ pub async fn run(cli: Cli) -> Result<u8> {
                     "{}",
                     render::packages::render(&selected, package.as_deref())
                 );
+            }
+            Ok(0)
+        }
+        Commands::Unused { node, json } => {
+            let report = render::unused::select(&ir, node.as_deref());
+            if json {
+                outln!("{}", render::json::render(&report)?);
+            } else {
+                out!("{}", render::unused::render(&ir, &report));
             }
             Ok(0)
         }
@@ -933,6 +951,7 @@ mod tests {
             vec!["archgraph", "show", "--format", "mermaid"],
             vec!["archgraph", "context", "app", "--evidence-limit", "50"],
             vec!["archgraph", "packages", "ortools", "--json"],
+            vec!["archgraph", "unused", "app.a", "--json"],
             vec!["archgraph", "serve", "--root", "/tmp"],
         ] {
             assert!(Cli::try_parse_from(args).is_ok());

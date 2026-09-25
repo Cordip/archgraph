@@ -273,6 +273,9 @@ archgraph http app.web --json
 archgraph packages
 archgraph packages ortools --json
 
+archgraph unused
+archgraph unused app.web --json
+
 archgraph serve
 archgraph serve --reindex --port 7331 --host 127.0.0.1
 ```
@@ -678,6 +681,15 @@ Each node counts its descendant `entry_point_count` and
 its subtree with an observed dependency on a file inside it. A node that is
 not top-level, has indexed files, declares no entry point and has no outside
 user may be unused as a whole.
+
+`archgraph unused [NODE] [--json]` lists the files with no observed users
+by node (entry points and unindexed files left out), the topmost nodes that
+nothing outside uses, the number of declared entry points and unindexed
+files, and the coverage of the scope: where few files have any observed
+dependency, most of the list is unseen rather than unused. It exits 0; it is
+a report, not a check. `context` gives the counts and the first 20 files of
+its subtree, and the UI marks entry points and files with no observed users
+(see [Human focus UI](#human-focus-ui)).
 
 ## Human focus UI
 

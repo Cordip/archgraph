@@ -383,6 +383,72 @@ fn unindexed_files_and_out_of_scope_edges_are_told_apart() {
 }
 
 #[test]
+fn unused_lists_files_without_observed_users_but_not_entry_points_or_unindexed_files() {
+    let fixture = Fixture::new();
+    let text = |output: &Output| String::from_utf8_lossy(&output.stdout).into_owned();
+    // src/a.rs -> src/b.rs is observed; src/a2.rs is not in the index.
+    let report = fixture.run(&["unused"], "violation");
+    assert_eq!(report.status.code(), Some(0));
+    let out = text(&report);
+    assert!(
+        out.starts_with(
+            "Files with no observed users: 1 of 3 mapped file(s)\n\napp.a  (a)\n  src/a.rs\n"
+        ),
+        "{out}"
+    );
+    assert!(
+        !out.contains("  src/b.rs") && !out.contains("  src/a2.rs\n"),
+        "{out}"
+    );
+    assert!(out.contains("Not in the code-graph index, usage unknown: 1 file(s), e.g. src/a2.rs"));
+    assert!(out.contains("No entry points are declared."), "{out}");
+    assert!(out.contains("not proof of dead code"), "{out}");
+    // Nothing outside app.a uses it; app.b is used from app.a.
+    assert!(
+        out.contains("with no entry point declared (1):\n  app.a  (a, 2 file(s))"),
+        "{out}"
+    );
+
+    let json: Value = serde_json::from_slice(
+        &fixture
+            .run(&["unused", "app.a", "--json"], "violation")
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(
+        json["files"],
+        serde_json::json!([{"path": "src/a.rs", "node": "app.a"}])
+    );
+    assert_eq!(json["not_indexed"], serde_json::json!(["src/a2.rs"]));
+    assert_eq!(json["mapped_file_count"], 2);
+    let context = text(&fixture.run(&["context", "app.a"], "violation"));
+    assert!(
+        context
+            .contains("0 declared entry point(s), 1 file(s) with no observed users, 1 not indexed")
+            && context.contains("- `src/a.rs`")
+            && context.contains("possibly unused as a whole"),
+        "{context}"
+    );
+
+    std::fs::write(
+        fixture.root.path().join("architecture.yaml"),
+        YAML.replace(
+            "source_roots: [src]}",
+            "source_roots: [src], entry_points: [src/a.rs, \"src/z*.rs\"]}",
+        ),
+    )
+    .unwrap();
+    let declared = fixture.run(&["unused", "--json"], "violation");
+    assert!(String::from_utf8_lossy(&declared.stderr)
+        .contains("project.entry_points entry `src/z*.rs` matches no mapped file"));
+    let json: Value = serde_json::from_slice(&declared.stdout).unwrap();
+    assert_eq!(json["files"], serde_json::json!([]));
+    assert_eq!(json["entry_points"], serde_json::json!(["src/a.rs"]));
+    assert_eq!(json["nodes_without_outside_users"], serde_json::json!([]));
+    assert_eq!(json["no_entry_points_declared"], false);
+}
+
+#[test]
 fn a_provider_that_ignores_skip_fails_instead_of_looping() {
     let fixture = Fixture::new();
     let output = fixture.run(&["compile"], "ignores_skip");

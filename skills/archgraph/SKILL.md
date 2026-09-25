@@ -34,6 +34,13 @@ the third-party packages the code imports, with every importing file, line
 and node. Packages appear as `package:<ecosystem>/<name>` (for example
 `package:python/ortools`); unmapped ones belong to the `packages` node.
 
+`archgraph unused [node]` lists files no observed code depends on. They are
+candidates, not dead code: a tool, a runtime or a test runner may load them
+by name, and GitNexus misses autoloading, script tags and dynamic imports.
+Read the file and search for its name before removing anything. Files that
+are loaded by name belong in `project.entry_points`, which is an
+architecture change: edit it only when the task allows that.
+
 After source edits, from the repository root:
 
 ```bash

@@ -20,6 +20,43 @@ pub struct AgentContext {
     /// those imports) or owned by it (with all imports).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub packages: Option<Vec<PackageUse>>,
+    /// Declared entry points and files no observed code uses in this subtree.
+    #[serde(default)]
+    pub usage: ContextUsage,
+}
+
+/// How many files of a subtree are entry points or have no observed users,
+/// with the first of the latter; `archgraph unused` lists them all.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ContextUsage {
+    pub entry_points: usize,
+    pub no_observed_users: usize,
+    pub not_indexed: usize,
+    /// Files with no observed users, sorted, at most `USAGE_SAMPLE`.
+    pub no_observed_users_sample: Vec<String>,
+    /// `CompiledNode::no_outside_users` of the focus.
+    pub no_outside_users: bool,
+}
+
+const USAGE_SAMPLE: usize = 20;
+
+fn usage_here(ir: &ArchitectureIr, node: &str) -> ContextUsage {
+    let report = crate::render::unused::select(ir, Some(node));
+    ContextUsage {
+        entry_points: report.entry_points.len(),
+        no_observed_users: report.files.len(),
+        not_indexed: report.not_indexed.len(),
+        no_observed_users_sample: report
+            .files
+            .into_iter()
+            .take(USAGE_SAMPLE)
+            .map(|file| file.path)
+            .collect(),
+        no_outside_users: ir
+            .nodes
+            .get(node)
+            .is_some_and(|node| node.no_outside_users()),
+    }
 }
 
 fn packages_here(ir: &ArchitectureIr, node: &str) -> Option<Vec<PackageUse>> {
@@ -97,6 +134,7 @@ pub fn build(ir: &ArchitectureIr, node: &str, limit: usize) -> Result<AgentConte
         diagnostics: ir.diagnostics.warnings.clone(),
         agent_contract,
         packages: packages_here(ir, node),
+        usage: usage_here(ir, node),
     })
 }
 
@@ -208,6 +246,37 @@ pub fn markdown(context: &AgentContext) -> String {
                 }
             );
         }
+    }
+    let usage = &context.usage;
+    out.push_str("\n## Entry points and files with no observed users\n\n");
+    let _ = writeln!(
+        out,
+        "{} declared entry point(s), {} file(s) with no observed users, {} not indexed (usage unknown).",
+        usage.entry_points, usage.no_observed_users, usage.not_indexed
+    );
+    if usage.no_outside_users {
+        let _ = writeln!(
+            out,
+            "\nNothing outside `{}` is observed to use it, and it declares no entry point: possibly unused as a whole.",
+            p.focus.id
+        );
+    }
+    if !usage.no_observed_users_sample.is_empty() {
+        out.push('\n');
+        for path in &usage.no_observed_users_sample {
+            let _ = writeln!(out, "- `{path}`");
+        }
+        let more = usage.no_observed_users - usage.no_observed_users_sample.len();
+        if more > 0 {
+            let _ = writeln!(
+                out,
+                "- … and {more} more (`archgraph unused {}`)",
+                p.focus.id
+            );
+        }
+    }
+    if usage.no_observed_users > 0 || usage.no_outside_users {
+        let _ = writeln!(out, "\n{}", crate::model::USAGE_NOTICE);
     }
     out.push_str("\n## Manual relationships (descriptive intent)\n\n");
     for edge in p
