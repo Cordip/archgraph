@@ -31,7 +31,7 @@ design and [docs/](docs/) for provider limitations.
   Tests use a fake provider (`tests/fixtures/fake_gitnexus.py`); passing tests
   alone never proved GitNexus compatibility (see Gotchas). For provider
   changes, and after upgrading GitNexus, also run the contract test against
-  the real CLI (about 15 s, isolated `HOME`):
+  the real CLI (TypeScript and Ruby fixtures, about 20 s, isolated `HOME`):
   ```bash
   cargo test --test gitnexus_contract -- --ignored
   ```
