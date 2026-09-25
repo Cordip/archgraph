@@ -510,11 +510,23 @@ pub fn select_observations(
 
 /// Serialize before replacing the old artifact. A compile/provider failure never
 /// writes a new 'clean' report. Readers see an entire JSON file, not a partial write.
-pub fn persist(root: &Path, ir: &ArchitectureIr) -> Result<PathBuf> {
+/// `.archgraph/`, holding only generated files. Like GitNexus's `.gitnexus/`,
+/// it ignores itself (`.gitignore` with `*`), so the analyzed repository's Git
+/// status stays clean. An existing `.gitignore` is left alone.
+pub fn work_directory(root: &Path) -> Result<PathBuf> {
     let directory = root.join(".archgraph");
     std::fs::create_dir_all(&directory)
         .with_context(|| format!("cannot create {}", directory.display()))?;
-    let destination = directory.join("architecture.ir.json");
+    let ignore = directory.join(".gitignore");
+    if !ignore.exists() {
+        std::fs::write(&ignore, "*\n")
+            .with_context(|| format!("cannot write {}", ignore.display()))?;
+    }
+    Ok(directory)
+}
+
+pub fn persist(root: &Path, ir: &ArchitectureIr) -> Result<PathBuf> {
+    let destination = work_directory(root)?.join("architecture.ir.json");
     let mut bytes = serde_json::to_vec_pretty(ir).context("cannot serialize architecture IR")?;
     bytes.push(b'\n');
     write_atomically(&destination, &bytes)?;

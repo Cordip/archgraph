@@ -69,7 +69,7 @@ no authentication.
 
 ## Tests
 
-There are **102 Rust test functions**: 62 unit tests, 21 CLI process tests, 16
+There are **103 Rust test functions**: 62 unit tests, 22 CLI process tests, 16
 compiler/projection integration tests, and three opt-in contract tests against a
 real GitNexus (TypeScript, Ruby and stylesheet imports). All pass with `cargo test --all-targets`
 (the contract tests are `#[ignore]`d and run explicitly). CI runs everything
@@ -101,8 +101,8 @@ and a provider that ignores `SKIP`, output larger than a pipe buffer from a
 Node-like provider, a closed stdout, repository cwd, spaced
 executable/repository arguments, incremental and full reindexing without
 corrupting JSON stdout, baselines, the coverage policy, unindexed and
-out-of-scope files, the provider cache, `init --suggest`, cycle output, and
-CSS edges with the `styles` report.
+out-of-scope files, the provider cache, `init --suggest`, cycle output,
+CSS edges with the `styles` report, and the self-ignoring `.archgraph/`.
 These tests use the explicitly test-only `tests/fixtures/fake_gitnexus.py`
 executable and require Python 3. Core Rust tests do not require GitNexus or
 Python. Production ArchGraph is Rust and embedded JavaScript, not Python.

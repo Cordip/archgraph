@@ -678,6 +678,43 @@ fn css_classes_become_edges_and_the_styles_report() {
 }
 
 #[test]
+fn the_work_directory_keeps_itself_out_of_git() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let git_status = || {
+        let output = Command::new("git")
+            .args(["status", "--porcelain", "--untracked-files=all"])
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        String::from_utf8(output.stdout).unwrap()
+    };
+    assert!(Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(root)
+        .status()
+        .unwrap()
+        .success());
+    // An index fingerprint, so that the provider cache is written too.
+    std::fs::create_dir(root.join(".gitnexus")).unwrap();
+    std::fs::write(root.join(".gitnexus/meta.json"), "{}").unwrap();
+    assert_eq!(fixture.run(&["check"], "clean").status.code(), Some(0));
+    assert!(root.join(".archgraph/cache/provider.json").is_file());
+    let ignore = root.join(".archgraph/.gitignore");
+    assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "*\n");
+    let status = git_status();
+    assert!(!status.contains(".archgraph"), "{status}");
+    // A .gitignore someone changed is left as it is.
+    std::fs::write(&ignore, "cache/\n").unwrap();
+    assert_eq!(
+        fixture.run(&["check", "--no-cache"], "clean").status.code(),
+        Some(0)
+    );
+    assert_eq!(std::fs::read_to_string(&ignore).unwrap(), "cache/\n");
+}
+
+#[test]
 fn a_file_moved_since_the_baseline_keeps_its_accepted_observations() {
     let fixture = Fixture::new();
     let root = fixture.root.path();

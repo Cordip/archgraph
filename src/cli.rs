@@ -232,7 +232,7 @@ pub async fn run(cli: Cli) -> Result<u8> {
     };
     let options = compiler::CompileOptions {
         reindex,
-        cache: (!cli.no_cache).then(|| root.join(".archgraph/cache/provider.json")),
+        cache: provider_cache(&root, cli.no_cache)?,
     };
     let compiler::Compiled { ir, cached } =
         compiler::compile_with(&root, &validated, &provider, &options).await?;
@@ -718,6 +718,15 @@ rules: []
 "#;
 const SKILL: &str = include_str!("../skills/archgraph/SKILL.md");
 
+fn provider_cache(root: &Path, no_cache: bool) -> Result<Option<PathBuf>> {
+    if no_cache {
+        return Ok(None);
+    }
+    Ok(Some(
+        compiler::work_directory(root)?.join("cache/provider.json"),
+    ))
+}
+
 /// A draft from the directory layout, compiled once against the index (if
 /// any) to annotate each node with its coverage.
 async fn suggested_config(root: &Path, no_cache: bool) -> Result<String> {
@@ -727,7 +736,7 @@ async fn suggested_config(root: &Path, no_cache: bool) -> Result<String> {
     let provider = GitNexusCliProvider::new(root, &validated.config.provider)?;
     let options = compiler::CompileOptions {
         reindex: None,
-        cache: (!no_cache).then(|| root.join(".archgraph/cache/provider.json")),
+        cache: provider_cache(root, no_cache)?,
     };
     let yaml = match compiler::compile_with(root, &validated, &provider, &options).await {
         Ok(compiled) => {
