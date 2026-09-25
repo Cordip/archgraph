@@ -530,3 +530,27 @@ fn init_suggest_drafts_nodes_with_coverage_and_the_draft_checks() {
     );
     assert!(!draft.contains("observed dependency ("), "{draft}");
 }
+
+#[test]
+fn check_prints_a_cycle_as_members_cut_and_layers() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.root.path().join("architecture.yaml"),
+        YAML.replace(
+            "  - {id: denied, kind: deny_dependency, from: app.a, to: app.b}",
+            "  - {id: layers, kind: no_cycles, within: app}",
+        ),
+    )
+    .unwrap();
+    let output = fixture.run(&["check"], "cycle");
+    assert_eq!(output.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&output.stdout);
+    let expected = "[layers] cycle among immediate children of `app`\n  Members: app.a, app.b\n  Cheapest cut: 1 of 2 participating dependencies, most significant first:\n";
+    assert!(text.contains(expected), "{text}");
+    assert!(
+        text.contains("  Layers after the cut, upper to lower:\n    app."),
+        "{text}"
+    );
+    // The one-line summary stays in JSON, not in the text report.
+    assert!(!text.contains("SCC"), "{text}");
+}

@@ -443,8 +443,33 @@ fn evidence_line(evidence: &crate::model::EdgeEvidence) -> String {
     format!("{} -> {}{detail}", evidence.from_file, evidence.to_file)
 }
 
+/// The one-line `message` suits JSON and agents. A cycle over several nodes
+/// reads better as members, the cheapest cut and the layers it leaves.
+fn print_violation_header(violation: &Violation) {
+    if violation.suggested_cuts.is_empty() {
+        outln!("\n[{}] {}", violation.rule_id, violation.message);
+        return;
+    }
+    outln!(
+        "\n[{}] cycle among immediate children of `{}`",
+        violation.rule_id,
+        violation.from.as_deref().unwrap_or_default()
+    );
+    outln!("  Members: {}", violation.nodes.join(", "));
+    let cut: usize = violation.suggested_cuts.iter().map(|cut| cut.count).sum();
+    outln!(
+        "  Cheapest cut: {cut} of {} participating dependencies, most significant first:",
+        violation.count
+    );
+    for cut in &violation.suggested_cuts {
+        outln!("    {} -> {} × {}", cut.from, cut.to, cut.count);
+    }
+    outln!("  Layers after the cut, upper to lower:");
+    outln!("    {}", violation.layer_order.join(" > "));
+}
+
 fn print_violation(violation: &Violation) {
-    outln!("\n[{}] {}", violation.rule_id, violation.message);
+    print_violation_header(violation);
     let is_cut = |from: &str, to: &str| {
         violation
             .suggested_cuts
@@ -452,11 +477,7 @@ fn print_violation(violation: &Violation) {
             .any(|cut| cut.from == from && cut.to == to)
     };
     if !violation.suggested_cuts.is_empty() {
-        outln!("  Suggested cut, most significant first:");
-        for cut in &violation.suggested_cuts {
-            outln!("    {} -> {} × {}", cut.from, cut.to, cut.count);
-        }
-        outln!("  Evidence for the suggested cut; other cycle edges are summarized:");
+        outln!("  Evidence for the cut; other cycle edges are summarized:");
     }
     for edge in &violation.architecture_edges {
         let cut = is_cut(&edge.from, &edge.to);
@@ -487,13 +508,7 @@ fn print_violation(violation: &Violation) {
 /// With a baseline, the observations to fix are exactly the new ones.
 fn print_new_observations(violation: &Violation, entries: &[BaselineEntry]) {
     const SHOWN: usize = 50;
-    outln!("\n[{}] {}", violation.rule_id, violation.message);
-    if !violation.suggested_cuts.is_empty() {
-        outln!("  Suggested cut, most significant first:");
-        for cut in &violation.suggested_cuts {
-            outln!("    {} -> {} × {}", cut.from, cut.to, cut.count);
-        }
-    }
+    print_violation_header(violation);
     outln!("  New since baseline ({}):", entries.len());
     for entry in entries.iter().take(SHOWN) {
         outln!(
