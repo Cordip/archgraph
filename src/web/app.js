@@ -158,28 +158,41 @@ function compact(value, length) {
   return text.length <= length ? text : text.slice(0, length - 1) + "…";
 }
 
-// A small deterministic grid, with cross-boundary entries in a separate band.
-// Layout operates only on this focus projection, never on the repository graph.
-function layout(nodes) {
-  const cardWidth = 205, cardHeight = 76, gapX = 100, gapY = 130;
-  const columns = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(nodes.length || 1))));
-  const positions = new Map();
-  let cursorRow = 0, outsideY = null;
-  for (const outside of [false, true]) {
-    const group = nodes.filter((node) => node.outside_focus === outside);
-    if (!group.length) continue;
-    if (outside && cursorRow) { cursorRow += 1; outsideY = 60 + cursorRow * (cardHeight + gapY) - 32; }
-    group.forEach((node, index) => {
-      positions.set(node.id, {
-        x: 60 + (index % columns) * (cardWidth + gapX),
-        y: 60 + (cursorRow + Math.floor(index / columns)) * (cardHeight + gapY),
-        width: cardWidth, height: cardHeight
-      });
-    });
-    cursorRow += Math.ceil(group.length / columns);
+// Rows from upper to lower layer (projection.layers, computed by the server so
+// that dependencies mostly point down), else a grid. Outside entries that only
+// depend on this focus get a band above it; all other outside entries a band
+// below. Layout uses only this focus projection, never the repository graph.
+function layout(projection) {
+  const cardWidth = 205, cardHeight = 76, gapX = 100, gapY = 130, maxColumns = 5;
+  const chunk = (ids, size) => { const rows = []; for (let i = 0; i < ids.length; i += size) rows.push(ids.slice(i, i + size)); return rows; };
+  const inside = projection.nodes.filter((node) => !node.outside_focus).map((node) => node.id);
+  const outside = projection.nodes.filter((node) => node.outside_focus);
+  const callers = outside.filter((node) => !projection.edges.some((edge) => edge.to === node.id)).map((node) => node.id);
+  const others = outside.map((node) => node.id).filter((id) => !callers.includes(id));
+  const gridColumns = Math.max(1, Math.min(4, Math.ceil(Math.sqrt(inside.length || 1))));
+  const insideRows = (projection.layers || []).length
+    ? projection.layers.flatMap((layer) => chunk(layer, maxColumns))
+    : chunk(inside, gridColumns);
+  const bands = [
+    { rows: chunk(callers, maxColumns), note: "OUTSIDE · DEPENDS ON THIS FOCUS" },
+    { rows: insideRows, note: null },
+    { rows: chunk(others, maxColumns), note: "OUTSIDE CURRENT FOCUS" },
+  ].filter((band) => band.rows.length);
+  const columns = Math.max(1, ...bands.flatMap((band) => band.rows.map((row) => row.length)));
+  const width = Math.max(730, columns * (cardWidth + gapX) + 20);
+  const positions = new Map(), notes = [];
+  let y = 60;
+  for (const band of bands) {
+    if (band.note) { notes.push({ y: y - 14, text: band.note }); y += 10; }
+    for (const row of band.rows) {
+      // Centre each row so a narrow layer does not hug the left edge.
+      const offset = 60 + (columns - row.length) * (cardWidth + gapX) / 2;
+      row.forEach((id, index) => positions.set(id, { x: offset + index * (cardWidth + gapX), y, width: cardWidth, height: cardHeight }));
+      y += cardHeight + gapY;
+    }
+    y += 20;
   }
-  return { positions, width: Math.max(730, columns * (cardWidth + gapX) + 20),
-    height: Math.max(300, cursorRow * (cardHeight + gapY) + 45), outsideY };
+  return { positions, width, height: Math.max(300, y - gapY + 45), notes };
 }
 function boundaryPoint(box, toward) {
   const cx = box.x + box.width / 2, cy = box.y + box.height / 2;
@@ -190,7 +203,7 @@ function boundaryPoint(box, toward) {
 function drawGraph(projection) {
   const graph = $("graph");
   graph.replaceChildren();
-  const { positions, width, height, outsideY } = layout(projection.nodes);
+  const { positions, width, height, notes } = layout(projection);
   graph.setAttribute("viewBox", `0 0 ${width} ${height}`);
   graph.setAttribute("height", height);
   graph.setAttribute("aria-label", `${projection.focus.title}: ${projection.nodes.length} nodes, ${projection.edges.length} directed dependencies`);
@@ -202,7 +215,7 @@ function drawGraph(projection) {
   }
   graph.append(defs);
   if (!projection.nodes.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
-  if (outsideY !== null) graph.append(svg("text", { x: 60, y: outsideY, class: "graph-note" }, "OUTSIDE CURRENT FOCUS"));
+  for (const note of notes) graph.append(svg("text", { x: 60, y: note.y, class: "graph-note" }, note.text));
   const laneCounts = new Map();
   for (const edge of mergeEdges(projection.edges)) {
     const from = positions.get(edge.from), to = positions.get(edge.to);
@@ -213,7 +226,9 @@ function drawGraph(projection) {
     const a = { x: from.x + from.width / 2, y: from.y + from.height / 2 };
     const b = { x: to.x + to.width / 2, y: to.y + to.height / 2 };
     const distance = Math.hypot(b.x - a.x, b.y - a.y) || 1;
-    const bend = 24 + lane * 26;
+    // Edges that skip rows would run straight through the cards in between;
+    // bend them further the more they skip.
+    const bend = 24 + lane * 26 + Math.max(0, distance - 220) * 0.3;
     const control = { x: (a.x + b.x) / 2 - (b.y - a.y) / distance * bend,
       y: (a.y + b.y) / 2 + (b.x - a.x) / distance * bend };
     const start = boundaryPoint(from, control), end = boundaryPoint(to, control);

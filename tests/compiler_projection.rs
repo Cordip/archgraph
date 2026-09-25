@@ -389,3 +389,38 @@ fn distributed_example_and_fixture_obey_schema() {
     assert!(config::parse(CONFIG).is_ok());
     assert!(config::parse(include_str!("../architecture.example.yaml")).is_ok());
 }
+
+#[tokio::test]
+async fn layers_put_dependents_above_their_dependencies() {
+    let temp = repository();
+    let ir = compile(
+        temp.path(),
+        vec![
+            edge("src/api/routes.py", "src/domain/model.py"),
+            edge("src/api/handlers/route.py", "src/domain/model.py"),
+            edge("src/domain/model.py", "src/persistence/db.py"),
+            // One upward dependency: domain stays above persistence anyway.
+            edge("src/persistence/db.py", "src/domain/model.py"),
+            edge("src/domain/model.py", "src/shared/types.py"),
+        ],
+    )
+    .await;
+    let view = projection::project(&ir, "app", 20).unwrap();
+    let row_of = |id: &str| {
+        view.layers
+            .iter()
+            .position(|row| row.iter().any(|entry| entry == id))
+    };
+    assert!(
+        row_of("node:app.api") < row_of("node:app.domain"),
+        "{:?}",
+        view.layers
+    );
+    assert!(
+        row_of("node:app.domain") < row_of("node:app.persistence"),
+        "{:?}",
+        view.layers
+    );
+    let inside = view.nodes.iter().filter(|node| !node.outside_focus).count();
+    assert_eq!(view.layers.iter().map(Vec::len).sum::<usize>(), inside);
+}

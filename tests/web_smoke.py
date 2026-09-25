@@ -66,7 +66,8 @@ PROJECTIONS = {
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
             "edges": [edge("node:app.api", "node:app.domain"), edge("node:app.api", "node:app.domain", kind="CALLS"),
                       edge("node:app.api", "node:external.service", True)],
-            "violations": [VIOLATION], "evidence_limit": 20, "evidence_notice": NOTICE},
+            "violations": [VIOLATION], "evidence_limit": 20, "evidence_notice": NOTICE,
+            "layers": [["node:app.api"], ["node:app.domain"]]},
     "app.domain": {"focus": NODES["app.domain"], "breadcrumbs": [NODES["app"], NODES["app.domain"]],
                    "nodes": [entry("app.domain", file="src/domain/a.rs"), entry("app.domain", file="src/domain/b.rs"), entry("app.api", True)],
                    "edges": [edge("node:app.api", "file:src/domain/a.rs")],
@@ -115,6 +116,10 @@ def main():
         assert page.locator("#graph .edge-line[marker-end]").count() == 2
         assert any(label.startswith("2 kinds × 50") for label in page.locator("#graph .edge-label").all_text_contents())
         assert page.locator("#graph .violating").count() >= 1
+        # Layered layout: the dependent (API) is drawn above its dependency.
+        api = page.get_by_role("button", name="API", exact=True).bounding_box()
+        domain = page.get_by_role("button", name="Domain", exact=True).bounding_box()
+        assert api["y"] < domain["y"], (api, domain)
         checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers")
 
         page.locator("#graph .edge-label").first.click()

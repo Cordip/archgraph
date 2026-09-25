@@ -108,6 +108,80 @@ pub struct Projection {
     pub violations: Vec<Violation>,
     pub evidence_limit: usize,
     pub evidence_notice: String,
+    /// Inside entries (projection node IDs) grouped into rows from upper to
+    /// lower layer, so observed dependencies mostly point downwards. Entries
+    /// without dependencies form the last row. Empty for large leaf levels,
+    /// where the UI falls back to a grid.
+    #[serde(default)]
+    pub layers: Vec<Vec<String>>,
+}
+
+/// Beyond this many inside entries (typically files of a large leaf) layering
+/// is not worth its cost or readable, so none is computed.
+const LAYERED_ENTRY_LIMIT: usize = 60;
+
+/// Upper-to-lower rows: minimum-upward order, then longest-path ranks over
+/// the dependencies that point downwards in that order.
+fn layer_rows(nodes: &[ProjectionNode], edges: &[ProjectionEdge]) -> Vec<Vec<String>> {
+    let inside: Vec<String> = nodes
+        .iter()
+        .filter(|node| !node.outside_focus)
+        .map(|node| node.id.clone())
+        .collect();
+    if inside.is_empty() || inside.len() > LAYERED_ENTRY_LIMIT {
+        return Vec::new();
+    }
+    let mut weights: BTreeMap<(String, String), usize> = BTreeMap::new();
+    for projected in edges {
+        let edge = &projected.edge;
+        if edge.origin == EdgeOrigin::Observed
+            && inside.contains(&edge.from)
+            && inside.contains(&edge.to)
+        {
+            *weights
+                .entry((edge.from.clone(), edge.to.clone()))
+                .or_default() += edge.count;
+        }
+    }
+    let connected: BTreeSet<&String> = weights.keys().flat_map(|(a, b)| [a, b]).collect();
+    let order = rules::cheapest_layer_order(
+        &connected.iter().map(|id| (*id).clone()).collect::<Vec<_>>(),
+        &weights,
+    );
+    let position: BTreeMap<&str, usize> = order
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect();
+    let mut rank: BTreeMap<&str, usize> = BTreeMap::new();
+    for id in &order {
+        let row = weights
+            .keys()
+            .filter(|(from, to)| to == id && position[from.as_str()] < position[id.as_str()])
+            .map(|(from, _)| rank[from.as_str()] + 1)
+            .max()
+            .unwrap_or(0);
+        rank.insert(id.as_str(), row);
+    }
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    for id in &order {
+        let row = rank[id.as_str()];
+        if rows.len() <= row {
+            rows.resize(row + 1, Vec::new());
+        }
+        rows[row].push(id.clone());
+    }
+    let isolated: Vec<String> = inside
+        .into_iter()
+        .filter(|id| !connected.contains(id))
+        .collect();
+    if !isolated.is_empty() {
+        rows.push(isolated);
+    }
+    for row in &mut rows {
+        row.sort();
+    }
+    rows
 }
 
 fn architecture_entry(node: &CompiledNode, outside: bool) -> ProjectionNode {
@@ -384,7 +458,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         entry.violation_rule_ids.sort();
         entry.violation_rule_ids.dedup();
     }
-    let edges = groups
+    let edges: Vec<ProjectionEdge> = groups
         .into_iter()
         .map(|((from, to, kind, origin), mut aggregate)| {
             aggregate.manual.sort_by(|a, b| a.id.cmp(&b.id));
@@ -415,6 +489,7 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
     // Inside entries first; the remainder are visibly marked cross-boundary.
     let mut nodes: Vec<_> = entries.into_values().collect();
     nodes.sort_by(|a, b| (a.outside_focus, &a.id).cmp(&(b.outside_focus, &b.id)));
+    let layers = layer_rows(&nodes, &edges);
     Ok(Projection {
         focus: focus.clone(),
         breadcrumbs,
@@ -423,5 +498,6 @@ pub fn project(ir: &ArchitectureIr, focus_id: &str, evidence_limit: usize) -> Re
         violations,
         evidence_limit,
         evidence_notice: ir.evidence_notice.clone(),
+        layers,
     })
 }

@@ -135,5 +135,8 @@ test helpers kept next to production code (`*.mocks.ts`, `__tests__/`,
 `archgraph serve` rendered the backend and root focus levels with no browser
 console errors. Each relation kind between the same two nodes used to be drawn
 as its own edge, so labels overlapped. The UI now merges them (26 edges instead
-of 36 on the backend level). Some labels still touch where many nodes are
-adjacent in the fixed grid layout.
+of 36 on the backend level). Nodes are now laid out by layer: on the frontend
+level `shared` sits at the bottom with 3,311 and 993 dependencies pointing down
+at it, and the one dashed edge pointing up is the `useStickyHeader.ts` import.
+The backend level becomes a tall chain (`jobs > services > policies > models >
+lib`) whose edges are still dense.

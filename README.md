@@ -351,7 +351,11 @@ on a **boundary** entry instead of inventing a particular source file/child.
 Outside owners appear as explicitly marked cross-boundary entries. Dependencies
 collapsed to the same visible node are omitted. Manual and observed edges are
 visually distinguished. Relation kinds between the same two entries are drawn
-as one edge (`2 kinds × 114`); its details list each kind with its evidence. Mermaid is another renderer of the same projection,
+as one edge (`2 kinds × 114`); its details list each kind with its evidence. Entries are laid out in rows from upper to lower
+layer (`layers` in the projection, the same minimum-upward ordering used for
+cycle cuts), so dependencies point down and anything pointing up stands out.
+Outside entries that only depend on the focus are drawn above it, others
+below. Levels with more than 60 entries fall back to a grid. Mermaid is another renderer of the same projection,
 never an architecture source format.
 
 The server defaults to loopback and exposes only:
