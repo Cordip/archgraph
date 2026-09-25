@@ -22,6 +22,7 @@ let cameraAnimation = 0;
 let spaceHeld = false;
 let tree = { byId: new Map(), children: new Map(), roots: [], counts: new Map(), open: new Set(), error: null };
 let allViolations = [];
+let allPackages = []; // imported packages (provider.packages), for search
 const narrow = window.matchMedia("(max-width: 900px)");
 const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 // Levels with more entries than this group their files by directory.
@@ -160,12 +161,15 @@ function revealDetails() {
 // The whole architecture as a tree, built from dotted node ids, with the
 // number of violations in each subtree.
 async function loadTree() {
+  // Packages only feed search: without them the rest still works.
+  const packages = api("/api/packages").then((payload) => payload.packages || [], () => []);
   try {
     const [nodes, payload] = await Promise.all([api("/api/nodes"), api("/api/violations")]);
     buildTree(nodes, payload.violations || []);
   } catch (error) {
     tree = { ...tree, error: error.message || String(error) };
   }
+  allPackages = await packages;
   renderTree();
   renderViolationList();
 }
@@ -420,6 +424,7 @@ function summaryList(projection) {
   const meter = svg("svg", { viewBox: "0 0 100 4", preserveAspectRatio: "none", class: "meter", "aria-hidden": "true" });
   meter.append(svg("rect", { width: 100, height: 4, class: "coverage-track" }), svg("rect", { width: share, height: 4, class: "coverage" }));
   row("Mapped files", focus.descendant_file_count, null);
+  if (focus.descendant_package_count) row("Packages", focus.descendant_package_count, "imported third-party packages");
   row("Observed", focus.observed_file_count, `${share}% of files have a dependency`, meter);
   row("Entries", inside, outside ? `and ${outside} outside` : null);
   row("Dependencies", merged.length, `${projection.edges.length} by relation kind`);
@@ -471,9 +476,12 @@ function addEvidence(parent, evidence, total, limit = Infinity) {
   const count = Math.min((evidence || []).length, limit);
   if (count < total) parent.append(html("p", `Showing ${count} of ${total} observations, sorted deterministically. Use archgraph context with --evidence-limit for more.`, "notice"));
 }
-const ENTRY_KINDS = { architecture: "Architecture node", file: "File", direct_files: "Directly owned files", boundary: "Boundary of this focus", group: "Directory group" };
+const ENTRY_KINDS = { architecture: "Architecture node", file: "File", direct_files: "Directly owned files", boundary: "Boundary of this focus", group: "Directory group", package: "Package" };
+const ECOSYSTEMS = { python: "Python", npm: "npm" };
+function ecosystemTitle(ecosystem) { return ECOSYSTEMS[ecosystem] || ecosystem; }
 function entryKind(node) {
-  const kind = node.node_kind === "external" ? "External architecture node" : ENTRY_KINDS[node.entry_kind] || node.entry_kind;
+  const kind = node.package ? `${ecosystemTitle(node.package.ecosystem)} package`
+    : node.node_kind === "external" ? "External architecture node" : ENTRY_KINDS[node.entry_kind] || node.entry_kind;
   return node.outside_focus ? `${kind}, outside this focus` : kind;
 }
 function entryTitle(node) {
@@ -490,12 +498,13 @@ function showNode(node, element) {
   select(element, neighbourhood(node.id));
   selected = { kind: "node", id: node.id };
   pickInTree(node.entry_kind === "architecture" ? node.architecture_id : null);
-  const panel = detailsTitle(entryTitle(node), node.file_path || (node.entry_kind === "group" ? `${node.directory || "."}/${node.direct ? "*" : ""}` : node.architecture_id || node.id), entryKind(node));
-  if (node.entry_kind !== "file") {
-    const observed = hasValue(node.observed_file_count) ? `, ${node.observed_file_count} with observed dependencies` : "";
-    panel.append(html("p", `${plural(node.file_count, "mapped file")}${observed}`));
+  const panel = detailsTitle(entryTitle(node), node.file_path || (node.entry_kind === "group" ? `${node.directory || "."}/${node.direct ? "*" : ""}` : node.package ? node.id : node.architecture_id || node.id), entryKind(node));
+  if (node.entry_kind !== "file" && node.entry_kind !== "package") {
+    const observed = hasValue(node.observed_file_count) && node.file_count ? `, ${node.observed_file_count} with observed dependencies` : "";
+    const packages = node.package_count ? plural(node.package_count, "imported package") : "";
+    panel.append(html("p", node.file_count || !packages ? `${plural(node.file_count, "mapped file")}${observed}${packages ? `, ${packages}` : ""}` : packages));
   }
-  if (node.description) panel.append(html("p", node.description));
+  if (node.description && !node.package) panel.append(html("p", node.description));
   if ((node.interfaces || []).length) {
     panel.append(html("h3", "Interfaces"));
     const chips = html("div", null, "interfaces");
@@ -509,6 +518,7 @@ function showNode(node, element) {
   if (openGroup) actions.append(actionButton(`Collapse ${openGroup.label}`, () => setGroupOpen(openGroup, false), "secondary"));
   if (scene && scene.byId.has(node.id) && view === "diagram") actions.append(actionButton("Centre on canvas", () => centreOn(node.id), "secondary"));
   if (actions.childElementCount) panel.append(actions);
+  if (node.package) packageDetails(panel, node);
   if (node.entry_kind === "file") panel.append(html("p", "File identity only. Use GitNexus or your editor for source and symbol details.", "muted"));
   if (node.entry_kind === "direct_files") {
     panel.append(html("h3", "Directly owned files"));
@@ -540,6 +550,43 @@ function showNode(node, element) {
   dependencyList(panel, "Used by", edges.filter((edge) => edge.to === node.id), (edge) => edge.from);
   revealDetails();
 }
+// Who imports a package: every file and line, grouped by the node owning the
+// file, each node a link to its place in the architecture.
+function packageDetails(panel, node) {
+  const imports = node.package.imports || [];
+  const byNode = new Map();
+  for (const item of imports) {
+    const owner = item.node || "";
+    if (!byNode.has(owner)) byNode.set(owner, []);
+    byNode.get(owner).push(item);
+  }
+  const files = new Set(imports.map((item) => item.file));
+  const owner = node.package.node;
+  const ownerName = !owner ? "no node (ambiguous mapping)" : tree.byId && tree.byId.has(owner) ? `${tree.byId.get(owner).title} (${owner})` : owner;
+  panel.append(html("p", `Imported by ${plural(files.size, "file")} in ${plural([...byNode.keys()].filter(Boolean).length, "node")}. Owned by ${ownerName}.`, "package-summary"));
+  panel.append(html("h3", `Imported by (${imports.length})`));
+  const groups = html("ul", null, "importers");
+  for (const [importer, items] of [...byNode].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const group = html("li", null, "importer-group");
+    const head = html("div", null, "importer-node");
+    if (importer && tree.byId && tree.byId.has(importer)) {
+      const link = html("button", tree.byId.get(importer).title, "text-button");
+      link.type = "button";
+      link.addEventListener("click", () => goToNode(importer));
+      head.append(link, html("span", importer, "detail-id"));
+    } else head.append(html("span", importer || "Unassigned files", "muted"));
+    const lines = html("ul", null, "plain-list importer-lines");
+    for (const item of items) {
+      const line = html("li", null, "importer-line");
+      line.append(html("span", `${item.file}:${item.line}`, "detail-id"));
+      line.append(html("span", `${item.specifier}${item.type_only ? " (type only)" : ""}`, "importer-specifier"));
+      lines.append(line);
+    }
+    group.append(head, lines);
+    groups.append(group);
+  }
+  panel.append(groups);
+}
 // Each dependency of the selected entry, as a button that opens its evidence:
 // the keyboard route to edges, which are not tab stops on the canvas.
 function dependencyList(panel, heading, edges, other) {
@@ -568,6 +615,7 @@ function displayEndpoint(id) {
   const node = entries.get(id);
   if (!node) return id;
   if (node.entry_kind === "group") return `${node.directory || "."}/${node.direct ? "*" : ""}`;
+  if (node.package) return node.id;
   return node.file_path || node.architecture_id || node.title;
 }
 // One drawn edge per endpoint pair and origin. Relation kinds (CALLS, IMPORTS,
@@ -1125,8 +1173,13 @@ function nodeLines(node) {
     return [compact(node.title, 26), compactStart(node.direct ? `files in ${node.directory || "."}/` : `${node.directory}/`, 30),
       `${plural(node.file_count, "file")}${flagged ? `, ${flagged} in violations` : ""}`];
   }
-  const facts = [plural(node.file_count, "file")];
-  if (hasValue(node.observed_file_count)) facts.push(`${node.observed_file_count} observed`);
+  if (node.package) {
+    const files = new Set((node.package.imports || []).map((item) => item.file)).size;
+    return [compact(node.title, 26), `${ecosystemTitle(node.package.ecosystem)} package`, `imported by ${plural(files, "file")}`];
+  }
+  const facts = node.file_count || !node.package_count ? [plural(node.file_count, "file")] : [];
+  if (hasValue(node.observed_file_count) && node.file_count) facts.push(`${node.observed_file_count} observed`);
+  if (node.package_count) facts.push(plural(node.package_count, "package"));
   if (node.node_kind === "external") facts.push("external");
   return [compact(node.title, 26), compact(node.architecture_id || ENTRY_KINDS[node.entry_kind] || node.entry_kind, 30), facts.join(", ")];
 }
@@ -1193,6 +1246,8 @@ function drawNode(node, box, first) {
   if (violating) group.append(svg("path", { d: cloudPath(-8, -8, box.width + 16 + (node.entry_kind === "group" ? 8 : 0), box.height + 16 + (node.entry_kind === "group" ? 8 : 0)), class: "cloud" }));
   group.append(svg("rect", { width: box.width, height: box.height, class: "box" }));
   if (node.entry_kind === "architecture") group.append(svg("rect", { x: 4, y: 4, width: box.width - 8, height: box.height - 8, class: "box-inner" }));
+  // A package is a bought-in part: a crate glyph in the corner.
+  if (node.entry_kind === "package") group.append(svg("path", { d: `M ${box.width - 34} 16 l 10 -5 l 10 5 v 12 l -10 5 l -10 -5 z M ${box.width - 34} 16 l 10 5 l 10 -5 M ${box.width - 24} 21 v 12`, class: "package-glyph" }));
   const [title, subtitle, facts] = nodeLines(node);
   group.append(svg("text", { x: 14, y: facts === null ? 37 : 30, class: "node-title" }, title));
   group.append(svg("text", { x: 14, y: facts === null ? 60 : 51, class: "node-subtitle" }, subtitle));
@@ -1211,7 +1266,8 @@ function drawNode(node, box, first) {
     group.append(toggle);
   }
   group.append(svg("title", {}, [node.title, node.architecture_id || node.file_path, node.description,
-    hasValue(node.observed_file_count) ? `${node.observed_file_count} of ${node.file_count} files have an observed dependency` : null,
+    hasValue(node.observed_file_count) && node.file_count ? `${node.observed_file_count} of ${node.file_count} files have an observed dependency` : null,
+    node.package ? `${ecosystemTitle(node.package.ecosystem)} package ${node.id}` : null,
     node.entry_kind === "group" ? "Double-click to expand" : node.entry_kind === "architecture" ? "Double-click to open" : null].filter(Boolean).join("\n")));
   group.addEventListener("click", () => showNode(node, group));
   group.addEventListener("dblclick", () => {
@@ -1601,6 +1657,7 @@ const table = { filter: "", sort: "path", timer: null };
 function tableGroup(node) {
   if (node.outside_focus) return "Outside this focus";
   if (node.entry_kind === "architecture") return "Child nodes";
+  if (node.entry_kind === "package") return "Packages";
   if (node.entry_kind === "file" && node.file_path) return splitPath(node.file_path)[0] || "Repository root";
   return "This node";
 }
@@ -1641,8 +1698,8 @@ function drawTable(projection) {
   const stats = new Map(projection.nodes.map((node) => [node.id, { out: 0, in: 0 }]));
   for (const edge of merged) { stats.get(edge.from).out += edge.count; stats.get(edge.to).in += edge.count; }
   const links = (node) => stats.get(node.id).out + stats.get(node.id).in;
-  const rank = (node) => ({ "Child nodes": 0, "This node": 1, "Outside this focus": 3 })[tableGroup(node)] ?? 2;
-  const name = (node) => node.file_path || node.architecture_id || node.title;
+  const rank = (node) => ({ "Child nodes": 0, "Packages": 1, "This node": 2, "Outside this focus": 4 })[tableGroup(node)] ?? 3;
+  const name = (node) => node.package ? node.id : node.file_path || node.architecture_id || node.title;
   const render = () => {
     const query = table.filter.trim().toLowerCase();
     const grouped = table.sort === "path";
@@ -1685,7 +1742,7 @@ function tableRow(node, stat, grouped) {
   const button = html("button", null, `entry-button ${node.entry_kind}`);
   button.type = "button";
   button.append(html("span", file ? base : node.title, "entry-title"));
-  const sub = file ? (grouped ? "" : directory) : node.architecture_id || ENTRY_KINDS[node.entry_kind];
+  const sub = file ? (grouped ? "" : directory) : node.package ? node.id : node.architecture_id || ENTRY_KINDS[node.entry_kind];
   if (sub) button.append(html("span", sub, "entry-sub"));
   button.addEventListener("keydown", (event) => {
     const buttons = [...document.querySelectorAll("#table-wrap .entry-button")];
@@ -1737,7 +1794,24 @@ async function searchNodes() {
     box.append(html("p", "Architecture nodes", "result-heading"));
     if (!results.length) box.append(html("p", "No matching architecture nodes.", "muted"));
     for (const node of results) box.append(resultButton(node.title, node.id, `${node.title} — ${node.id}`, () => loadFocus(node.id)));
+    // Imported packages anywhere: opening one shows who imports it.
+    const packages = allPackages.filter((item) => item.name.toLowerCase().includes(lower) || item.id.toLowerCase().includes(lower)).slice(0, 12);
+    if (packages.length) {
+      box.append(html("p", "Packages", "result-heading"));
+      for (const item of packages) {
+        const where = `${ecosystemTitle(item.ecosystem)} · ${plural(item.file_count, "importing file")}`;
+        box.append(resultButton(item.name, where, `${item.name} — ${ecosystemTitle(item.ecosystem)} package`, () => openPackage(item)));
+      }
+    }
   } catch (error) { if (request === searchRequest) showError(error); }
+}
+// Shows a package selected at the level of the node owning it.
+async function openPackage(item) {
+  if (!item.node) return;
+  if (narrow.matches) togglePanel("sidebar", false);
+  if (currentProjection && currentProjection.focus.id === item.node && entries.has(item.id)) { revealEntry(item.id); return; }
+  if (view !== "diagram") setView("diagram");
+  await loadFocus(item.node, true, { select: item.id });
 }
 function moveInResults(event) {
   const buttons = [...$("search-results").querySelectorAll("button")];

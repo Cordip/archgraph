@@ -632,7 +632,8 @@ infinite canvas, drawn like a drawing sheet:
   Double-click an architecture node (or Shift+Enter) to open it: the view
   dives into the card; going up zooms back out of it.
 - **Floating tools** in the top-left corner: search (`/`; entries of the
-  current level first, then architecture nodes anywhere) and **Filters**:
+  current level first, then architecture nodes anywhere, then imported
+  packages by name) and **Filters**:
   only violations (the rest is dimmed), relation kinds, observed and manual
   dependencies, and entries outside the focus.
 - **Node list** on the left: the whole architecture tree with the number of
@@ -654,6 +655,14 @@ visible at the bottom of the canvas. The canvas is one tab stop: arrow keys
 move between entries, Enter shows details, Shift+Enter opens, `+`/`-` zoom,
 Shift+1 fits and Shift+2 zooms to the selection. Deep links use
 `/?focus=app.billing.domain` and browser back/forward navigation is supported.
+
+With `provider.packages`, the node owning packages ("External packages"
+unless mapped otherwise) is an external card showing how many packages it
+holds. At its own level every package is a card of its own, drawn with round
+corners and a crate glyph; its details list every importing file and line,
+grouped by the importing node, and selecting a package from search opens
+that level with the package selected: the quickest answer to "who uses
+OR-Tools".
 
 Levels with more than 120 entries (zammad's leaves have up to 2,577 files)
 show their files as **directory groups**, about 30 per level: double-click a

@@ -36,7 +36,9 @@ NODES = {n["id"]: n for n in [
     node("external.service", "Service", kind="external"),
     # More entries than the UI draws: listed in the table only.
     node("app.big", "Big", files=[f"src/big/f{i:03}.rs" for i in range(200)]),
+    node("packages", "External packages", kind="external"),
 ]}
+NODES["packages"].update(descendant_file_count=0, observed_file_count=0, descendant_package_count=1, packages=["package:python/ortools"])
 NODES["app.domain"]["interfaces"] = [{"name": "Domain service", "kind": "custom", "direction": "provides", "protocol": None, "contract": "invoice", "description": "Interface fixture"}]
 
 
@@ -67,6 +69,13 @@ VIOLATION = {"rule_id": "deny-api-domain", "kind": "deny_dependency", "from": "a
              "edge_kind": "IMPORTS", "nodes": ["app.api", "app.domain"], "affected_nodes": ["app.api", "app.domain"],
              "count": 25, "message": "API to Domain is prohibited by this test-only rule.",
              "evidence": [EVIDENCE], "architecture_edges": [edge("app.api", "app.domain")]}
+ORTOOLS = {"id": "package:python/ortools", "name": "ortools", "ecosystem": "python", "node": "packages",
+           "imports": [{"file": "src/domain/a.rs", "line": 3, "specifier": "ortools.constraint_solver", "type_only": False, "node": "app.domain"},
+                       {"file": "src/api/a.rs", "line": 9, "specifier": "ortools.sat", "type_only": True, "node": "app.api"}]}
+PACKAGE_ENTRY = {"id": ORTOOLS["id"], "title": "ortools", "entry_kind": "package", "architecture_id": "packages",
+                 "node_kind": None, "file_path": None, "file_count": 0, "observed_file_count": None,
+                 "description": "Python package imported by 2 file(s).", "interfaces": [], "outside_focus": False,
+                 "violation_rule_ids": [], "package": ORTOOLS}
 PROJECTIONS = {
     "app": {"focus": NODES["app"], "breadcrumbs": [NODES["app"]],
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
@@ -82,7 +91,12 @@ PROJECTIONS = {
                 "nodes": [entry("app.big", file=f) for f in NODES["app.big"]["direct_files"]],
                 "edges": [edge("file:src/big/f000.rs", "file:src/big/f001.rs")],
                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
+    "packages": {"focus": NODES["packages"], "breadcrumbs": [NODES["packages"]],
+                 "nodes": [PACKAGE_ENTRY, entry("app.api", True), entry("app.domain", True)],
+                 "edges": [edge("node:app.domain", ORTOOLS["id"]), edge("node:app.api", ORTOOLS["id"])],
+                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": [[ORTOOLS["id"]]]},
 }
+PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"]}]
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
@@ -105,7 +119,7 @@ def main():
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("https://archgraph.invalid/**", lambda route: route.fulfill(body="<!doctype html><title>fixture</title>", content_type="text/html"))
         page.goto("https://archgraph.invalid/")
-        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION]}
+        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION], "packages": PACKAGES}
         index = (ROOT / "src/web/index.html").read_text()
         index = re.sub(r'<script[^>]*>.*?</script>', '', index, flags=re.S)
         index = re.sub(r'<link[^>]*rel="stylesheet"[^>]*>', '', index)
@@ -120,6 +134,7 @@ def main():
                 if (url.pathname === '/api/meta') payload = fixture.meta;
                 else if (url.pathname === '/api/nodes') payload = fixture.nodes;
                 else if (url.pathname === '/api/violations') payload = {violations: fixture.violations};
+                else if (url.pathname === '/api/packages') payload = {enabled: true, packages: fixture.packages};
                 else if (url.pathname.startsWith('/api/focus/')) payload = fixture.projections[decodeURIComponent(url.pathname.slice('/api/focus/'.length))];
                 else if (url.pathname === '/api/search') {
                     const q = (url.searchParams.get('q') || '').toLowerCase();
@@ -247,7 +262,7 @@ def main():
         checks.append("filters for relation kinds, manual edges, outside entries and violations only")
 
         # The node list: the tree with violation badges and a filter.
-        assert page.locator("#tree [role='treeitem']").count() == 5
+        assert page.locator("#tree [role='treeitem']").count() == 6
         assert page.locator("#tree [data-id='app.api'] .count-badge").inner_text() == "1"
         page.locator("#tree-violations").check()
         assert page.locator("#tree [role='treeitem']").count() == 3
@@ -331,6 +346,29 @@ def main():
         assert "src/api/a.rs" in page.locator("#details").inner_text()
         assert page.locator("#violations .violation-button.selected").count() == 1
         checks.append("corner search with keyboard (view entries, then architecture nodes), violation evidence selection")
+
+        # Who uses a package: search finds it by name, opens the level of the
+        # node owning it and lists every importing file, line and node.
+        page.locator("#search").fill("ortool")
+        page.locator("#search-results .result-heading", has_text="Packages").wait_for()
+        page.locator("#search-results").get_by_role("button", name="ortools — Python package", exact=True).click()
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'packages'")
+        assert page.locator("#graph .node.package").count() == 1
+        assert page.locator("#graph .node.package .package-glyph").count() == 1
+        assert page.locator("#graph .node.package.selected").count() == 1
+        assert "imported by 2 files" in page.locator("#graph .node.package").text_content()
+        details = page.locator("#details").inner_text()
+        for expected in ["Python package", "package:python/ortools", "Imported by 2 files in 2 nodes. Owned by External packages (packages).",
+                         "src/domain/a.rs:3", "ortools.constraint_solver", "src/api/a.rs:9", "ortools.sat (type only)", "Used by (2)"]:
+            assert expected in details, (expected, details)
+        # An importing node drawn in this view is selected in place.
+        page.locator("#details .importer-node .text-button", has_text="Domain").click()
+        assert page.locator("#details h2").inner_text() == "Domain"
+        assert page.locator("#graph .node.selected").get_attribute("aria-label") == "Domain"
+        assert page.locator("#focus-id").inner_text() == "packages"
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
+        checks.append("package search opens the owner's level with the package selected; its details list importing files, lines and nodes")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.
