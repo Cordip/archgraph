@@ -103,3 +103,10 @@ Add new entries at the end: what happened, why, and what to do.
     package.** It never falls back to `tsconfig` `paths` for them. Read the
     GitNexus `dist/` source to find causes like this; do not guess from the
     symptoms. Details in `docs/gitnexus-limitations.md`.
+12. **zsh does not word-split unquoted variables.** `A="--root x"; cmd $A`
+    passes one argument, the command fails, and a following `grep -c` still
+    prints a reassuring `0`. Use a shell function or an array, and check that
+    the command produced real output before trusting a count.
+13. **A stale `archgraph serve` keeps the port.** A new server on the same port
+    exits with a bind error while the browser still shows the old build. Stop
+    earlier servers before re-checking UI changes.
