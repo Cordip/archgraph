@@ -129,13 +129,13 @@ runtime correctness.
 | Validation | Status and scope |
 | --- | --- |
 | Full design review and deliberate Rust static review | Performed, including module paths, crate usage/features, ownership/error boundaries, pagination, rule scope, evidence, serialization, and Axum 0.8 APIs. This does not establish that Rust compiles. |
-| Rust compilation, Rust tests, rustfmt, Clippy | **Not run: the Rust toolchain is unavailable.** |
-| Real GitNexus probe/query/indexing | **Not run: no usable live GitNexus installation/index was available.** |
+| Rust compilation, Rust tests, rustfmt, Clippy | Later run with Rust 1.98: the original source compiled and all 53 tests passed; rustfmt and one Clippy warning were fixed. The suite now has 58 tests. |
+| Real GitNexus probe/query/indexing | Later run with GitNexus 1.6.12 against zammad. It found a stdout truncation bug in the adapter and several design gaps, since fixed. See [examples/zammad/README.md](examples/zammad/README.md). |
 | `node --check src/web/app.js` | Passed JavaScript syntax checking. |
 | Cargo manifest and YAML examples | Parsed with Python TOML/YAML libraries; example IDs, parents, external mapping restrictions, manual endpoints, and rule references checked. Rust/Serde execution remains untested. |
 | Source structure and embedded assets | All out-of-line module declarations and embedded asset paths checked; required-functionality placeholder scan passed. |
 | Python/JSON fixtures | Python syntax and JSON payload syntax checked. |
-| Optional browser smoke | Passed isolated DOM checks for graph/arrows, evidence, hostile-text escaping, focus navigation, generated deep links, breadcrumb/popstate handlers, search, violations, and errors. Fetch/history were mocked; actual network navigation, Axum serving, and live API calls were not validated. |
+| Optional browser smoke | Later re-run with Playwright Chromium and passed. `archgraph serve` on zammad data rendered with no console errors. Originally: passed isolated DOM checks for graph/arrows, evidence, hostile-text escaping, focus navigation, generated deep links, breadcrumb/popstate handlers, search, violations, and errors. Fetch/history were mocked; actual network navigation, Axum serving, and live API calls were not validated. |
 
 Machine-readable records are in `validation/static-checks.json` and
 `validation/ui-smoke.json`. There are no Rust test-pass claims in those records.

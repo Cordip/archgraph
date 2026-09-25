@@ -1,0 +1,140 @@
+# Desired architecture for https://github.com/zammad/zammad, used to validate
+# ArchGraph against a large legacy Rails + CoffeeScript + Vue code base.
+#
+#   gitnexus analyze --index-only /path/to/zammad
+#   archgraph --root /path/to/zammad --config examples/zammad/architecture.yaml check
+#
+# Rails autoloads constants (Zeitwerk), so most Ruby dependencies never appear
+# as `require` IMPORTS. CALLS/EXTENDS/IMPLEMENTS are needed to see them.
+# Two kinds of GitNexus guessing are dropped: `global-name-fallback` (0.5,
+# via min_confidence) and `property-dispatch` (0.7, matches `x.focus()` to any
+# function named `focus`, e.g. across the desktop and mobile apps).
+version: 1
+project:
+  name: zammad
+  root: zammad
+  source_roots: [app, lib, config, db, spec, test]
+  exclude:
+    - "**/node_modules/**"
+    - "app/assets/builds/**"
+    - "app/assets/stylesheets/**"
+    - "**/*.{png,svg,jpg,gif,ico,woff,woff2,ttf,eot,css,scss,json,yml,yaml,md,txt,erb,eco,jst,html,snap,gql,graphql}"
+provider:
+  kind: gitnexus
+  command: gitnexus
+  repo: null
+  page_size: 5000
+  edge_types: &observed [IMPORTS, CALLS, EXTENDS, IMPLEMENTS]
+  exclude_reasons: [markdown-link, property-dispatch]
+  min_confidence: 0.6
+policies:
+  unassigned_files: warn
+  ambiguous_mapping: error
+nodes:
+  zammad:
+    title: Zammad
+    description: Help desk / ticketing system.
+  zammad.backend:
+    title: Rails backend
+  zammad.backend.models:
+    title: Domain models
+    description: ActiveRecord models and their concerns. Should not know about delivery mechanisms.
+    maps: ["app/models/**"]
+  zammad.backend.controllers:
+    title: REST controllers
+    maps: ["app/controllers/**"]
+    interfaces:
+      - {name: REST API, kind: http, direction: provides, protocol: https}
+  zammad.backend.graphql:
+    title: GraphQL API
+    maps: ["app/graphql/**"]
+    interfaces:
+      - {name: GraphQL API, kind: graphql, direction: provides, protocol: https}
+  zammad.backend.services:
+    title: Service objects
+    maps: ["app/services/**"]
+  zammad.backend.jobs:
+    title: Background jobs
+    maps: ["app/jobs/**"]
+  zammad.backend.policies:
+    title: Authorization policies
+    maps: ["app/policies/**"]
+  zammad.backend.web:
+    title: Views, helpers, mailers, channels
+    maps: ["app/views/**", "app/helpers/**", "app/mailers/**", "app/channels/**"]
+  zammad.backend.lib:
+    title: lib/ (integrations, sequencer, core extensions)
+    maps: ["lib/**"]
+  zammad.backend.boot:
+    title: Configuration, initializers, migrations
+    maps: ["config/**", "db/**"]
+  zammad.legacy_ui:
+    title: Legacy desktop UI (Spine/CoffeeScript)
+    maps: ["app/assets/**"]
+  zammad.frontend:
+    title: New Vue frontend
+    maps: ["app/frontend/*", "app/frontend/entrypoints/**", "app/frontend/build/**"]
+  zammad.frontend.shared:
+    title: Shared frontend code
+    maps: ["app/frontend/shared/**"]
+  zammad.frontend.desktop:
+    title: New desktop app
+    maps: ["app/frontend/apps/desktop/**"]
+  zammad.frontend.mobile:
+    title: Mobile app
+    maps: ["app/frontend/apps/mobile/**"]
+  zammad.frontend.test_support:
+    title: Frontend test support
+    maps: ["app/frontend/tests/**", "app/frontend/cypress/**"]
+  zammad.tests:
+    title: Backend test suites
+    maps: ["spec/**", "test/**"]
+rules:
+  - id: models-do-not-know-delivery
+    kind: deny_dependency
+    from: zammad.backend.models
+    to: zammad.backend.controllers
+    edge_types: *observed
+  - id: models-do-not-know-graphql
+    kind: deny_dependency
+    from: zammad.backend.models
+    to: zammad.backend.graphql
+    edge_types: *observed
+  - id: lib-does-not-know-delivery
+    kind: deny_dependency
+    from: zammad.backend.lib
+    to: zammad.backend.controllers
+    edge_types: *observed
+  - id: production-code-does-not-use-tests
+    kind: deny_dependency
+    from: zammad.backend
+    to: zammad.tests
+    edge_types: *observed
+  - id: frontend-shared-does-not-know-apps-desktop
+    kind: deny_dependency
+    from: zammad.frontend.shared
+    to: zammad.frontend.desktop
+    edge_types: *observed
+  - id: frontend-shared-does-not-know-apps-mobile
+    kind: deny_dependency
+    from: zammad.frontend.shared
+    to: zammad.frontend.mobile
+    edge_types: *observed
+  - id: desktop-does-not-use-mobile
+    kind: deny_dependency
+    from: zammad.frontend.desktop
+    to: zammad.frontend.mobile
+    edge_types: *observed
+  - id: mobile-does-not-use-desktop
+    kind: deny_dependency
+    from: zammad.frontend.mobile
+    to: zammad.frontend.desktop
+    edge_types: *observed
+  - id: no-backend-layer-cycles
+    kind: no_cycles
+    within: zammad.backend
+    edge_types: *observed
+  - id: no-frontend-cycles
+    kind: no_cycles
+    within: zammad.frontend
+    edge_types: *observed
