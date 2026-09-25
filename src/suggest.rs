@@ -34,7 +34,6 @@ const NON_CODE_EXTENSIONS: &[&str] = &[
     "cfg",
     "conf",
     "crt",
-    "css",
     "csr",
     "csv",
     "ejs",
@@ -135,6 +134,8 @@ pub struct Draft {
     pub cycle_scopes: Vec<String>,
     pub non_code_extensions: Vec<String>,
     pub ruby: bool,
+    /// Stylesheets next to scripts: observe CSS (`provider.css`).
+    pub css: bool,
     pub min_files: usize,
 }
 
@@ -290,6 +291,12 @@ pub fn draft(root: &Path) -> Result<Draft> {
         cycle_scopes: Vec::new(),
         non_code_extensions: non_code_extensions.into_iter().collect(),
         ruby: ruby_files * 10 >= code.len().max(1),
+        css: files.iter().any(|file| file.ends_with(".css"))
+            && code.iter().any(|file| {
+                extension(file).is_some_and(|ext| {
+                    ["ts", "tsx", "js", "jsx", "mjs", "cjs", "mts", "cts"].contains(&ext.as_str())
+                })
+            }),
         min_files,
     };
     Tree::new(&code).split("", &project, 0, min_files, &mut draft);
@@ -322,12 +329,15 @@ fn coverage_comment(ir: &ArchitectureIr, id: &str) -> Option<String> {
 }
 
 impl Draft {
-    fn edge_types(&self) -> &'static str {
+    fn edge_types(&self) -> String {
+        let mut kinds = vec!["IMPORTS"];
         if self.ruby {
-            "[IMPORTS, CALLS, EXTENDS, IMPLEMENTS]"
-        } else {
-            "[IMPORTS]"
+            kinds.extend(["CALLS", "EXTENDS", "IMPLEMENTS"]);
         }
+        if self.css {
+            kinds.push("USES_CLASS");
+        }
+        format!("[{}]", kinds.join(", "))
     }
 
     /// `coverage` is the draft compiled against the index, if one exists;
@@ -383,6 +393,11 @@ impl Draft {
         }
         line(&format!("  edge_types: {}", self.edge_types()));
         line("  exclude_reasons: [markdown-link]");
+        if self.css {
+            line("  # GitNexus parses no CSS; ArchGraph reads stylesheets and class names");
+            line("  # itself (IMPORTS of stylesheets, USES_CLASS; see `archgraph styles`).");
+            line("  css: true");
+        }
         if self.ruby {
             line("  min_confidence: 0.6");
         }
@@ -461,6 +476,7 @@ mod tests {
         files.extend(many("docs", "md", 30));
         files.push("spec/fixtures/token.created_at".into());
         files.push("package.json".into());
+        files.push("src/styles.css".into());
         files.extend(many("node_modules/lib", "js", 50));
         files.extend(many(".github/workflows", "js", 20));
         files.push("src/weird name.v2/x.ts".into());
@@ -484,6 +500,7 @@ mod tests {
         assert_eq!(draft.cycle_scopes, [root.clone(), format!("{root}.domain")]);
         assert_eq!(draft.non_code_extensions, ["json", "md"]);
         assert!(!draft.ruby);
+        assert!(draft.css);
 
         let yaml = draft.render(None, Some("no index"));
         let validated = config::parse(&yaml).unwrap();
@@ -491,6 +508,12 @@ mod tests {
         assert!(yaml.contains("maps: [\"src/domain/orders/**\"]"), "{yaml}");
         assert!(yaml.contains("\"**/*.{json,md}\""), "{yaml}");
         assert!(yaml.contains("# No coverage comments: no index"), "{yaml}");
+        assert!(validated.config.provider.css);
+        assert!(validated
+            .config
+            .provider
+            .edge_types
+            .contains(&"USES_CLASS".to_owned()));
     }
 
     #[test]
