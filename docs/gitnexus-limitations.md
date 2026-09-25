@@ -3,7 +3,7 @@
 ArchGraph sees only what GitNexus reports. This page lists known gaps,
 how to detect them and what to do about them. Every entry is backed by the
 zammad validation run ([examples/zammad](../examples/zammad/README.md)) or,
-for CSS, HTTP calls and packages, by lct-task3
+for CSS, HTTP calls, packages and `__init__.py`, by lct-task3
 ([examples/lct-task3](../examples/lct-task3/README.md)),
 GitNexus 1.6.12. Record new findings here; see [AGENTS.md](../AGENTS.md).
 
@@ -248,6 +248,26 @@ import statements in Python and TypeScript/JavaScript itself and add
 (README, "Imported packages"). It decides local or package from the
 repository's own files and `package.json` files, not from GitNexus's Python
 guess; an import that could be either is reported, not observed.
+
+## 13. Importing a Python module gives its package's `__init__.py` no edge
+
+**Symptom.** In lct-task3, `from planner.core import solver` appears in many
+files, yet `backend/planner/core/__init__.py` has no incoming `IMPORTS` or
+`CALLS`. A query for relations into any `__init__.py` returns only `CONTAINS`
+from the folder. `archgraph unused` then lists every package's
+`__init__.py` as a file with no observed users, although Python runs it
+before any module of the package.
+
+**Cause.** GitNexus 1.6.12 resolves each import to exactly one file
+(`resolvePythonImportTarget` in `languages/python/import-target.js`). For
+`from package import name` it takes the package's `__init__.py` only when
+that file defines `name`, and otherwise the submodule `name.py`; `import
+a.b.c` resolves to `a/b/c.py`. The parent packages whose `__init__.py`
+Python executes on the way are not recorded.
+
+**What to do.** Declare them as entry points (`"backend/**/__init__.py"` in
+`project.entry_points`), as the lct-task3 example does. An `__init__.py`
+that defines names other modules import still gets its edges.
 
 ## ArchGraph-side limitations
 

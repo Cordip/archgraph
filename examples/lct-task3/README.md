@@ -146,3 +146,27 @@ unobserved. The other six are the five empty
 The Leaflet and `@fontsource` stylesheets are read from
 `frontend/node_modules`, so classes that only override Leaflet's
 (`.leaflet-tooltip`) count as used.
+
+## Entry points and files with no observed users
+
+"Build configuration" (`lct.frontend.build`, only `vite.config.ts`) looked
+useless in the UI: no observed code depends on it. Vite reads it by name.
+Checked at `4b38019`, without `project.entry_points` `archgraph unused`
+listed 33 of the 91 mapped files, and both `lct.frontend` and `lct.tests` as
+nodes that nothing outside uses. Every one was read and is in use:
+
+| Files | Why nothing observed depends on them |
+| --- | --- |
+| `frontend/vite.config.ts` | Vite loads it by name (`vite`, `vite build` in `package.json`). |
+| `frontend/src/main.tsx` | `index.html` loads it: `<script type="module" src="/src/main.tsx">`. HTML is excluded, and GitNexus does not read script tags. |
+| 26 `backend/tests/test_*.py` | pytest collects them (`testpaths = ["backend/tests"]` in `pyproject.toml`); no module imports a test. |
+| 5 `__init__.py` (`planner`, `planner.api`, `planner.core`, `planner.ingest`, `tests`) | Python runs them before any module of the package; GitNexus links `from planner.core import solver` to `solver.py` only and has just `CONTAINS` edges into them (docs/gitnexus-limitations.md, section 13). Four are empty package markers that `packages.find` and pytest's module names need; `planner/__init__.py` holds the package docstring. |
+
+The configuration declares them, together with `cli.py` (`python -m
+planner.cli` in the Makefile) and `api/app.py` (`uvicorn
+planner.api.app:app` in the Dockerfile and `cli.py serve`), which tests
+already import, and `conftest.py`, which pytest loads. After that `unused`
+reports 0 files with no observed users and no unused node. Every production
+file is also reachable over observed dependencies from the production entry
+points (`main.tsx`, `vite.config.ts`, `cli.py`, `api/app.py`), so no file is
+used by tests alone. lct-task3 has no dead file as far as the index shows.

@@ -13,6 +13,18 @@ project:
     - "**/node_modules/**"
     - "frontend/dist/**"
     - "**/*.{json,md,html,lock,tsbuildinfo}"
+  # Files a tool or the runtime loads by name, which no observed code
+  # imports; anything else nothing uses is a dead-code candidate (README.md).
+  entry_points:
+    - frontend/vite.config.ts        # read by Vite: `vite`, `vite build`
+    - frontend/src/main.tsx          # index.html: <script type="module">
+    - backend/planner/cli.py         # `python -m planner.cli` (Makefile)
+    - backend/planner/api/app.py     # `uvicorn planner.api.app:app` (Dockerfile)
+    - "backend/tests/**/test_*.py"   # collected by pytest (pyproject testpaths)
+    - backend/tests/conftest.py      # loaded by pytest
+    # Python runs a package's __init__.py before any module in it; GitNexus
+    # links an import to the module only (docs/gitnexus-limitations.md, 13).
+    - "backend/**/__init__.py"
 provider:
   kind: gitnexus
   command: gitnexus
