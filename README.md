@@ -47,7 +47,10 @@ can be used to report a clean architecture.
 has since been built with Rust 1.98, its test suite run, and it has been
 exercised with GitNexus 1.6.12 against [zammad](https://github.com/zammad/zammad).
 That run exposed and fixed a truncation bug in the GitNexus adapter and led to
-configurable edge types, reason/confidence filters and coverage warnings. See
+configurable edge types, reason/confidence filters and coverage warnings. A
+contract test runs ArchGraph against a real GitNexus index of a generated
+repository: `cargo test --test gitnexus_contract -- --ignored`. Run it after
+upgrading GitNexus. See
 [examples/zammad/README.md](examples/zammad/README.md) and
 [IMPLEMENTATION.md](IMPLEMENTATION.md).
 

@@ -29,7 +29,12 @@ design and [docs/](docs/) for provider limitations.
       --config "$PWD/examples/zammad/architecture.yaml" check
   ```
   Tests use a fake provider (`tests/fixtures/fake_gitnexus.py`); passing tests
-  alone never proved GitNexus compatibility (see Gotchas).
+  alone never proved GitNexus compatibility (see Gotchas). For provider
+  changes, and after upgrading GitNexus, also run the contract test against
+  the real CLI (about 15 s, isolated `HOME`):
+  ```bash
+  cargo test --test gitnexus_contract -- --ignored
+  ```
 - UI changes: `node --check src/web/app.js`, then the browser smoke test
   (`uv run --with playwright python tests/web_smoke.py`, with
   `ARCHGRAPH_CHROMIUM` pointing at a Chromium binary). Also look at the real UI
