@@ -84,6 +84,7 @@ pub fn router(ir: Arc<ArchitectureIr>) -> Router {
 pub fn live_router(live: Arc<Live>) -> Router {
     Router::new()
         .route("/", get(index))
+        .route("/board.js", get(board_javascript))
         .route("/app.js", get(javascript))
         .route("/style.css", get(stylesheet))
         .route("/api/meta", get(meta))
@@ -129,6 +130,12 @@ async fn javascript() -> impl IntoResponse {
     (
         [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
         include_str!("web/app.js"),
+    )
+}
+async fn board_javascript() -> impl IntoResponse {
+    (
+        [(header::CONTENT_TYPE, "text/javascript; charset=utf-8")],
+        include_str!("web/board.js"),
     )
 }
 async fn stylesheet() -> impl IntoResponse {

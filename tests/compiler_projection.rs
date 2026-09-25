@@ -835,3 +835,37 @@ async fn the_package_endpoint_lists_packages_for_search() {
             && import["file"].as_str().is_some()
             && import["specifier"].as_str().unwrap().starts_with("ortools")));
 }
+
+#[tokio::test]
+async fn every_script_and_stylesheet_the_page_loads_is_served() {
+    let temp = repository();
+    let app = server::router(Arc::new(compile(temp.path(), imports()).await));
+    let page = include_str!("../src/web/index.html");
+    let assets: Vec<&str> = page
+        .split(['"', '\''])
+        .filter(|part| part.starts_with('/') && (part.ends_with(".js") || part.ends_with(".css")))
+        .collect();
+    assert!(
+        assets.contains(&"/board.js") && assets.contains(&"/app.js"),
+        "{assets:?}"
+    );
+    for asset in assets {
+        let response = app
+            .clone()
+            .oneshot(Request::builder().uri(asset).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{asset}");
+        let kind = response.headers()["content-type"]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let expected = if asset.ends_with(".js") {
+            "text/javascript"
+        } else {
+            "text/css"
+        };
+        assert!(kind.starts_with(expected), "{asset}: {kind}");
+        assert!(response.headers().contains_key("content-security-policy"));
+    }
+}
