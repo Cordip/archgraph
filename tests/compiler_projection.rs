@@ -700,4 +700,11 @@ async fn the_package_endpoint_lists_packages_for_search() {
         value["packages"][1]["nodes"],
         serde_json::json!(["app.api", "app.core"])
     );
+    let imports = value["packages"][1]["imports"].as_array().unwrap();
+    assert_eq!(imports.len(), 2);
+    assert!(imports
+        .iter()
+        .all(|import| import["line"].as_u64().unwrap() > 0
+            && import["file"].as_str().is_some()
+            && import["specifier"].as_str().unwrap().starts_with("ortools")));
 }

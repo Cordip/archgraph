@@ -81,6 +81,9 @@ FONTSOURCE = {"id": "package:npm/@fontsource/ibm-plex-sans", "name": "@fontsourc
               "imports": [{"file": "src/api/a.rs", "line": 4, "specifier": "@fontsource/ibm-plex-sans/400.css", "type_only": False, "node": "app.api"}]}
 WIDE_PACKAGE_ENTRY = {**PACKAGE_ENTRY, "id": FONTSOURCE["id"], "title": FONTSOURCE["name"],
                       "description": "npm package imported by 1 file(s).", "package": FONTSOURCE}
+# An edge into a package carries package evidence, not a file.
+PACKAGE_EDGE = {**edge("node:app.domain", ORTOOLS["id"]), "count": 1, "violation_rule_ids": [],
+                "evidence": [{"from_file": "src/domain/a.rs", "to_file": ORTOOLS["id"], "kind": "IMPORTS", "confidence": 1.0, "reason": "package-import"}]}
 PROJECTIONS = {
     "app": {"focus": NODES["app"], "breadcrumbs": [NODES["app"]],
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
@@ -98,10 +101,11 @@ PROJECTIONS = {
                 "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": []},
     "packages": {"focus": NODES["packages"], "breadcrumbs": [NODES["packages"]],
                  "nodes": [PACKAGE_ENTRY, WIDE_PACKAGE_ENTRY, entry("app.api", True), entry("app.domain", True)],
-                 "edges": [edge("node:app.domain", ORTOOLS["id"]), edge("node:app.api", ORTOOLS["id"])],
+                 "edges": [PACKAGE_EDGE, edge("node:app.api", ORTOOLS["id"])],
                  "violations": [], "evidence_limit": 20, "evidence_notice": NOTICE, "layers": [[ORTOOLS["id"], FONTSOURCE["id"]]]},
 }
-PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"]}]
+PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"],
+             "imports": ORTOOLS["imports"]}]
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
@@ -390,9 +394,22 @@ def main():
         assert page.locator("#details h2").inner_text() == "Domain"
         assert page.locator("#graph .node.selected").get_attribute("aria-label") == "Domain"
         assert page.locator("#focus-id").inner_text() == "packages"
+        # An edge into packages names each package in large type, with the
+        # importing line from this edge's files; the name opens the package.
+        page.evaluate("showEdge(scene.edges.find((e) => e.from === 'node:app.domain' && e.to === '%s'))" % ORTOOLS["id"])
+        details = page.locator("#details").inner_text()
+        assert "Imports of third-party packages" in details and "Observed file dependencies from GitNexus" not in details, details
+        assert page.locator("#details .edge-package-name").all_text_contents() == ["ortools"]
+        assert page.locator("#details h2").inner_text() == "ortools"
+        assert page.locator("#details .edge-package-name").evaluate("e => parseFloat(getComputedStyle(e).fontSize)") >= 18
+        package_item = page.locator("#details .edge-package").inner_text()
+        assert "Python package" in package_item and "src/domain/a.rs:3" in package_item and "src/api/a.rs:9" not in package_item, package_item
+        assert "→ ortools (package)" in details
+        page.locator("#details .edge-package-name").click()
+        assert page.locator(f"#graph .node.package.selected[data-id='{ORTOOLS['id']}']").count() == 1
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
-        checks.append("package search opens the owner's level with the package selected; its details list importing files, lines and nodes")
+        checks.append("an edge into packages names them in large type with their import lines; package search opens the owner's level with the package selected; its details list importing files, lines and nodes")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.

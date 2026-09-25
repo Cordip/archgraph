@@ -214,8 +214,11 @@ async fn packages(State(live): State<Arc<Live>>) -> Json<Value> {
                 .iter()
                 .filter_map(|import| import.node.as_deref())
                 .collect();
+            // The import lines let the UI name each package on an edge with
+            // the file and line that imports it.
             json!({"id": package.id, "name": package.name, "ecosystem": package.ecosystem,
-                "node": package.node, "file_count": files.len(), "nodes": nodes})
+                "node": package.node, "file_count": files.len(), "nodes": nodes,
+                "imports": package.imports})
         })
         .collect();
     Json(json!({"enabled": ir.packages.is_some(), "packages": packages}))

@@ -484,7 +484,8 @@ function addEvidence(parent, evidence, total, limit = Infinity) {
   const list = html("ol", null, "evidence");
   for (const item of (evidence || []).slice(0, limit)) {
     const row = html("li", null, "evidence-item");
-    row.append(html("div", `${item.from_file}\n→ ${item.to_file}`, "evidence-pair"));
+    const target = item.to_file.startsWith("package:") ? `${packageName(item.to_file)} (package)` : item.to_file;
+    row.append(html("div", `${item.from_file}\n→ ${target}`, "evidence-pair"));
     const line = html("div", null, "evidence-meta");
     line.append(html("span", item.kind, "tag"));
     if (hasValue(item.confidence)) line.append(html("span", `confidence ${item.confidence}`));
@@ -682,9 +683,15 @@ function edgeSummary(group) {
 function showEdge(group, element) {
   select(element, { nodes: new Set([group.from, group.to]), edges: new Set([group]) });
   selected = { kind: "edge", from: group.from, to: group.to, origin: group.origin };
-  const panel = detailsTitle(edgeSummary(group), null, group.origin === "manual" ? "Manual dependency" : "Observed dependency");
+  const packageIds = edgePackages(group);
+  const onlyPackages = packageIds.length > 0 && group.parts.every((edge) => (edge.evidence || []).every((item) => item.to_file.startsWith("package:")));
+  // An edge into packages is titled by what it imports, not by "IMPORTS × n".
+  const title = onlyPackages ? (packageIds.length <= 3 ? packageIds.map(packageName).join(", ") : plural(packageIds.length, "package")) : edgeSummary(group);
+  const panel = detailsTitle(title, null, onlyPackages ? `Imported packages · ${edgeSummary(group)}` : group.origin === "manual" ? "Manual dependency" : "Observed dependency");
   panel.append(html("p", `${displayEndpoint(group.from)}\n→ ${displayEndpoint(group.to)}`, "evidence-pair endpoints"));
-  panel.append(html("p", group.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence." : "Observed file dependencies from GitNexus."));
+  panel.append(html("p", group.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence."
+    : onlyPackages ? "Imports of third-party packages, read from the source by ArchGraph." : "Observed file dependencies from GitNexus."));
+  if (packageIds.length) packageSection(panel, packageIds, group);
   if (group.violation_rule_ids.length) panel.append(html("p", `⚠ ${group.violation_rule_ids.join(", ")}`, "violation-badge"));
   if (group.suggested_cut_rule_ids.length) panel.append(html("p", `✂ Suggested cut for ${group.suggested_cut_rule_ids.join(", ")}: removing this upward dependency helps break the cycle at the lowest observed cost.`, "cut-badge"));
   if (group.grouped) {
@@ -712,6 +719,44 @@ function showEdge(group, element) {
     }
   }
   revealDetails();
+}
+// Packages an edge reaches, in the order of their names.
+function edgePackages(group) {
+  const ids = new Set();
+  for (const edge of group.parts) for (const item of edge.evidence || []) if (item.to_file.startsWith("package:")) ids.add(item.to_file);
+  return [...ids].sort((a, b) => packageName(a).localeCompare(packageName(b)));
+}
+function packageName(id) {
+  const known = allPackages.find((item) => item.id === id);
+  return known ? known.name : id.replace(/^package:[^/]+\//, "");
+}
+// An edge into packages names each package prominently, with the lines that
+// import it from this edge's files; the name opens the package.
+function packageSection(panel, ids, group) {
+  const sources = new Set();
+  for (const edge of group.parts) for (const item of edge.evidence || []) sources.add(item.from_file);
+  panel.append(html("h3", `Packages (${ids.length})`));
+  const list = html("ul", null, "edge-packages");
+  for (const id of ids) {
+    const known = allPackages.find((item) => item.id === id);
+    const item = html("li", null, "edge-package");
+    const name = html("button", packageName(id), "edge-package-name");
+    name.type = "button";
+    name.title = `Open ${id}`;
+    if (known && known.node) name.addEventListener("click", () => openPackage(known));
+    else name.disabled = true;
+    item.append(name, html("div", known ? `${ecosystemTitle(known.ecosystem)} package` : id, "edge-package-kind"));
+    const lines = html("ul", null, "importer-lines");
+    for (const use of (known && known.imports) || []) {
+      if (!sources.has(use.file)) continue;
+      const row = html("li", null, "importer-line");
+      row.append(html("span", `${use.file}:${use.line}`, "detail-id"), html("span", `${use.specifier}${use.type_only ? " (type only)" : ""}`, "detail-id"));
+      lines.append(row);
+    }
+    if (lines.childElementCount) item.append(lines);
+    list.append(item);
+  }
+  panel.append(list);
 }
 // Lights the entries and drawn edges this violation involves.
 function violationScope(violation) {
