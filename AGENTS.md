@@ -195,3 +195,10 @@ Add new entries at the end: what happened, why, and what to do.
     `eval`), while `page.evaluate` of the same string works. Poll with
     `page.evaluate` or from Python. The smoke test's fixture page has no CSP,
     so it does not show this.
+27. **Opacity on overlapping SVG paths stacks.** A trunk is drawn as several
+    overlapping runs (one per width step and per joining wire). Dimming each
+    path to 0.15 still left the trunk dark, because where four paths overlap
+    the result is about 0.5. Dim a group (`.trunk-body`) instead: a group's
+    opacity is applied once to its composited content. Check with
+    `document.elementsFromPoint` when something stays stronger than its CSS
+    says.
