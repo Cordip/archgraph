@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Format
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      # The CLI process tests use a Python fake provider and run on Unix only.
+      - name: Test
+        run: cargo test --all-targets
+
+  # Checks the assumptions the fake provider encodes against a real GitNexus
+  # (PolyForm Noncommercial; installed only to test against it).
+  contract:
+    name: GitNexus contract (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install GitNexus
+        run: npm install --global gitnexus@1.6.12
+      - name: Point to gitnexus.cmd
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"GITNEXUS_BIN=$((Get-Command gitnexus.cmd).Source)" >> $env:GITHUB_ENV'
+      - name: Contract tests
+        run: cargo test --test gitnexus_contract -- --ignored
+
+  web:
+    name: UI smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: JavaScript syntax
+        run: node --check src/web/app.js
+      - uses: astral-sh/setup-uv@v6
+      - name: Install Chromium
+        run: uv run --with playwright python -m playwright install --with-deps chromium
+      - name: Browser smoke test
+        run: uv run --with playwright python tests/web_smoke.py

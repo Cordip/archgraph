@@ -2,7 +2,8 @@
 """Optional UI-only browser smoke test in an isolated DOM with mocked fetch/history interfaces.
 
 Requires Python Playwright and Chromium; does not run or validate the Rust server.
-Set ARCHGRAPH_CHROMIUM to the Chromium executable available on your machine.
+Set ARCHGRAPH_CHROMIUM to use a specific Chromium executable; otherwise
+Playwright's own Chromium is used.
 """
 from copy import deepcopy
 import json
@@ -80,7 +81,9 @@ META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"pro
 def main():
     checks = []
     with sync_playwright() as playwright:
-        executable = os.environ.get("ARCHGRAPH_CHROMIUM", "/usr/bin/chromium")
+        # Without ARCHGRAPH_CHROMIUM, Playwright's own Chromium is used
+        # (`python -m playwright install chromium`).
+        executable = os.environ.get("ARCHGRAPH_CHROMIUM") or None
         browser = playwright.chromium.launch(executable_path=executable, headless=True, args=["--no-sandbox"])
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         errors = []
