@@ -19,8 +19,11 @@ archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.y
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml http
 ```
 
-The configuration lives here, not in lct-task3. Running it writes only the
-`.archgraph/` working directory into the target.
+Since branch `refactor/architecture-boundaries`, lct-task3 carries the same
+configuration as its own `architecture.yaml`, with comments and titles in
+Russian (the repository's language), and runs it with `make arch`. The copy
+here is the one this validation used and ArchGraph's tests parse. Running
+ArchGraph writes only `.archgraph/` into the target, which ignores itself.
 
 ## Nodes and rules
 

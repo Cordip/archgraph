@@ -37,7 +37,7 @@ nodes:
     title: Python backend
   lct.backend.ingest:
     title: Data preparation
-    description: Offline. Turns the raw export into scenario files; not used while serving.
+    description: Turns the raw export into scenario files; the service uses it to load and upload scenarios.
     maps: ["backend/planner/ingest/**"]
   lct.backend.core:
     title: Planning core
