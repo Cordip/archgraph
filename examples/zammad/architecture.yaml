@@ -17,6 +17,13 @@ project:
   exclude:
     - "**/node_modules/**"
     - "app/assets/builds/**"
+    # Co-located frontend test helpers. Sibling nodes cannot share files, so they
+    # cannot be mapped to frontend.test_support; left in, they create a false
+    # app <-> test_support cycle.
+    - "app/frontend/**/__tests__/**"
+    - "app/frontend/**/*.spec.ts"
+    - "app/frontend/**/*.mocks.ts"
+    - "app/frontend/**/graphql/mocks/**"
     - "app/assets/stylesheets/**"
     - "**/*.{png,svg,jpg,gif,ico,woff,woff2,ttf,eot,css,scss,json,yml,yaml,md,txt,erb,eco,jst,html,snap,gql,graphql}"
 provider:

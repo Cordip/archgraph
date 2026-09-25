@@ -9,7 +9,7 @@ frontend. It was the first real repository ArchGraph ran against.
 | zammad commit | `5b396c16c1d150bbcacf42e593a66d860527ae50` (2026-09-24), shallow clone |
 | GitNexus | 1.6.12, `gitnexus analyze --index-only` (148 s, 65,830 nodes, 117,163 edges) |
 | ArchGraph | Rust 1.98 release build, [architecture.yaml](architecture.yaml) |
-| Compile time | about 16 s for 10,203 mapped files |
+| Compile time | about 16 s for 9,164 mapped files |
 
 ```bash
 git clone --depth 1 https://github.com/zammad/zammad
@@ -90,22 +90,41 @@ Share of files with no observed dependency at all, from the committed config:
 | `backend.policies` | 174 | 94% | same |
 | `backend.services` | 234 | 88% | same |
 | `backend.models` | 618 | 66% | same |
-| `frontend.desktop` | 1,763 | 44% | `#desktop/...` path aliases not resolved |
+| `frontend.desktop` | 1,144 | 30% | `#` imports not resolved (3% with the workaround below) |
 
 - **Rails autoloading.** Only 69 of 2,819 Ruby files under `app/` and `lib/` use
   `require`. The central `app/models/ticket.rb` has no `IMPORTS` edge. GitNexus
   logged 10,747 Ruby call sites it refused to resolve.
-- **TypeScript path aliases.** The frontend has about 16,300 `import ... from`
+- **`#` import aliases.** The frontend has about 16,300 `import ... from`
   statements, of which about 10,000 use `#shared/`, `#desktop/`, `#mobile/` or
-  `#tests/` aliases. GitNexus resolved about 1,900 TypeScript/Vue imports. In
-  `TicketDetailView.vue` the relative import was resolved and the
-  `#desktop/components/...` import was not. The aliases are declared in
-  `tsconfig.base.json`, which `tsconfig.json` only `extends`. That GitNexus
-  does not follow `extends` is a likely cause, but it was not confirmed by
-  reindexing.
+  `#tests/` aliases. GitNexus resolved about 1,900 TypeScript/Vue imports. It
+  resolves `#` specifiers only through a *named* workspace package's `imports`,
+  and zammad's `app/frontend/package.json` has no name and is not declared as a
+  workspace package. See
+  [docs/gitnexus-limitations.md](../../docs/gitnexus-limitations.md#1--subpath-imports-resolve-only-through-a-named-workspace-package)
+  for the cause and a confirmed local workaround.
 
 For these parts of zammad, a passing ArchGraph check is weak evidence. The
 coverage warnings say so on every run.
+
+## Frontend with the import workaround
+
+With the local workaround from
+[docs/gitnexus-limitations.md](../../docs/gitnexus-limitations.md) (two manifest
+edits in the zammad checkout and a forced reindex), resolved TypeScript/Vue
+imports rose from about 1,900 to 8,627. Frontend coverage rose to 89–97%. The
+check then reports one more real violation and one more cycle:
+
+- `frontend-shared-does-not-know-apps-mobile`:
+  `app/frontend/shared/composables/useStickyHeader.ts` has
+  `import type LayoutHeader from '#mobile/components/layout/LayoutHeader.vue'`.
+- `no-frontend-cycles`: `mobile` and `shared` form a cycle of 994 observed
+  dependencies. The suggested cut is that single `useStickyHeader.ts` import:
+  1 of 994.
+
+The first attempt reported a large app ↔ `test_support` cycle. It came from
+test helpers kept next to production code (`*.mocks.ts`, `__tests__/`,
+`*.spec.ts`), which the committed config now excludes.
 
 ## UI
 

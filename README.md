@@ -288,6 +288,8 @@ half the files under a rule's node are observed, compilation warns that a
 passing check there is weak evidence. In zammad, 99% of the CoffeeScript UI
 (a language GitNexus does not parse) and 96% of the Ruby GraphQL layer
 (constant references GitNexus could not resolve) had no observed dependency.
+Known provider gaps, their causes and workarounds are collected in
+[docs/gitnexus-limitations.md](docs/gitnexus-limitations.md).
 
 The supported Cypher stdout contract is one JSON object containing a `markdown`
 string and nonnegative integer `row_count`. The Markdown must have a header and
