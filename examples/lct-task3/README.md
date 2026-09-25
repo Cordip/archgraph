@@ -10,13 +10,14 @@ halves share no code edges, only `FETCHES` edges from HTTP calls.
 | --- | --- |
 | lct-task3 commit | `8e8041b` for the findings (87 Python and TypeScript files); fixed on branch `refactor/architecture-boundaries` of the fork `Cordip/lct-task3` |
 | GitNexus | 1.6.12, `gitnexus analyze --index-only` |
-| ArchGraph | release build, [architecture.yaml](architecture.yaml) with `provider.css: true` and `provider.http: true` |
+| ArchGraph | release build, [architecture.yaml](architecture.yaml) with `provider.css: true`, `provider.http: true` and `provider.packages: true` |
 
 ```bash
 cd lct-task3 && gitnexus analyze --index-only
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml check
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml styles
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml http
+archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml packages ortools
 ```
 
 Since branch `refactor/architecture-boundaries`, lct-task3 carries the same
@@ -113,9 +114,34 @@ passed, 3 skipped), and the frontend builds (`tsc -b && vite build`) after:
 After the fixes, `check` reports no violations and `styles` no undefined
 classes; `.failed` remains as the known false report.
 
+## Packages
+
+GitNexus drops every import of a package, so "who uses OR-Tools" had no
+answer from the index. With `provider.packages: true` (checked at `4b38019`
+of the fork's branch), `packages` finds 15 packages imported by 53 files:
+fastapi, httpx, numpy, ortools, pydantic, pytest, uvicorn and yaml in
+Python; react, react-dom, react-leaflet, leaflet, @fontsource/ibm-plex-sans,
+vite and @vitejs/plugin-react in npm. No import is ambiguous: every Python
+module either sits under `backend/` (above every backend file) or is a
+package, and `frontend/package.json` declares every bare specifier.
+
+OR-Tools is imported by `core/solver.py:18` and
+`tests/test_solver_progress.py:6`, nothing else. The configuration maps it
+to `libs.ortools` and keeps it there with one rule,
+`only-the-core-uses-the-solver` (`allow_only_from`, sources
+`lct.backend.core` and `lct.tests`). Without `lct.tests` in the list, the
+test's import fails the check, which shows the rule can fail.
+
+A lead, not a violation: the planning core imports `httpx` lazily in
+`core/geometry.py:53` and `core/travel.py:227` to query an OSRM routing
+server, so "the core computes plans" includes network calls. Everything
+else third-party in the core is numpy, pydantic, yaml and OR-Tools.
+
 ## Coverage
 
-83 of the 89 mapped files are observed. The other six are the five empty
+83 of the 89 mapped files are observed. Imports of packages do not count
+towards this: a file whose only dependencies are packages is still
+unobserved. The other six are the five empty
 `__init__.py` package markers and `vite.config.ts`, which nothing imports.
 The Leaflet and `@fontsource` stylesheets are read from
 `frontend/node_modules`, so classes that only override Leaflet's

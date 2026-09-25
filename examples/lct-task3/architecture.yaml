@@ -27,6 +27,9 @@ provider:
   # GitNexus finds the FastAPI routes but not the frontend's calls through
   # its `request()` wrapper; ArchGraph matches those calls to the routes.
   http: true
+  # GitNexus drops imports of third-party packages; ArchGraph reads them, so
+  # `archgraph packages ortools` says who uses the solver.
+  packages: true
 policies:
   unassigned_files: warn
   ambiguous_mapping: error
@@ -83,6 +86,15 @@ nodes:
   lct.tests:
     title: Backend tests
     maps: ["backend/tests/**"]
+  # Third-party packages; the ones not mapped here are in `packages`.
+  libs:
+    title: Third-party libraries
+    kind: external
+  libs.ortools:
+    title: OR-Tools
+    kind: external
+    description: Google's routing solver, wrapped by core/solver.py.
+    maps: ["package:python/ortools"]
 edges: []
 rules:
   # Data preparation builds core models; the core computes plans and must
@@ -115,3 +127,5 @@ rules:
       - [lct.frontend.logic, lct.frontend.client]
       - [lct.frontend.types, lct.frontend.styles]
     edge_types: *observed
+  # The solver stays behind the planning core; tests may drive it directly.
+  - {id: only-the-core-uses-the-solver, kind: allow_only_from, to: libs.ortools, from: [lct.backend.core, lct.tests]}
