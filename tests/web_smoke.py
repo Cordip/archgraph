@@ -867,8 +867,12 @@ def main():
         own = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f05.ts']"
         other = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f01.ts']:not([data-to='file:d/f05.ts'])"
         assert page.evaluate("scene.edges.length") == 66 and page.locator("#graph.faint").count() == 1
-        assert opacity(own) < 0.3 and opacity(other) < 0.3, (opacity(own), opacity(other))
-        assert opacity("#graph .edge.violating") >= 0.75
+        # At rest the wires are dimmed, not below .35; violations and trunks
+        # stay at full strength.
+        assert 0.34 <= opacity(own) < 0.5 and 0.34 <= opacity(other) < 0.5, (opacity(own), opacity(other))
+        assert opacity("#graph .edge.violating") == 1
+        if page.locator("#graph .edge.trunk[data-trunk]").count():
+            assert opacity("#graph .edge.trunk[data-trunk]") == 1 and opacity("#graph .edge.trunk .trunk-body") == 1
         page.locator("#graph .node[data-id='file:d/f05.ts']").hover()
         page.wait_for_timeout(300)
         assert opacity(own) == 1 and opacity(other) < 0.3, (opacity(own), opacity(other))
@@ -882,7 +886,7 @@ def main():
         assert page.locator("#graph.faint").count() == 1
         page.evaluate("loadFocus('app.domain')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
-        checks.append("focus mode: above 60 wires all are faint, an entry's own wires light up on hover, violations stay strong; the toggle is remembered")
+        checks.append("focus mode: above 60 wires the others are dimmed to .35 while trunks and violations stay at full strength, an entry's own wires light up on hover; the toggle is remembered")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.

@@ -479,12 +479,11 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 #graph.compact .edge-label { display: none; }
 #graph .edge.hover .edge-label, #graph:not(.has-hover) .edge.lit .edge-label { display: inline; }
 #graph .node, #graph .edge { transition: opacity .15s; }
-/* Focus mode on a busy level: wires are faint until something is pointed at
-   or selected; violations stay strong, and trunk tags stay readable. */
-#graph.faint:not(.has-hover):not(.has-selection) .edge { opacity: .16; }
-#graph.faint:not(.has-hover):not(.has-selection) .edge.violating { opacity: .8; }
-#graph.faint:not(.has-hover):not(.has-selection) .edge.trunk:not(.violating) { opacity: 1; }
-#graph.faint:not(.has-hover):not(.has-selection) .edge.trunk:not(.violating) > .trunk-body { opacity: .2; }
+/* Focus mode on a busy level: at rest, trunks and violations stay at full
+   strength and the other wires (branches included) are dimmed, not below
+   .35 so they still read zoomed out; pointing at or selecting something
+   brings its wires back. */
+#graph.faint:not(.has-hover):not(.has-selection) .edge:not(.trunk):not(.violating) { opacity: .35; }
 #graph.violations-only .node:not(.violating), #graph.violations-only .edge:not(.violating) { opacity: .16; }
 #graph.idle-only .node:not(.idle), #graph.idle-only .edge { opacity: .16; }
 #graph.has-selection .node:not(.lit), #graph.has-selection .edge:not(.lit) { opacity: .18; }
