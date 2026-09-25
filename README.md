@@ -321,7 +321,8 @@ entry rather than disappearing. A manual edge naming the focus itself appears
 on a **boundary** entry instead of inventing a particular source file/child.
 Outside owners appear as explicitly marked cross-boundary entries. Dependencies
 collapsed to the same visible node are omitted. Manual and observed edges are
-visually distinguished. Mermaid is another renderer of the same projection,
+visually distinguished. Relation kinds between the same two entries are drawn
+as one edge (`2 kinds × 114`); its details list each kind with its evidence. Mermaid is another renderer of the same projection,
 never an architecture source format.
 
 The server defaults to loopback and exposes only:

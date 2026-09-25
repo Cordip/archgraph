@@ -129,6 +129,7 @@ test helpers kept next to production code (`*.mocks.ts`, `__tests__/`,
 ## UI
 
 `archgraph serve` rendered the backend and root focus levels with no browser
-console errors. One readability problem remains: each relation kind between the
-same two nodes is drawn as its own edge (`CALLS`, `IMPLEMENTS`, `IMPORTS`), so the
-labels overlap on dense levels.
+console errors. Each relation kind between the same two nodes used to be drawn
+as its own edge, so labels overlapped. The UI now merges them (26 edges instead
+of 36 on the backend level). Some labels still touch where many nodes are
+adjacent in the fixed grid layout.

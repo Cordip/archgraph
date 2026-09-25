@@ -92,20 +92,43 @@ function displayEndpoint(id) {
   const node = currentProjection.nodes.find((entry) => entry.id === id);
   return node ? node.file_path || node.architecture_id || node.title : id;
 }
-function showEdge(edge, element) {
-  select(element);
-  const panel = detailsTitle(`${edge.kind} × ${edge.count}`);
-  panel.append(html("p", `${displayEndpoint(edge.from)}\n→ ${displayEndpoint(edge.to)}`, "evidence-pair"));
-  panel.append(html("p", edge.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence." : "Observed file dependencies from GitNexus."));
-  if (edge.confidence_min !== null && edge.confidence_min !== undefined) panel.append(html("p", `Confidence range: ${edge.confidence_min}–${edge.confidence_max}`));
-  if (edge.violation_rule_ids.length) panel.append(html("p", `⚠ ${edge.violation_rule_ids.join(", ")}`, "violation-badge"));
-  if ((edge.suggested_cut_rule_ids || []).length) panel.append(html("p", `✂ Suggested cut for ${edge.suggested_cut_rule_ids.join(", ")}: removing this upward dependency helps break the cycle at the lowest observed cost.`, "cut-badge"));
-  for (const manual of edge.manual_edges || []) {
-    panel.append(html("h3", manual.label || manual.id));
-    panel.append(html("p", `${manual.from} → ${manual.to}`, "detail-id"));
-    if (manual.description) panel.append(html("p", manual.description));
+// One drawn edge per endpoint pair and origin. Relation kinds (CALLS, IMPORTS,
+// ...) between the same two nodes are listed in its details instead of being
+// drawn as parallel arrows with overlapping labels.
+function mergeEdges(edges) {
+  const merged = new Map();
+  for (const edge of edges) {
+    const key = [edge.from, edge.to, edge.origin].join("\u0000");
+    if (!merged.has(key)) merged.set(key, { from: edge.from, to: edge.to, origin: edge.origin, count: 0, parts: [] });
+    const group = merged.get(key);
+    group.count += edge.count;
+    group.parts.push(edge);
   }
-  if (edge.origin === "observed") { panel.append(html("h3", "Concrete evidence")); addEvidence(panel, edge.evidence, edge.count); }
+  const union = (parts, field) => [...new Set(parts.flatMap((part) => part[field] || []))].sort();
+  return [...merged.values()].map((group) => ({ ...group,
+    violation_rule_ids: union(group.parts, "violation_rule_ids"),
+    suggested_cut_rule_ids: union(group.parts, "suggested_cut_rule_ids") }));
+}
+function edgeSummary(group) {
+  return group.parts.length === 1 ? `${compact(group.parts[0].kind, 22)} × ${group.count}` : `${group.parts.length} kinds × ${group.count}`;
+}
+function showEdge(group, element) {
+  select(element);
+  const panel = detailsTitle(edgeSummary(group));
+  panel.append(html("p", `${displayEndpoint(group.from)}\n→ ${displayEndpoint(group.to)}`, "evidence-pair"));
+  panel.append(html("p", group.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence." : "Observed file dependencies from GitNexus."));
+  if (group.violation_rule_ids.length) panel.append(html("p", `⚠ ${group.violation_rule_ids.join(", ")}`, "violation-badge"));
+  if (group.suggested_cut_rule_ids.length) panel.append(html("p", `✂ Suggested cut for ${group.suggested_cut_rule_ids.join(", ")}: removing this upward dependency helps break the cycle at the lowest observed cost.`, "cut-badge"));
+  for (const edge of group.parts) {
+    panel.append(html("h3", `${edge.kind} × ${edge.count}`));
+    if (edge.confidence_min !== null && edge.confidence_min !== undefined) panel.append(html("p", `Confidence range: ${edge.confidence_min}–${edge.confidence_max}`));
+    for (const manual of edge.manual_edges || []) {
+      panel.append(html("p", manual.label || manual.id, "detail-id"));
+      panel.append(html("p", `${manual.from} → ${manual.to}`, "detail-id"));
+      if (manual.description) panel.append(html("p", manual.description));
+    }
+    if (edge.origin === "observed") addEvidence(panel, edge.evidence, edge.count);
+  }
 }
 function showViolation(violation) {
   select(null);
@@ -181,7 +204,7 @@ function drawGraph(projection) {
   if (!projection.nodes.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
   if (outsideY !== null) graph.append(svg("text", { x: 60, y: outsideY, class: "graph-note" }, "OUTSIDE CURRENT FOCUS"));
   const laneCounts = new Map();
-  for (const edge of projection.edges) {
+  for (const edge of mergeEdges(projection.edges)) {
     const from = positions.get(edge.from), to = positions.get(edge.to);
     if (!from || !to) throw new Error("Projection edge references an absent visible node");
     const key = [edge.from, edge.to].sort().join("\u0000");
@@ -196,16 +219,16 @@ function drawGraph(projection) {
     const start = boundaryPoint(from, control), end = boundaryPoint(to, control);
     const path = `M ${start.x} ${start.y} Q ${control.x} ${control.y} ${end.x} ${end.y}`;
     const violating = edge.violation_rule_ids.length > 0;
-    const cut = (edge.suggested_cut_rule_ids || []).length > 0;
+    const cut = edge.suggested_cut_rule_ids.length > 0;
     const group = svg("g", { class: `edge ${edge.origin}${violating ? " violating" : ""}${cut ? " cut" : ""}`, tabindex: 0, role: "button",
-      "aria-label": `${displayEndpoint(edge.from)} to ${displayEndpoint(edge.to)}, ${edge.kind}, ${edge.count} ${edge.origin} relationships` });
+      "aria-label": `${displayEndpoint(edge.from)} to ${displayEndpoint(edge.to)}, ${edge.parts.map((part) => part.kind).join(", ")}, ${edge.count} ${edge.origin} relationships` });
     group.append(svg("path", { d: path, class: "edge-hit" }));
     group.append(svg("path", { d: path, class: "edge-line", "marker-end": `url(#${violating ? "arrow-error" : "arrow"})` }));
     const labelX = .25 * start.x + .5 * control.x + .25 * end.x;
     const labelY = .25 * start.y + .5 * control.y + .25 * end.y - 7;
-    const label = `${compact(edge.kind, 22)} × ${edge.count}${edge.origin === "manual" ? " manual" : ""}${cut ? " ✂" : violating ? " ⚠" : ""}`;
+    const label = `${edgeSummary(edge)}${edge.origin === "manual" ? " manual" : ""}${cut ? " ✂" : violating ? " ⚠" : ""}`;
     group.append(svg("text", { x: labelX, y: labelY, class: "edge-label" }, label));
-    group.append(svg("title", {}, `${edge.kind} × ${edge.count}. Click for concrete evidence.`));
+    group.append(svg("title", {}, `${edge.parts.map((part) => `${part.kind} × ${part.count}`).join(", ")}. Click for concrete evidence.`));
     group.addEventListener("click", () => showEdge(edge, group));
     group.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); showEdge(edge, group); } });
     graph.append(group);
@@ -250,7 +273,7 @@ async function loadFocus(id, pushHistory = true) {
     interfacesInto($("interfaces"), projection.focus.interfaces);
     $("summary").replaceChildren(
       html("span", `${projection.nodes.filter((node) => !node.outside_focus).length} visible entries`),
-      html("span", `${projection.edges.length} aggregated dependencies`),
+      html("span", `${mergeEdges(projection.edges).length} dependencies (${projection.edges.length} by relation kind)`),
       html("span", `${projection.violations.length} violations touching this view`)
     );
     $("evidence-notice").textContent = projection.evidence_notice;

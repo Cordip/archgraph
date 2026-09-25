@@ -48,8 +48,8 @@ EVIDENCE = {"from_file": "src/api/a.rs", "to_file": "src/domain/a.rs", "kind": "
             "confidence": 0.9, "reason": '<img src=x onerror="window.__injected=1"> | literal provider text'}
 
 
-def edge(source, target, manual=False):
-    return {"from": source, "to": target, "kind": "http" if manual else "IMPORTS",
+def edge(source, target, manual=False, kind="IMPORTS"):
+    return {"from": source, "to": target, "kind": "http" if manual else kind,
             "origin": "manual" if manual else "observed", "count": 1 if manual else 25,
             "evidence": [] if manual else [deepcopy(EVIDENCE)],
             "confidence_min": None if manual else 0.9, "confidence_max": None if manual else 0.9,
@@ -64,7 +64,8 @@ VIOLATION = {"rule_id": "deny-api-domain", "kind": "deny_dependency", "from": "a
 PROJECTIONS = {
     "app": {"focus": NODES["app"], "breadcrumbs": [NODES["app"]],
             "nodes": [entry("app.api"), entry("app.domain"), entry("external.service", True)],
-            "edges": [edge("node:app.api", "node:app.domain"), edge("node:app.api", "node:external.service", True)],
+            "edges": [edge("node:app.api", "node:app.domain"), edge("node:app.api", "node:app.domain", kind="CALLS"),
+                      edge("node:app.api", "node:external.service", True)],
             "violations": [VIOLATION], "evidence_limit": 20, "evidence_notice": NOTICE},
     "app.domain": {"focus": NODES["app.domain"], "breadcrumbs": [NODES["app"], NODES["app.domain"]],
                    "nodes": [entry("app.domain", file="src/domain/a.rs"), entry("app.domain", file="src/domain/b.rs"), entry("app.api", True)],
@@ -109,13 +110,17 @@ def main():
         page.add_script_tag(content=(ROOT / "src/web/app.js").read_text())
         page.wait_for_function("document.getElementById('focus-title').textContent === 'Application'")
         assert page.locator("#graph .node").count() == 3
+        # Two relation kinds between the same pair are drawn as one edge.
         assert page.locator("#graph .edge").count() == 2
         assert page.locator("#graph .edge-line[marker-end]").count() == 2
+        assert any(label.startswith("2 kinds × 50") for label in page.locator("#graph .edge-label").all_text_contents())
         assert page.locator("#graph .violating").count() >= 1
-        checks.append("root projection, directed arrows, external/manual entries, violation markers")
+        checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers")
 
         page.locator("#graph .edge-label").first.click()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
+        assert "CALLS × 25" in page.locator("#details").inner_text()
+        assert "IMPORTS × 25" in page.locator("#details").inner_text()
         assert "<img src=x" in page.locator("#details").inner_text()
         assert page.locator("#details img").count() == 0
         assert page.evaluate("window.__injected") is None
