@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Optional UI-only browser smoke test in an isolated DOM with mocked fetch/history interfaces.
 
+The page runs on a fake origin so that browser storage (remembered layouts)
+works; nothing is fetched from the network.
+
 Requires Python Playwright and Chromium; does not run or validate the Rust server.
 Set ARCHGRAPH_CHROMIUM to use a specific Chromium executable; otherwise
 Playwright's own Chromium is used.
@@ -84,6 +87,12 @@ META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"pro
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
 
+def camera(page):
+    """The canvas camera as (x, y, k), parsed from the #graph transform."""
+    numbers = [float(n) for n in re.findall(r"-?[\d.]+", page.locator("#graph").get_attribute("transform"))]
+    return numbers[0], numbers[1], numbers[2]
+
+
 def main():
     checks = []
     with sync_playwright() as playwright:
@@ -94,7 +103,9 @@ def main():
         page = browser.new_page(viewport={"width": 1440, "height": 1000})
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
-        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values())}
+        page.route("https://archgraph.invalid/**", lambda route: route.fulfill(body="<!doctype html><title>fixture</title>", content_type="text/html"))
+        page.goto("https://archgraph.invalid/")
+        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION]}
         index = (ROOT / "src/web/index.html").read_text()
         index = re.sub(r'<script[^>]*>.*?</script>', '', index, flags=re.S)
         index = re.sub(r'<link[^>]*rel="stylesheet"[^>]*>', '', index)
@@ -107,6 +118,8 @@ def main():
                 const url = new URL(input, 'https://archgraph.invalid/');
                 let payload = null;
                 if (url.pathname === '/api/meta') payload = fixture.meta;
+                else if (url.pathname === '/api/nodes') payload = fixture.nodes;
+                else if (url.pathname === '/api/violations') payload = {violations: fixture.violations};
                 else if (url.pathname.startsWith('/api/focus/')) payload = fixture.projections[decodeURIComponent(url.pathname.slice('/api/focus/'.length))];
                 else if (url.pathname === '/api/search') {
                     const q = (url.searchParams.get('q') || '').toLowerCase();
@@ -131,7 +144,10 @@ def main():
         api = page.get_by_role("button", name="API", exact=True).bounding_box()
         domain = page.get_by_role("button", name="Domain", exact=True).bounding_box()
         assert api["y"] < domain["y"], (api, domain)
-        checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers")
+        # Nothing selected: the details panel describes the level.
+        assert "This level" in page.locator("#details").inner_text()
+        assert NOTICE in page.locator("#evidence-notice").inner_text()
+        checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers, level overview")
 
         page.locator("#graph .edge-label", has_text="2 kinds").click()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
@@ -143,7 +159,7 @@ def main():
         assert page.locator("script").count() == 1
         checks.append("edge evidence and hostile provider text rendered without HTML execution")
 
-        # The drawing is one tab stop: arrow keys move between entries, Enter
+        # The canvas is one tab stop: arrow keys move between entries, Enter
         # shows details, whose dependency list reaches the edges by keyboard.
         assert page.locator("#graph .node[tabindex='0']").count() == 1
         page.locator("#graph .node[tabindex='0']").focus()
@@ -160,11 +176,90 @@ def main():
         page.locator("#details .dependency", has_text="app.domain").click()
         assert "CALLS × 25" in page.locator("#details").inner_text()
         assert "Observed dependency" in page.locator("#details").inner_text()
-        checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency list to edge evidence")
+        page.keyboard.press("Escape")
+        assert "This level" in page.locator("#details").inner_text()
+        checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency list to edge evidence, Escape back to the level")
+
+        # Canvas: drag empty space to pan, wheel to zoom at the pointer.
+        stage = page.locator("#stage").bounding_box()
+        x0, y0, k0 = camera(page)
+        page.mouse.move(stage["x"] + 20, stage["y"] + stage["height"] / 2)
+        page.mouse.down()
+        page.mouse.move(stage["x"] + 140, stage["y"] + stage["height"] / 2 + 50, steps=6)
+        page.mouse.up()
+        x1, y1, k1 = camera(page)
+        assert (round(x1 - x0), round(y1 - y0), k1) == (120, 50, k0), (x0, y0, x1, y1)
+        px, py = 500, 400
+        world = ((px - x1) / k1, (py - y1) / k1)
+        page.mouse.move(stage["x"] + px, stage["y"] + py)
+        page.mouse.wheel(0, -240)
+        x2, y2, k2 = camera(page)
+        assert k2 > k1 * 1.3, (k1, k2)
+        assert abs((px - x2) / k2 - world[0]) < 0.5 and abs((py - y2) / k2 - world[1]) < 0.5
+        assert page.locator("#zoom-level").inner_text() == f"{round(k2 * 100)}%"
+        page.locator("#zoom-fit").click()
+        page.wait_for_timeout(500)
+        checks.append("pan by dragging empty space, wheel zoom anchored at the pointer, zoom to fit")
+
+        # Entries can be dragged; the position is remembered and can be reset.
+        service = page.get_by_role("button", name="Service", exact=True)
+        original = service.get_attribute("transform")
+        box = service.bounding_box()
+        page.mouse.move(box["x"] + 30, box["y"] + 20)
+        page.mouse.down()
+        page.mouse.move(box["x"] + 190, box["y"] + 90, steps=8)
+        page.mouse.up()
+        assert service.get_attribute("transform") != original
+        assert page.evaluate("Object.keys(localStorage).some(k => k.startsWith('archgraph.layout.v1:Browser fixture:app'))")
+        assert "This level" in page.locator("#details").inner_text(), "a drag is not a click"
+        page.locator("#reset-layout").click()
+        page.wait_for_timeout(500)
+        assert service.get_attribute("transform") == original
+        # With Space held, dragging over an entry pans instead of moving it.
+        page.locator("#canvas").focus()
+        box = service.bounding_box()
+        cx, cy, ck = camera(page)
+        page.mouse.move(box["x"] + 30, box["y"] + 20)
+        page.keyboard.down("Space")
+        page.mouse.down()
+        page.mouse.move(box["x"] + 110, box["y"] + 50, steps=5)
+        page.mouse.up()
+        page.keyboard.up("Space")
+        nx, ny, nk = camera(page)
+        assert (round(nx - cx), round(ny - cy)) == (80, 30) and service.get_attribute("transform") == original
+        checks.append("node drag, remembered layout, reset layout, Space-drag pans over entries")
+
+        # Filters: relation kinds, origins, outside entries, violations only.
+        page.locator("#filters-button").click()
+        page.locator('#filter-kinds input[data-kind="CALLS"]').uncheck()
+        assert any(label.startswith("IMPORTS × 25") for label in page.locator("#graph .edge-label").all_text_contents())
+        page.locator("#filter-manual").uncheck()
+        assert page.locator("#graph .edge").count() == 1
+        page.locator("#filter-outside").uncheck()
+        assert page.locator("#graph .node").count() == 2
+        page.locator("#filter-violations").check()
+        assert page.locator("#graph.violations-only").count() == 1
+        assert page.locator("#filters-count").inner_text() == "4"
+        page.locator("#filters-reset").click()
+        assert page.locator("#graph .node").count() == 3 and page.locator("#graph .edge").count() == 2
+        assert page.locator("#filters-count").is_hidden()
+        page.keyboard.press("Escape")
+        checks.append("filters for relation kinds, manual edges, outside entries and violations only")
+
+        # The node list: the tree with violation badges and a filter.
+        assert page.locator("#tree [role='treeitem']").count() == 5
+        assert page.locator("#tree [data-id='app.api'] .count-badge").inner_text() == "1"
+        page.locator("#tree-violations").check()
+        assert page.locator("#tree [role='treeitem']").count() == 3
+        page.locator("#tree-violations").uncheck()
+        page.locator("#tree [data-id='app.domain'] > .tree-row").click()
+        assert page.locator("#details h2").inner_text() == "Domain"
+        assert page.locator("#graph .node.selected").get_attribute("aria-label") == "Domain"
+        checks.append("sidebar tree with violation badges, violations-only toggle, click selects and centres the entry")
 
         # The table lists the same entries and filters them.
         page.locator("#view-table").click()
-        assert page.locator("#graph-wrap").is_hidden()
+        assert page.locator("#stage").is_hidden()
         assert page.locator("#table-wrap .entry-row").count() == 3
         page.locator("#table-filter").fill("dom")
         page.wait_for_function("document.querySelectorAll('#table-wrap .entry-row').length === 1")
@@ -172,7 +267,7 @@ def main():
         assert "Domain" in page.locator("#details h2").inner_text()
         page.locator("#view-diagram").click()
         assert page.locator("#graph .node").count() == 3
-        checks.append("table view with filter and row details, switching back to the diagram")
+        checks.append("table view with filter and row details, switching back to the canvas")
 
         page.get_by_role("button", name="Domain", exact=True).dblclick()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
@@ -181,14 +276,21 @@ def main():
         assert "focus=app.domain" in page.evaluate("window.__history.at(-1)")
         checks.append("double-click focus, leaf files, interfaces, updated deep link")
 
-        # A level too large to draw is listed, not drawn.
+        # A level too large to draw file by file shows directory groups that
+        # expand in place; the table still lists every file.
         page.evaluate("loadFocus('app.big')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.big'")
-        assert page.locator("#view-diagram").is_disabled()
+        assert page.locator("#graph .node.group").count() == 1
+        assert page.locator("#graph .node.file").count() == 0
+        page.locator("#graph .node.group").dblclick()
+        page.wait_for_function("document.querySelectorAll('#graph .node.file').length === 200")
+        assert page.locator("#collapse-groups").is_visible()
+        page.locator("#collapse-groups").click()
+        assert page.locator("#graph .node.group").count() == 1
+        page.locator("#view-table").click()
         assert page.locator("#table-wrap .entry-row").count() == 200
-        assert page.locator("#graph .node").count() == 0
-        assert "too many to draw" in page.locator("#sheet-hint").inner_text()
-        checks.append("levels beyond the drawing limit fall back to the table")
+        page.locator("#view-diagram").click()
+        checks.append("large levels as expandable directory groups; the table lists every file")
 
         page.locator("#breadcrumbs").get_by_role("link", name="Application", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
@@ -197,19 +299,22 @@ def main():
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
         checks.append("breadcrumb navigation and popstate handler with mocked history")
 
+        # Search sits in a corner of the canvas; entries of this view come first.
+        assert page.locator("#canvas #search").count() == 1
+        page.locator("#stage").click(position={"x": 20, "y": 500})
         page.keyboard.press("/")
         assert page.evaluate("document.activeElement.id") == "search"
         page.locator("#search").fill("Domain")
         page.locator("#search-results").get_by_role("button", name="Domain — app.domain", exact=True).wait_for()
         page.keyboard.press("ArrowDown")
-        assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Domain — app.domain"
+        assert page.evaluate("document.activeElement.getAttribute('aria-label')") == "Domain (in this view)"
         page.locator("#search-results").get_by_role("button", name="Domain — app.domain", exact=True).click()
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.domain'")
         page.locator(".violation-button").click()
         assert "deny-api-domain" in page.locator("#details").inner_text()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
         assert page.locator("#violations .violation-button.selected").count() == 1
-        checks.append("architecture search with keyboard, violation evidence selection")
+        checks.append("corner search with keyboard (view entries, then architecture nodes), violation evidence selection")
 
         # A live server publishes a new revision: the view follows it and stays
         # on the current node; a failed reload is shown, not hidden.
@@ -222,7 +327,8 @@ def main():
         assert page.evaluate("checkForUpdates()") is True
         assert page.locator("#focus-title").inner_text() == "Domain v2"
         assert page.locator("#snapshot").inner_text() == "Live at revision 2"
-        assert "Reloaded coverage warning" in page.locator("#diagnostics").inner_text()
+        assert "Reloaded coverage warning" in page.locator("#diagnostics").text_content()
+        assert page.locator("#notes-button").inner_text() == "1 coverage note"
         assert page.locator("#refresh-status").is_hidden()
         page.evaluate("() => { window.__fixture.meta = {...window.__fixture.meta, refresh_error: 'index changed while compiling'}; }")
         assert page.evaluate("checkForUpdates()") is False

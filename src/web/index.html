@@ -10,8 +10,11 @@
   <script src="/app.js" defer></script>
 </head>
 <body>
-  <a class="skip" href="#sheet">Skip to the drawing</a>
+  <a class="skip" href="#canvas">Skip to the canvas</a>
   <header class="topbar">
+    <button type="button" id="sidebar-toggle" class="icon-button" aria-controls="sidebar" aria-expanded="true" aria-label="Show or hide the node list">
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M7.5 3.5v13"/></svg>
+    </button>
     <a class="brand" href="/" aria-label="ArchGraph: open the architecture root">
       <svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
         <rect x="2.5" y="2.5" width="8" height="6"/><rect x="13.5" y="2.5" width="8" height="6"/>
@@ -19,75 +22,128 @@
       </svg>
       <span class="brand-name">ArchGraph</span>
     </a>
-    <span id="project-name" class="project-name"></span>
-    <span id="snapshot" class="snapshot">Read-only snapshot</span>
-    <form id="search-form" role="search">
-      <label for="search" class="visually-hidden">Find an architecture node</label>
-      <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.6 12.6 17 17"/></svg>
-      <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Find a node by ID or title" aria-controls="search-results" aria-keyshortcuts="/">
-      <kbd class="search-key" aria-hidden="true">/</kbd>
-      <div id="search-results" aria-live="polite"></div>
-    </form>
-  </header>
-  <div id="error" role="alert" hidden></div>
-  <div id="refresh-status" role="status" hidden></div>
-  <main>
-    <section class="workspace" aria-labelledby="focus-title">
+    <div class="trail">
+      <span id="project-name" class="project-name"></span>
       <nav id="breadcrumbs" aria-label="Architecture breadcrumbs"></nav>
-      <div class="title-block">
-        <div class="tb-main">
-          <div id="focus-id" class="focus-id"></div>
-          <h1 id="focus-title">Architecture</h1>
-          <p id="description"></p>
-          <div id="interfaces" class="interfaces"></div>
+      <h1 id="focus-title">Architecture</h1>
+      <span id="focus-id" class="focus-id"></span>
+    </div>
+    <div class="view-switch" role="group" aria-label="View">
+      <button type="button" id="view-diagram" aria-pressed="true">Canvas</button>
+      <button type="button" id="view-table" aria-pressed="false">Table</button>
+    </div>
+    <span id="snapshot" class="snapshot">Read-only snapshot</span>
+    <button type="button" id="notes-button" class="notes-button" hidden></button>
+    <button type="button" id="inspector-toggle" class="icon-button" aria-controls="inspector" aria-expanded="true" aria-label="Show or hide the details panel">
+      <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><rect x="2.5" y="3.5" width="15" height="13"/><path d="M12.5 3.5v13"/></svg>
+    </button>
+  </header>
+  <main id="app">
+    <nav id="sidebar" class="sidebar" aria-label="Architecture nodes and violations">
+      <section class="side-section" aria-labelledby="tree-heading">
+        <div class="side-head">
+          <h2 id="tree-heading">Architecture</h2>
+          <label class="switch"><input type="checkbox" id="tree-violations"> Only with violations</label>
         </div>
-        <dl id="summary" class="tb-cells"></dl>
-      </div>
-      <div class="sheet-bar">
-        <div class="view-switch" role="group" aria-label="View">
-          <button type="button" id="view-diagram" aria-pressed="true">Diagram</button>
-          <button type="button" id="view-table" aria-pressed="false">Table</button>
-        </div>
-        <p id="sheet-hint" class="sheet-hint"></p>
-        <div id="zoom" class="zoom" role="group" aria-label="Zoom">
-          <button type="button" id="zoom-out" aria-label="Zoom out">&#x2212;</button>
-          <button type="button" id="zoom-fit" aria-label="Fit the drawing to the width"><span id="zoom-level">100%</span></button>
-          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
-        </div>
-      </div>
-      <div id="sheet" class="sheet" tabindex="-1">
-        <div id="loading" role="status" hidden><span class="visually-hidden">Loading architecture…</span></div>
-        <div id="graph-wrap"><svg id="graph" xmlns="http://www.w3.org/2000/svg" role="group" aria-label="Focused architecture dependency graph"></svg></div>
-        <div id="table-wrap" hidden></div>
-        <div class="legend" role="list" aria-label="Legend">
-          <span class="key" role="listitem"><svg viewBox="0 0 30 12" aria-hidden="true"><path class="k-line" d="M1 6h28"/></svg>Observed</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 12" aria-hidden="true"><path class="k-line k-manual" d="M1 6h28"/></svg>Manual</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 12" aria-hidden="true"><path class="k-line k-violation" d="M1 6h28"/></svg>Violation</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 12" aria-hidden="true"><path class="k-line k-cut" d="M1 6h28"/></svg>Suggested cut</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 14" aria-hidden="true"><rect class="k-box" x="2" y="1.5" width="26" height="11"/><rect class="k-box" x="4.5" y="4" width="21" height="6"/></svg>Architecture node</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 14" aria-hidden="true"><rect class="k-box" x="2" y="1.5" width="26" height="11"/></svg>File</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 14" aria-hidden="true"><rect class="k-box k-outside" x="2" y="1.5" width="26" height="11"/></svg>Outside this focus</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 14" aria-hidden="true"><path class="k-cloud" d="M 3 3 A 2.9 2.9 0 0 1 7.8 3 A 2.9 2.9 0 0 1 12.6 3 A 2.9 2.9 0 0 1 17.4 3 A 2.9 2.9 0 0 1 22.2 3 A 2.9 2.9 0 0 1 27 3 A 2.4 2.4 0 0 1 27 7 A 2.4 2.4 0 0 1 27 11 A 2.9 2.9 0 0 1 22.2 11 A 2.9 2.9 0 0 1 17.4 11 A 2.9 2.9 0 0 1 12.6 11 A 2.9 2.9 0 0 1 7.8 11 A 2.9 2.9 0 0 1 3 11 A 2.4 2.4 0 0 1 3 7 A 2.4 2.4 0 0 1 3 3 Z"/></svg>Takes part in a violation</span>
-          <span class="key" role="listitem"><svg viewBox="0 0 30 14" aria-hidden="true"><rect class="coverage-track" x="2" y="6" width="26" height="2"/><rect class="coverage" x="2" y="6" width="11" height="2"/></svg>Share of files observed</span>
-        </div>
-      </div>
-    </section>
-    <aside id="details" aria-live="polite" aria-label="Details and evidence" tabindex="-1"><h2>Details &amp; evidence</h2><p>Select a node, dependency, or violation.</p></aside>
-    <div class="notes">
-      <section class="violations-section" aria-labelledby="violations-heading">
-        <h2 id="violations-heading">Violations in this view</h2>
+        <ul id="tree" role="tree" aria-labelledby="tree-heading"></ul>
+      </section>
+      <section class="side-section" aria-labelledby="violations-heading">
+        <div class="side-head"><h2 id="violations-heading">Violations</h2></div>
         <div id="violations"></div>
       </section>
-      <section class="general-notes" aria-labelledby="notes-heading">
-        <h2 id="notes-heading">Notes</h2>
-        <p id="evidence-notice" class="notice"></p>
-        <div id="diagnostics-section" hidden>
-          <h3>Coverage diagnostics</h3>
-          <ul id="diagnostics"></ul>
+    </nav>
+    <div id="scrim" class="scrim" hidden></div>
+    <section id="canvas" class="canvas" aria-label="Architecture canvas" tabindex="-1">
+      <svg id="stage" xmlns="http://www.w3.org/2000/svg" aria-hidden="false">
+        <defs>
+          <pattern id="grid" width="60" height="60" patternUnits="userSpaceOnUse">
+            <path class="grid-minor" d="M12 0V60M24 0V60M36 0V60M48 0V60M0 12H60M0 24H60M0 36H60M0 48H60"/>
+            <path class="grid-major" d="M0 0V60M0 0H60"/>
+          </pattern>
+          <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow"/></marker>
+          <marker id="arrow-error" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-error"/></marker>
+          <marker id="arrow-lit" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" class="arrow-lit"/></marker>
+        </defs>
+        <rect id="grid-bg" class="grid-bg" width="100%" height="100%" fill="url(#grid)"/>
+        <g id="graph" role="group" aria-label="Focused architecture dependency graph"></g>
+      </svg>
+      <div id="table-wrap" class="table-wrap" hidden></div>
+      <div class="tools tools-top">
+        <form id="search-form" role="search" class="tool-card search">
+          <label for="search" class="visually-hidden">Find a node or an entry of this view</label>
+          <svg class="search-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M12.6 12.6 17 17"/></svg>
+          <input id="search" type="search" autocomplete="off" spellcheck="false" placeholder="Find a node or file" aria-controls="search-results" aria-keyshortcuts="/">
+          <kbd class="search-key" aria-hidden="true">/</kbd>
+          <div id="search-results" aria-live="polite"></div>
+        </form>
+        <div class="tool-card tool-row">
+          <button type="button" id="filters-button" aria-expanded="false" aria-controls="filters-panel">Filters<span id="filters-count" class="badge" hidden></span></button>
+          <button type="button" id="reset-layout" title="Put every entry back where the layout placed it">Reset layout</button>
+          <button type="button" id="collapse-groups" hidden>Collapse groups</button>
         </div>
-        <p class="notice">Architecture is authored in <code>architecture.yaml</code>. The view reloads when the GitNexus index or the architecture file changes; reindex GitNexus after source edits.</p>
+        <div id="filters-panel" class="tool-card popover" role="group" aria-label="Filters" hidden>
+          <fieldset>
+            <legend>Show</legend>
+            <label><input type="checkbox" id="filter-violations"> Only violations; dim the rest</label>
+            <label><input type="checkbox" id="filter-outside" checked> Entries outside this focus</label>
+            <label><input type="checkbox" id="filter-observed" checked> Observed dependencies</label>
+            <label><input type="checkbox" id="filter-manual" checked> Manual dependencies</label>
+          </fieldset>
+          <fieldset>
+            <legend>Relation kinds</legend>
+            <div id="filter-kinds"></div>
+          </fieldset>
+          <button type="button" id="filters-reset">Show everything</button>
+        </div>
+      </div>
+      <div class="tools tools-bottom">
+        <svg id="minimap" class="tool-card minimap" aria-label="Overview map; click to move the view" role="img"></svg>
+        <div class="tool-card tool-row zoom" role="group" aria-label="Zoom">
+          <button type="button" id="zoom-out" aria-label="Zoom out">&#x2212;</button>
+          <button type="button" id="zoom-level" aria-label="Zoom to 100%">100%</button>
+          <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+          <button type="button" id="zoom-fit" aria-label="Zoom to fit everything">Fit</button>
+          <button type="button" id="zoom-selection" aria-label="Zoom to the selection">Selection</button>
+          <button type="button" id="shortcuts-button" aria-expanded="false" aria-controls="shortcuts" aria-label="Keyboard and mouse shortcuts">?</button>
+        </div>
+        <div id="shortcuts" class="tool-card popover shortcuts" hidden>
+          <h2>Canvas controls</h2>
+          <dl>
+            <dt>Drag empty space, or hold Space</dt><dd>Pan</dd>
+            <dt>Wheel or pinch</dt><dd>Zoom at the pointer</dd>
+            <dt>Drag an entry</dt><dd>Move it; the layout is remembered</dd>
+            <dt>Double-click</dt><dd>Open a node or expand a group</dd>
+            <dt>Arrow keys</dt><dd>Move between entries</dd>
+            <dt>Enter / Shift+Enter</dt><dd>Details / open</dd>
+            <dt>+ and &#x2212;</dt><dd>Zoom</dd>
+            <dt>Shift+1 / Shift+2</dt><dd>Fit / zoom to selection</dd>
+            <dt>/</dt><dd>Search</dd>
+            <dt>Esc</dt><dd>Clear the selection</dd>
+          </dl>
+        </div>
+      </div>
+      <p id="evidence-notice" class="canvas-notice"></p>
+      <div id="loading" role="status" hidden><span class="visually-hidden">Loading architecture…</span></div>
+      <div class="banners">
+        <div id="error" role="alert" hidden></div>
+        <div id="refresh-status" role="status" hidden></div>
+      </div>
+    </section>
+    <aside id="inspector" class="inspector" aria-label="Inspector">
+      <!-- Two stacked panes: details now; the second is reserved for a file viewer. -->
+      <section class="pane" id="pane-details" aria-labelledby="pane-details-title">
+        <div class="pane-head">
+          <h2 id="pane-details-title">Details</h2>
+          <button type="button" id="overview-button" class="text-button" hidden>Back to this level</button>
+          <button type="button" id="inspector-close" class="icon-button" aria-label="Close the details panel">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M5 5l10 10M15 5L5 15"/></svg>
+          </button>
+        </div>
+        <div id="details" class="pane-body" aria-live="polite" tabindex="-1"></div>
       </section>
-    </div>
+      <div class="pane-splitter" role="separator" aria-orientation="horizontal" hidden></div>
+      <section class="pane" id="pane-secondary" hidden></section>
+    </aside>
   </main>
 </body>
 </html>

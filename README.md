@@ -497,26 +497,44 @@ or other backend code.
 ## Human focus UI
 
 The embedded HTML/CSS/plain JavaScript UI works offline (no external fonts or
-scripts) and follows the system light or dark mode. It is laid out like a
-drawing sheet: a title block with the focus, its purpose, interfaces and
-counts (mapped files, the share with an observed dependency, entries,
-dependencies, violations); the drawing of the current level with a legend; a
-details and evidence panel; the violations in view; and notes with the
-evidence notice and coverage diagnostics. Click a node or edge for details;
-double-click an architecture node to focus, or use the explicit Open button.
-Selecting a node, edge or violation dims everything it is not connected to.
-A node's details list what it depends on and what uses it, each opening that
-dependency's evidence. Search with `/`. Deep links use
-`/?focus=app.billing.domain` and browser back/forward navigation is supported.
-Only the current focus level is rendered, with a small SVG layout.
+scripts) and follows the system light or dark mode. The current level is an
+infinite canvas, drawn like a drawing sheet:
 
-The drawing is one tab stop: arrow keys move between entries, Enter shows
-details and Shift+Enter opens an architecture node. **Table** lists the same
-entries grouped by directory, with dependency counts, a filter and other
-orders. Levels with more than 150 entries (zammad's leaves have up to 2,577
-files) are listed in the table only; open a smaller node for a drawing.
+- **Canvas.** Drag empty space (or anything while holding Space) to pan; use
+  the wheel or a pinch to zoom at the pointer, a two-finger scroll to pan.
+  Drag an entry to move it: positions are remembered per focus in the
+  browser, and **Reset layout** puts everything back. **Fit**, **Selection**
+  and the zoom percentage are in the bottom-right corner with a minimap.
+  Double-click an architecture node (or Shift+Enter) to open it: the view
+  dives into the card; going up zooms back out of it.
+- **Floating tools** in the top-left corner: search (`/`; entries of the
+  current level first, then architecture nodes anywhere) and **Filters**:
+  only violations (the rest is dimmed), relation kinds, observed and manual
+  dependencies, and entries outside the focus.
+- **Node list** on the left: the whole architecture tree with the number of
+  violations in each subtree, an "Only with violations" switch, and the list
+  of all violations. Clicking a node selects and centres it in its parent's
+  level; clicking a violation opens the level where it happens.
+- **Details** on the right: with nothing selected, the level itself (purpose,
+  interfaces, counts, violations in view and coverage diagnostics); otherwise
+  the selected entry, edge or violation with its evidence. A node's details
+  list what it depends on and what uses it, each opening that dependency's
+  evidence. Both side panels collapse; on narrow screens they are drawers.
+- **Table** lists the level's entries file by file, grouped by directory, with
+  dependency counts, a filter and other orders.
+
+Selecting a node, edge or violation dims everything it is not connected to.
 Entries that take part in a violation get a red revision cloud, and each
-architecture card shows its observed share as a bar.
+architecture card shows its observed share as a bar. The evidence notice stays
+visible at the bottom of the canvas. The canvas is one tab stop: arrow keys
+move between entries, Enter shows details, Shift+Enter opens, `+`/`-` zoom,
+Shift+1 fits and Shift+2 zooms to the selection. Deep links use
+`/?focus=app.billing.domain` and browser back/forward navigation is supported.
+
+Levels with more than 120 entries (zammad's leaves have up to 2,577 files)
+show their files as **directory groups**, about 30 per level: double-click a
+group (or its + button) to expand it in place into subdirectories and files,
+and collapse it again from the details of anything inside it.
 
 A non-leaf can own files directly: these appear in a **Directly owned files**
 entry rather than disappearing. A manual edge naming the focus itself appears
@@ -530,8 +548,10 @@ cycle cuts), so dependencies point down and anything pointing up stands out;
 within a row, entries are ordered to reduce crossings, and edges that skip
 rows pass between the cards of the rows in between. The focus is drawn as a
 frame; outside entries that only depend on it are drawn above the frame,
-others below. Levels with more than 60 entries have no layers and are drawn
-as a grid. Above 40 edges, labels appear only on highlighted edges.
+others below. Levels with more than 60 entries, and directory groups, have
+no layers from the server; the UI layers them itself (cycles broken in entry
+order, then longest paths), with unconnected entries in a last row. Above 40
+edges, labels appear only on highlighted edges.
 Mermaid is another renderer of the same projection,
 never an architecture source format.
 
