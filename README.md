@@ -31,7 +31,7 @@ gitnexus analyze --index-only
 # Build/install this repository's Rust binary.
 cargo install --path /path/to/archgraph
 
-archgraph init
+archgraph init --suggest
 # Edit architecture.yaml to describe your logical modules.
 archgraph compile
 archgraph check
@@ -211,6 +211,7 @@ repository root, not the current nested working directory.
 
 ```bash
 archgraph init
+archgraph init --suggest
 archgraph init --install-skill
 archgraph init --install-skill --force
 
@@ -270,6 +271,19 @@ installation targets existing `.claude` and `.agents` project directories,
 creating `skills/archgraph/` beneath them. When neither exists, it creates the
 project-local `.agents` destination. It does not write to global agent settings.
 `--force` also overwrites an existing architecture YAML with the starter.
+
+`init --suggest` drafts the nodes from the directory layout instead of a
+one-node starter. A directory with at least 2.5% of the code files (and at
+least 5) becomes a node, up to three levels deep; a directory that only wraps
+one other, such as `src/`, is skipped. Each node with children gets a
+`no_cycles` rule, common non-code file types present in the repository are
+excluded, and Ruby code switches `edge_types` to `IMPORTS, CALLS, EXTENDS,
+IMPLEMENTS`. If a GitNexus index exists, the draft is compiled once and every
+node is annotated with the share of files that have an observed dependency,
+so weakly covered parts are visible before any rule relies on them. The draft
+reflects directories, not responsibilities: rename, merge and describe the
+nodes before committing it. On zammad the unedited draft already reports the
+`lib` / `app` cycle.
 
 ## GitNexus compatibility boundary
 

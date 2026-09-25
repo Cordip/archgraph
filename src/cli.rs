@@ -7,7 +7,7 @@ use crate::{
     provider::{gitnexus::GitNexusCliProvider, ReindexMode},
     render,
     rules::violation_touches,
-    server,
+    server, suggest,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -67,6 +67,10 @@ pub enum Commands {
         /// Overwrite existing architecture YAML and existing ArchGraph skill files.
         #[arg(long)]
         force: bool,
+        /// Draft nodes from the directory layout instead of a one-node starter,
+        /// with coverage comments if a GitNexus index exists.
+        #[arg(long)]
+        suggest: bool,
     },
     /// Compile fresh, write deterministic IR, and report counts (violations do not fail compile).
     Compile {
@@ -176,9 +180,15 @@ pub async fn run(cli: Cli) -> Result<u8> {
     if let Commands::Init {
         install_skill,
         force,
+        suggest,
     } = &cli.command
     {
-        initialize(&root, &config_path, *install_skill, *force)?;
+        let content = if *suggest && (*force || !config_path.exists()) {
+            suggested_config(&root, cli.no_cache).await?
+        } else {
+            STARTER.into()
+        };
+        initialize(&root, &config_path, &content, *install_skill, *force)?;
         return Ok(0);
     }
     let validated = config::load(&config_path)?;
@@ -529,14 +539,74 @@ rules: []
 "#;
 const SKILL: &str = include_str!("../skills/archgraph/SKILL.md");
 
-pub fn initialize(root: &Path, config_path: &Path, install_skill: bool, force: bool) -> Result<()> {
+/// A draft from the directory layout, compiled once against the index (if
+/// any) to annotate each node with its coverage.
+async fn suggested_config(root: &Path, no_cache: bool) -> Result<String> {
+    let draft = suggest::draft(root)?;
+    let validated = config::parse(&draft.render(None, None))
+        .context("internal error: the suggested architecture is invalid")?;
+    let provider = GitNexusCliProvider::new(root, &validated.config.provider)?;
+    let options = compiler::CompileOptions {
+        reindex: None,
+        cache: (!no_cache).then(|| root.join(".archgraph/cache/provider.json")),
+    };
+    let yaml = match compiler::compile_with(root, &validated, &provider, &options).await {
+        Ok(compiled) => {
+            let ir = &compiled.ir;
+            let width = draft
+                .nodes
+                .iter()
+                .map(|node| node.id.len())
+                .max()
+                .unwrap_or(0);
+            outln!("Suggested nodes (files with an observed dependency / mapped files):");
+            for node in &draft.nodes {
+                if let Some(compiled) = ir.nodes.get(&node.id) {
+                    let total = compiled.descendant_file_count;
+                    outln!(
+                        "  {:width$}  {:>6} / {:<6} {:>3}%",
+                        node.id,
+                        compiled.observed_file_count,
+                        total,
+                        (compiled.observed_file_count * 100)
+                            .checked_div(total)
+                            .unwrap_or(0)
+                    );
+                }
+            }
+            draft.render(Some(ir), None)
+        }
+        Err(error) => {
+            eprintln!(
+                "note: no coverage comments; the GitNexus index could not be read: {error:#}"
+            );
+            draft.render(
+                None,
+                Some("no readable GitNexus index. Run `gitnexus analyze --index-only`, then `archgraph init --suggest --force`."),
+            )
+        }
+    };
+    config::parse(&yaml).context("internal error: the suggested architecture is invalid")?;
+    Ok(yaml)
+}
+
+pub fn initialize(
+    root: &Path,
+    config_path: &Path,
+    content: &str,
+    install_skill: bool,
+    force: bool,
+) -> Result<()> {
     if config_path.exists() && !force {
-        outln!("Keeping existing {}", config_path.display());
+        outln!(
+            "Keeping existing {} (use --force to overwrite, or --config for another file)",
+            config_path.display()
+        );
     } else {
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(config_path, STARTER)
+        std::fs::write(config_path, content)
             .with_context(|| format!("cannot write {}", config_path.display()))?;
         outln!("Created {}", config_path.display());
     }
@@ -617,10 +687,10 @@ mod tests {
         let skill = root.join(".claude/skills/archgraph/SKILL.md");
         std::fs::write(&skill, "keep me").unwrap();
         let yaml = root.join("architecture.yaml");
-        initialize(&root, &yaml, true, false).unwrap();
+        initialize(&root, &yaml, STARTER, true, false).unwrap();
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), "keep me");
         assert!(root.join(".agents/skills/archgraph/SKILL.md").exists());
-        initialize(&root, &yaml, true, true).unwrap();
+        initialize(&root, &yaml, STARTER, true, true).unwrap();
         assert_eq!(std::fs::read_to_string(&skill).unwrap(), SKILL);
         assert!(config::load(&yaml).is_ok());
     }

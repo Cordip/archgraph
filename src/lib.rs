@@ -16,3 +16,4 @@ pub mod provider;
 pub mod render;
 pub mod rules;
 pub mod server;
+pub mod suggest;

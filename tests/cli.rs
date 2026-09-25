@@ -484,3 +484,49 @@ fn full_reindex_rebuilds_and_the_flag_does_not_swallow_the_node() {
         &Vec::<Value>::new()
     );
 }
+
+#[test]
+fn init_suggest_drafts_nodes_with_coverage_and_the_draft_checks() {
+    let fixture = Fixture::new();
+    for directory in ["src/x", "src/y"] {
+        std::fs::create_dir_all(fixture.root.path().join(directory)).unwrap();
+        for index in 0..6 {
+            std::fs::write(
+                fixture.root.path().join(format!("{directory}/m{index}.rs")),
+                "",
+            )
+            .unwrap();
+        }
+    }
+    let yaml = fixture.root.path().join("architecture.yaml");
+    let kept = fixture.run(&["init", "--suggest"], "violation");
+    assert!(String::from_utf8_lossy(&kept.stdout).contains("Keeping existing"));
+    assert_eq!(std::fs::read_to_string(&yaml).unwrap(), YAML);
+
+    let output = fixture.run(&["init", "--suggest", "--force"], "violation");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let draft = std::fs::read_to_string(&yaml).unwrap();
+    assert!(draft.contains("maps: [\"src/x/**\"]"), "{draft}");
+    assert!(draft.contains("maps: [\"src/y/**\"]"), "{draft}");
+    // src/a.rs -> src/b.rs is the only observed dependency; src/a2.rs is not indexed.
+    assert!(
+        draft.contains("# 2 of 16 files have an observed dependency (12%)"),
+        "{draft}"
+    );
+    assert!(draft.contains("kind: no_cycles"), "{draft}");
+    assert_eq!(fixture.run(&["check"], "violation").status.code(), Some(0));
+
+    let output = fixture.run(&["init", "--suggest", "--force"], "unindexed");
+    assert!(output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("repository is not indexed"));
+    let draft = std::fs::read_to_string(&yaml).unwrap();
+    assert!(
+        draft.contains("# No coverage comments: no readable GitNexus index."),
+        "{draft}"
+    );
+    assert!(!draft.contains("observed dependency ("), "{draft}");
+}
