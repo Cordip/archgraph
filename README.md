@@ -465,43 +465,73 @@ rule engine, projection, renderers and UI know nothing about GitNexus subprocess
 commands. Only `src/provider/gitnexus.rs` launches them. An in-memory provider
 supports independent tests; the CLI never substitutes it for failed GitNexus.
 
-## Tests and first build
+## Checking architecture in your CI
 
-```bash
-cargo check --all-targets
-cargo test --all-targets
-cargo fmt --all -- --check
-cargo clippy --all-targets
+`check` is meant to gate merges. A CI job needs GitNexus, an index and the
+ArchGraph binary; the index takes minutes on a large repository (about two on
+zammad), so run the job where that is acceptable. Fetch enough history for the
+baseline commit, or files moved since the baseline look new (see
+[Baseline for legacy code](#baseline-for-legacy-code)).
+
+```yaml
+# .github/workflows/architecture.yml
+name: Architecture
+on: [pull_request]
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # the baseline records a commit
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --global gitnexus@1.6.12
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo install --locked --git https://github.com/Cordip/archgraph archgraph
+      - run: gitnexus analyze --index-only .
+      - run: archgraph check        # exit 2: new violations; 1: failure
 ```
 
-Unit/integration tests cover hierarchy validation, mapping and file discovery,
-provider wrappers/escaped tables/failures, rule semantics and SCCs, deterministic
-aggregation and evidence, exact scoped checks, lossless projection, context,
-IR round-trips, read-only HTTP routes, init skill preservation, pagination and
-actual CLI exit statuses. Core tests use an in-memory provider and temporary
-repositories. Unix CLI subprocess tests additionally require `python3` for an
-explicit test-only fake executable; no test requires a GitNexus installation.
-There is no production Python component.
+Commit `architecture.yaml` and `architecture.baseline.json`. With
+`policies.low_coverage: error` the job also fails when a rule covers code that
+GitNexus barely sees. Mind the GitNexus license (below) for commercial use.
 
-An optional UI-only browser harness is available as `python3 tests/web_smoke.py`
-for environments with Python Playwright and Chromium installed. It loads the
-embedded HTML/CSS/JavaScript into an isolated DOM and mocks fetch/history to
-exercise navigation, directed edges, evidence, search, violation markers, and
-hostile-text escaping. It does **not** test the Rust HTTP server or real network
-navigation. Its recorded result is in `validation/ui-smoke.json`.
+## Tests
 
-`Cargo.lock` has not been fabricated without Cargo resolution. On the first
-Rust-enabled machine, resolve dependencies, run the commands above, and commit
-the generated lockfile for repeatable application builds.
+```bash
+cargo fmt --all -- --check
+cargo clippy --all-targets
+cargo test --all-targets
+cargo test --test gitnexus_contract -- --ignored   # needs a real GitNexus
+uv run --with playwright python tests/web_smoke.py  # optional browser check
+```
+
+[CI](.github/workflows/ci.yml) runs all of them, the first three and the
+contract tests on Linux and Windows.
+
+Unit and integration tests cover hierarchy validation, mapping and file
+discovery, provider wrappers and failures, rule semantics, cheapest cuts,
+baselines and renames, the provider cache, drafts, deterministic aggregation
+and evidence, projection, context, IR round-trips and the HTTP routes,
+including live reloads. They use an in-memory provider and temporary
+repositories. The CLI process tests run the real binary against
+`tests/fixtures/fake_gitnexus.py` and need `python3`; they are Unix-only. The
+contract tests index generated TypeScript and Ruby repositories with the real
+GitNexus CLI and check the assumptions the fake encodes. The browser smoke test
+loads the embedded UI with mocked fetch and history. There is no production
+Python component.
 
 ## Limitations and licensing
 
-This MVP covers one repository/application and automatically consumes only
-`IMPORTS`. Symbol/function/AST exploration is delegated to GitNexus. Interfaces
-and manual relationships are descriptive, the UI is read-only, the snapshot
-does not auto-refresh, and there is no application database or architecture
+ArchGraph covers one repository per configuration and observes the GitNexus
+relation kinds listed in `provider.edge_types`. Symbol/function/AST exploration
+is delegated to GitNexus. Interfaces and manual relationships are descriptive,
+the UI is read-only, and there is no application database or architecture
 editor. Very large file-only focuses may need further authored child nodes for
-comfortable navigation. Offset pagination assumes a stable index during a run.
+comfortable navigation. Offset pagination needs a stable index during a run;
+a run that sees the index change fails instead of mixing results.
 
 **GitNexus evidence can be incomplete.** Dynamic imports, reflection, generated
 code, build-system behavior and runtime dependencies may be missed. “No observed

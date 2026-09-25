@@ -138,3 +138,8 @@ Add new entries at the end: what happened, why, and what to do.
     stored symbols without a file path (docs, section 9). Rerun the failing
     query directly with `gitnexus cypher` when indexing is idle, and look at
     the offending rows, before writing down a cause.
+18. **Windows checkouts turned test sources into CRLF.** GitHub's Windows
+    runner checks out with `core.autocrlf=true`, so a YAML string embedded in a
+    test source got `\r\n` and `CONFIG.replace("...\n...")` silently matched
+    nothing: a local Windows run from a `git archive` copy passed, CI failed.
+    `.gitattributes` now forces LF. Test Windows from a real checkout.

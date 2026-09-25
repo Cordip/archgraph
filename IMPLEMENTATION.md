@@ -41,15 +41,15 @@ head`) exits quietly with status 141.
 | Area | Files | Implemented acceptance criteria |
 | --- | --- | --- |
 | Crate/entry point | `Cargo.toml`, `src/lib.rs`, `src/main.rs`, `src/error.rs` | One Rust crate; explicit error boundary; no unsafe code; no database, LLM client, language parser, or frontend build. |
-| Schema/hierarchy | `src/config.rs` | Version 1 schema, project/provider/policies, arbitrary dotted nodes, node `priority` for cross-cutting mappings such as co-located tests, optional metadata/interfaces, manual typed edges, three rule variants with per-rule `edge_types`, provider `edge_types`/`exclude_reasons`/`min_confidence`, coverage policy, actionable reference/parent/glob validation. A rule observing relation kinds the provider does not query is rejected. |
+| Schema/hierarchy | `src/config.rs` | Version 1 schema, project/provider/policies, arbitrary dotted nodes, node `priority` for cross-cutting mappings such as co-located tests, optional metadata/interfaces, manual typed edges, four rule variants with per-rule `edge_types`, provider `edge_types`/`exclude_reasons`/`min_confidence`, coverage policy, actionable reference/parent/glob validation. A rule observing relation kinds the provider does not query is rejected. |
 | Paths/discovery | `src/paths.rs`, `src/discovery.rs` | Repository location, source roots, exclusions, repository ignore semantics, UTF-8 forward-slash paths, Windows verbatim/UNC root handling, no Git internals traversal. |
 | Membership | `src/mapping.rs` | Compiled glob sets, highest priority then deepest match in an ancestor chain, unrelated-branch ambiguity, unassigned policy, deterministic diagnostics. |
 | Provider abstraction | `src/provider/mod.rs` | Object-safe async `CodeGraphProvider` and injectable in-memory test provider: info, dependency edges, indexed files, index fingerprint, query identity, incremental or full reindex. |
 | GitNexus boundary | `src/provider/gitnexus.rs`, `src/provider/markdown_table.rs` | Executable override, separate argv, repository cwd, optional repo argument, stdout captured in a file (GitNexus truncates piped stdout at 64 KiB), version/probe, paginated `CodeRelation` query over the configured relation kinds with reason and confidence, paginated indexed-file listing, a guard against providers that ignore `SKIP`, index fingerprint from `meta.json`/`lbug`, `--force --no-parse-cache` for full reindexing, strict JSON wrapper/table adapter, fail-closed errors. |
 | Compiler/IR | `src/compiler.rs`, `src/model.rs` | Filtering by reason and confidence, membership and observed file graph resolution, out-of-scope edge counting, anomaly diagnostics, per-node mapped/observed/unindexed file counts, coverage issues, detection of an index rewritten mid-compile, observed/manual separation, aggregation, bounded deterministic evidence, rules, timestamp-free JSON, `.archgraph/architecture.ir.json`. |
 | Provider cache | `src/cache.rs` | Raw provider results in `.archgraph/cache/provider.json`, keyed on index fingerprint and query identity; configuration and discovery are never cached. |
-| Rules | `src/rules.rs` | `deny_dependency`, `allow_only`, immediate-child `no_cycles`, iterative Kosaraju, self-edge omission, minimum-weight feedback arc set (exact up to 16 members, greedy above) giving the cheapest cut and the resulting layer order, SCC and per-architecture-edge concrete evidence, precise scoped violation ownership. |
-| Baseline | `src/baseline.rs` | Accepted violations as file-level observations; comparison into new, accepted and fixed entries. |
+| Rules | `src/rules.rs` | `deny_dependency`, `allow_only`, immediate-child `no_cycles`, ordered `layers` with peer groups, iterative Kosaraju, self-edge omission, minimum-weight feedback arc set (exact up to 16 members, greedy above) giving the cheapest cut and the resulting layer order, SCC and per-architecture-edge concrete evidence, precise scoped violation ownership. |
+| Baseline | `src/baseline.rs`, `src/vcs.rs` | Accepted violations as file-level observations with the Git commit they were taken at; comparison into new, accepted and fixed entries, following files renamed since that commit (working tree included, via a temporary Git index). |
 | Draft architecture | `src/suggest.rs` | `init --suggest`: nodes from code directories, generic `no_cycles` rules, non-code exclusions, Ruby relation kinds, coverage comments. |
 | Shared projection | `src/projection.rs` | Immediate children or leaf files, lossless edge projection, collapsed self-edge omission, aggregated duplicates, cross-boundary entries, dependency layers, breadcrumbs, violation and suggested-cut annotations. |
 | Agent/rendering | `src/context.rs`, `src/render/*` | Markdown/JSON context, text/JSON/Mermaid focus output, deterministic concrete examples, descriptions/interfaces, incoming/outgoing dependencies, affected rules, suggested cuts, post-edit verification contract (never regenerating the baseline unasked). |
@@ -67,10 +67,11 @@ no authentication.
 
 ## Tests
 
-There are **83 Rust test functions**: 49 unit tests, 18 CLI process tests, 15
-compiler/projection integration tests, and one opt-in contract test against a
-real GitNexus. All pass with `cargo test --all-targets` (the contract test is
-`#[ignore]`d and run explicitly). Some functions check multiple configurations
+There are **92 Rust test functions**: 54 unit tests, 20 CLI process tests, 16
+compiler/projection integration tests, and two opt-in contract tests against a
+real GitNexus (TypeScript and Ruby). All pass with `cargo test --all-targets`
+(the contract tests are `#[ignore]`d and run explicitly). CI runs everything
+on Linux and, except the Unix-only CLI process tests, on Windows. Some functions check multiple configurations
 or CLI invocations.
 
 Unit coverage includes node ID validity, missing parents, segment-aware
@@ -78,7 +79,7 @@ ancestry, node/reference/version/glob validation, provider relation-kind and
 confidence validation, Windows and Unix paths, repository/worktree location,
 file discovery and ignore handling, priority and deepest-match mapping,
 ambiguous/unassigned policies, reason/confidence filtering and collapsing of
-observations, aggregation, sorted/capped evidence, all three rules, SCC
+observations, aggregation, sorted/capped evidence, all four rules, SCC
 behavior, cheapest-cut optimality against brute force, provider wrapper
 compatibility, escaped-pipe Markdown parsing, malformed rows, the provider
 cache, draft generation, CLI argument/exit semantics, skill preservation, and
@@ -160,7 +161,8 @@ intentionally omitted.
 
 | Validation | Status and scope |
 | --- | --- |
-| Rust compilation, tests, rustfmt, Clippy | Rust 1.98: all tests pass, rustfmt clean, no Clippy warnings. |
+| Rust compilation, tests, rustfmt, Clippy | Rust 1.98 on Linux: all tests pass, rustfmt clean, no Clippy warnings. |
+| Windows | Rust 1.97 (MSVC) on Windows 11: unit, integration and both real-GitNexus contract tests pass (GitNexus 1.6.12 launched through `gitnexus.cmd`). The CLI process tests are Unix-only. |
 | Real GitNexus | GitNexus 1.6.12 against zammad (about 14,000 files) with the configuration in [examples/zammad](examples/zammad/), plus the contract test above. Findings about zammad and about GitNexus are in [examples/zammad/README.md](examples/zammad/README.md) and [docs/gitnexus-limitations.md](docs/gitnexus-limitations.md). Three consecutive compiles produce byte-identical IR, cached or not. |
 | `node --check src/web/app.js` | Passes. |
 | Browser | `tests/web_smoke.py` passes in Playwright Chromium; `archgraph serve` on zammad renders with no console errors and was inspected by screenshot. |

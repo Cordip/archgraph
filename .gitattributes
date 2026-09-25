@@ -1,0 +1,3 @@
+# Sources, fixtures and embedded YAML/JSON compare byte for byte in tests;
+# keep LF on Windows checkouts (core.autocrlf would turn them into CRLF).
+* text=auto eol=lf
