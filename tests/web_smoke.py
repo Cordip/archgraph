@@ -179,6 +179,9 @@ SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .tr
 })"""
 
 
+# Every wire's drawing, in drawing order, to compare two layouts.
+WIRES = """() => [...document.querySelectorAll('#graph .edge-line, #graph .edge-gap, #graph .trunk-strand, #graph .trunk-casing, #graph .trunk-arrow, #graph .edge-label')].map((e) => [e.getAttribute('class'), e.getAttribute('d') || `${e.getAttribute('x')},${e.getAttribute('y')}`])"""
+
 # Watches the drawing while an entry is dragged: mutations inside #graph,
 # animation frames, and calls to the layout functions and the entry's moves.
 DRAG_WATCH = """() => { const d = window.__drag = { mutations: 0, frames: 0, run: true, calls: {} };
@@ -200,10 +203,15 @@ DRAG_BURST = """async ([x, y]) => { const stage = document.getElementById('stage
     } }"""
 
 
-def drag_rate_check(page, selector):
-    """A fast mouse sends several moves a frame; the entry moves at most once
-    a frame, to the latest position."""
-    box = page.locator("#graph " + selector).bounding_box()
+def drag_checks(page, selector, key, board):
+    """Drags an entry: during the drag the drawing (#graph) does not change,
+    the entry moves at most once a frame and nothing is laid out; the drop
+    lays the level out once, exactly as drawing it afresh would, and stores
+    the position. Escape during a drag puts the entry back."""
+    card = page.locator("#graph " + selector)
+    before = card.get_attribute("transform")
+    box = card.bounding_box()
+    start = page.evaluate("(s) => { const id = document.querySelector('#graph ' + s).dataset.id; return { ...scene.positions.get(id), k: camera.k, id }; }", selector)
     x, y = box["x"] + 30, box["y"] + 15
     page.mouse.move(x, y)
     page.mouse.down()
@@ -211,11 +219,47 @@ def drag_rate_check(page, selector):
     page.wait_for_timeout(50)
     page.evaluate(DRAG_WATCH)
     page.evaluate(DRAG_BURST, [x + 12, y + 6])
-    page.wait_for_timeout(50)
+    last = (x + 160, y + 70)
+    page.mouse.move(*last, steps=4)
+    page.wait_for_timeout(100)
     watch = page.evaluate("() => { window.__drag.run = false; return window.__drag; }")
-    assert 0 < watch["calls"].get("moves", 0) <= watch["frames"], watch
+    calls = watch["calls"]
+    assert watch["mutations"] == 0, watch
+    assert 0 < calls.get("moves", 0) <= watch["frames"], watch
+    assert not any(calls.get(name) for name in ("route", "layoutTrunk", "drawScene")), watch
+    assert page.locator("#lift-graph " + selector).count() == 1 and page.locator("#graph " + selector).count() == 0
+    page.evaluate("() => { window.__drag.calls = {}; }")
+    page.mouse.up()
+    page.wait_for_timeout(400)
+    calls = page.evaluate("window.__drag.calls")
+    assert calls.get("drawScene") == 1 and (board or calls.get("route") == 1), calls
+    assert page.locator("#graph " + selector).count() == 1 and page.locator("#viewport.entry-drag").count() == 0
+    assert card.get_attribute("transform") != before
+    saved = page.evaluate("(k) => JSON.parse(localStorage.getItem(Object.keys(localStorage).find((key) => key.startsWith(k))))", key)
+    if not board:
+        # The position of the last pointer move, as a drag always stored it.
+        expected = [round(start["x"] + (last[0] - x) / start["k"]), round(start["y"] + (last[1] - y) / start["k"])]
+        assert saved[start["id"]] == expected, (saved, expected)
+    else:
+        assert start["id"] in saved, saved
+    wires = page.evaluate(WIRES)
+    page.evaluate("redraw()")
+    page.wait_for_timeout(100)
+    assert page.evaluate(WIRES) == wires, "the drop draws what a fresh layout draws"
+    # Escape during a drag: the entry goes back and nothing is stored.
+    moved = card.get_attribute("transform")
+    stored_before = page.evaluate("() => JSON.stringify(Object.entries(localStorage).filter(([key]) => key.includes('layout')).sort())")
+    box = card.bounding_box()
+    page.mouse.move(box["x"] + 30, box["y"] + 15)
+    page.mouse.down()
+    page.mouse.move(box["x"] + 130, box["y"] + 65, steps=5)
+    page.wait_for_timeout(50)
+    page.keyboard.press("Escape")
     page.mouse.up()
     page.wait_for_timeout(300)
+    assert card.get_attribute("transform") == moved and page.locator("#graph " + selector).count() == 1
+    assert page.evaluate("() => JSON.stringify(Object.entries(localStorage).filter(([key]) => key.includes('layout')).sort())") == stored_before
+    assert page.evaluate(WIRES) == wires
 
 
 def angles_ok(page, step):
@@ -437,10 +481,10 @@ def main():
         nx, ny, nk = camera(page)
         assert (round(nx - cx), round(ny - cy)) == (80, 30) and service.get_attribute("transform") == original
         checks.append("node drag, remembered layout, reset layout, Space-drag pans over entries")
-        drag_rate_check(page, ".node[data-id='node:external.service']")
+        drag_checks(page, ".node[data-id='node:external.service']", "archgraph.layout.v1:Browser fixture:app", False)
         page.locator("#reset-layout").click()
         page.wait_for_timeout(500)
-        checks.append("a dragged entry moves at most once a frame")
+        checks.append("a dragged entry and its wires move on the lift layer, at most once a frame, without changing the drawing or laying anything out; the drop lays the level out once, as afresh, and stores the position; Escape puts it back")
 
         # Filters: relation kinds, origins, outside entries, violations only.
         page.locator("#filters-button").click()
@@ -793,6 +837,10 @@ def main():
         assert page.evaluate(SEGMENTS) != first
         assert not angles_ok(page, 45) and not spacing_problems(page, 12)
         assert page.evaluate("Object.keys(localStorage).some(k => k.startsWith('archgraph.layout-pcb.v1:Browser fixture:app.wires'))")
+        page.locator("#reset-layout").click()
+        page.wait_for_timeout(500)
+        assert page.evaluate(SEGMENTS) == first
+        drag_checks(page, ".node[data-id='file:w/d.ts']", "archgraph.layout-pcb.v1:Browser fixture:app.wires", True)
         page.locator("#reset-layout").click()
         page.wait_for_timeout(500)
         assert page.evaluate(SEGMENTS) == first

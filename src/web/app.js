@@ -458,6 +458,8 @@ function paint(lit, className, source) {
   renderLift();
 }
 function renderLift() {
+  // A drag has the lift layer to itself.
+  if (scene && scene.drag) return;
   const lift = $("lift-graph"), graph = $("graph"), lit = hovered || selection;
   const kind = hovered ? "hover" : "lit";
   $("viewport").classList.toggle("lifted", Boolean(lit && scene && scene.nodeEls));
@@ -1769,7 +1771,7 @@ function drawScene() {
   graph.replaceChildren();
   hovered = null;
   $("lift-graph").replaceChildren();
-  $("viewport").classList.remove("lifted");
+  $("viewport").classList.remove("lifted", "entry-drag");
   const arrangement = arrange(scene.entries, scene.layoutEdges, scene.layers);
   scene.colours = assignColours(arrangement.order);
   const board = display.mode !== "curves" && scene.entries.length > 0;
@@ -2162,24 +2164,6 @@ function trunkScope(trunk) {
   for (const edge of trunk.members) lit.nodes.add(edge.from);
   return lit;
 }
-// Puts an edge on a new course (a dragged entry's rubber band).
-function reshapeEdge(item, plan) {
-  if (item.batch) {
-    // A wire on the move is drawn on its own again.
-    item.batch = null;
-    item.element.classList.remove("batched");
-    item.element.replaceChildren(...item.parts);
-    drawBatch();
-  }
-  for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
-  if (item.end) item.end.setAttribute("d", endStretch(plan));
-  item.bounds = planBounds(plan);
-  scene.cullDirty = true;
-  if (item.strands.length) strandPaths(plan, item.count).forEach((d, i) => item.strands[i].setAttribute("d", d));
-  const point = bezier(plan.curves[0], 0.5);
-  item.label.setAttribute("x", round(point.x));
-  item.label.setAttribute("y", round(point.y + 4.5));
-}
 function usageMark(node, box) {
   const entries = usageCount(node, "entry_point"), idle = usageCount(node, "no_observed_users");
   const unused = node.no_outside_users || node.usage === "no_observed_users";
@@ -2268,43 +2252,91 @@ function drawNode(node, box, first) {
   scene.nodeEls.set(node.id, group);
   return group;
 }
-// Moves an entry while it is dragged; its edges follow as curves. On a
-// board they are rubber bands until the drop, and a ghost shows the grid
-// cell the entry will snap to.
-function moveEntry(id, x, y) {
-  const box = scene.positions.get(id);
-  box.x = x;
-  box.y = y;
-  if (!scene.board) scene.moved.add(id);
-  scene.nodeEls.get(id).setAttribute("transform", `translate(${round(x)}, ${round(y)})`);
-  scene.cullDirty = true;
-  for (const item of scene.edgeEls) {
-    if (item.edge.from !== id && item.edge.to !== id) continue;
-    reshapeEdge(item, freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) }));
-    item.line.removeAttribute("marker-start");
+// ---------------------------------------------------------------- dragging
+// A dragged entry and its wires (those that join a trunk too) leave the
+// drawing for the lift layer, which is small to repaint, and the drawing is
+// dimmed as a whole and left alone until the drop: moving across the large
+// drawing made the browser repaint much of it on every frame. The wires
+// follow as curves, with their colours and arrowheads, at most once a
+// frame; the drop lays the whole level out again, and Escape puts the
+// entry back.
+function startDrag(id) {
+  const graph = $("graph"), lift = $("lift-graph");
+  const card = scene.nodeEls.get(id);
+  const items = scene.edgeEls.filter((item) => item.edge.from === id || item.edge.to === id);
+  // Wires drawn in the dimmed batch are drawn on their own again, once.
+  let batched = false;
+  for (const item of items) {
+    if (!item.batch) continue;
+    item.batch = null;
+    item.element.classList.remove("batched");
+    item.element.replaceChildren(...item.parts);
+    batched = true;
+  }
+  if (batched) drawBatch();
+  const ghost = scene.board ? svg("path", { class: "drop-slot" }) : null;
+  lift.setAttribute("class", `${graph.getAttribute("class") || ""} dragged`);
+  lift.setAttribute("transform", graph.getAttribute("transform") || "");
+  lift.replaceChildren(...[ghost, ...items.map((item) => item.element), card].filter(Boolean));
+  for (const item of items) {
     item.element.classList.remove("crowded");
     if (scene.board) item.element.classList.add("rubber");
+    item.line.removeAttribute("marker-start");
+    // A trunk's wire gets its own arrowhead while it runs on its own.
+    item.line.setAttribute("marker-end", `url(#${markers(edgeLook(item.edge), item.violating).end})`);
   }
-  if (scene.board) {
+  $("viewport").classList.remove("lifted");
+  $("viewport").classList.add("entry-drag");
+  scene.drag = { id, items, ghost, wasMoved: scene.moved.has(id), elements: new Set([card, ...items.map((item) => item.element)]) };
+}
+// A wire's course while its entry is dragged: a curve between the sides
+// facing each other.
+function dragRoute(item) {
+  return freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) });
+}
+function dragTo(x, y) {
+  const drag = scene.drag;
+  if (!drag) return;
+  const box = scene.positions.get(drag.id);
+  box.x = x;
+  box.y = y;
+  if (!scene.board) scene.moved.add(drag.id);
+  scene.cullDirty = true;
+  scene.nodeEls.get(drag.id).setAttribute("transform", `translate(${round(x)}, ${round(y)})`);
+  for (const item of drag.items) {
+    const plan = dragRoute(item);
+    for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
+    if (item.end) item.end.setAttribute("d", endStretch(plan));
+    if (item.strands.length) strandPaths(plan, item.count).forEach((d, i) => item.strands[i].setAttribute("d", d));
+    item.bounds = planBounds(plan);
+    const mid = { x: (plan.start.x + plan.end.x) / 2, y: (plan.start.y + plan.end.y) / 2 };
+    item.label.setAttribute("x", round(mid.x));
+    item.label.setAttribute("y", round(mid.y + 4.5));
+  }
+  if (drag.ghost) {
     const cell = Board.snap(scene.board.grid, x + box.width / 2, y + box.height / 2);
     const slot = Board.slotBox(scene.board.grid, cell.row, cell.col);
-    if (!scene.ghost) {
-      scene.ghost = svg("path", { class: "drop-slot" });
-      $("graph").insertBefore(scene.ghost, $("graph").firstChild);
-    }
-    scene.ghost.setAttribute("transform", `translate(${round(slot.x)}, ${round(slot.y)})`);
-    scene.ghost.setAttribute("d", slot.hex ? Board.hexOutline(slot.width, slot.height) : `M 0 0 H ${round(slot.width)} V ${slot.height} H 0 Z`);
+    drag.ghost.setAttribute("transform", `translate(${round(slot.x)}, ${round(slot.y)})`);
+    drag.ghost.setAttribute("d", slot.hex ? Board.hexOutline(slot.width, slot.height) : `M 0 0 H ${round(slot.width)} V ${slot.height} H 0 Z`);
     scene.dropCell = cell;
   }
-  if (selection) renderLift();
-  const frame = frameBox();
-  if (frame && scene.frameRect) {
-    for (const key of ["x", "y", "width", "height"]) scene.frameRect.setAttribute(key, round(frame[key]));
-    scene.frameLabel.setAttribute("x", round(frame.x + 16));
-    scene.frameLabel.setAttribute("y", round(frame.y + 30));
-  }
-  const mark = $("minimap").querySelector(`[data-id="${CSS.escape(id)}"]`);
+  const mark = $("minimap").querySelector(`[data-id="${CSS.escape(drag.id)}"]`);
   if (mark) { mark.setAttribute("x", round(x)); mark.setAttribute("y", round(y)); }
+}
+// The drop: the moved entry is saved and the level laid out again.
+function dropDrag() {
+  const id = scene.drag.id;
+  $("viewport").classList.remove("entry-drag");
+  if (scene.board) dropOnGrid(id);
+  else { saveLayout(); redraw(); }
+}
+// Escape (or a cancelled pointer): the entry goes back where it was.
+function cancelDrag(origin) {
+  const { id, wasMoved } = scene.drag;
+  Object.assign(scene.positions.get(id), { x: origin.x, y: origin.y });
+  if (!wasMoved) scene.moved.delete(id);
+  $("viewport").classList.remove("entry-drag");
+  redraw();
 }
 function saveLayout() {
   const saved = {};
@@ -2420,7 +2452,9 @@ function cull() {
   }
   items.forEach((item, index) => { if (scene.pinned && scene.pinned.has(item.element)) wanted.add(index); });
   const graph = $("graph");
-  items.forEach((item, index) => { if (!wanted.has(index) && item.element.parentNode) item.element.remove(); });
+  // A dragged entry and its wires stay on the lift layer.
+  const dragged = scene.drag ? scene.drag.elements : new Set();
+  items.forEach((item, index) => { if (dragged.has(item.element)) wanted.delete(index); else if (!wanted.has(index) && item.element.parentNode) item.element.remove(); });
   // Put the wanted ones back in drawing order: each before the next wanted.
   let next = null;
   for (let index = items.length - 1; index >= 0; index--) {
@@ -2698,6 +2732,7 @@ stage.addEventListener("pointermove", (event) => {
     stage.setPointerCapture(event.pointerId);
     $("canvas").classList.add(gesture.kind === "node" ? "dragging" : "panning");
     paint(null, "hover");
+    if (gesture.kind === "node") startDrag(gesture.id);
   }
   if (gesture.kind === "pan") {
     if (spaceHeld) spacePanned = true;
@@ -2705,27 +2740,29 @@ stage.addEventListener("pointermove", (event) => {
     applyCamera(true);
   } else {
     // At most one move a frame, to the latest pointer position.
+    gesture.to = { x: gesture.origin.x + dx / camera.k, y: gesture.origin.y + dy / camera.k };
     const current = gesture;
-    current.to = { x: gesture.origin.x + dx / camera.k, y: gesture.origin.y + dy / camera.k };
-    if (!current.frame) current.frame = requestAnimationFrame(() => { current.frame = 0; if (gesture === current) moveEntry(current.id, current.to.x, current.to.y); });
+    if (!current.frame) current.frame = requestAnimationFrame(() => { current.frame = 0; if (gesture === current) dragTo(current.to.x, current.to.y); });
   }
 });
-function endGesture(event) {
+function endGesture(event, cancelled = false) {
   pointers.delete(event.pointerId);
   if (!gesture) return;
-  if (gesture.moved) {
+  const ended = gesture;
+  gesture = null;
+  $("canvas").classList.remove("dragging", "panning");
+  if (ended.moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
-    // A move still waiting for its frame happens before the drop.
-    if (gesture.frame) { cancelAnimationFrame(gesture.frame); moveEntry(gesture.id, gesture.to.x, gesture.to.y); }
-    if (gesture.kind === "node") { if (scene.board) dropOnGrid(gesture.id); else saveLayout(); }
-    if (gesture.kind === "pan" || gesture.kind === "pinch") commitCamera();
+    if (ended.kind === "node" && scene.drag) {
+      if (ended.frame) { cancelAnimationFrame(ended.frame); if (!cancelled) dragTo(ended.to.x, ended.to.y); }
+      if (cancelled) cancelDrag(ended.origin); else dropDrag();
+    }
+    if (ended.kind === "pan" || ended.kind === "pinch") commitCamera();
   }
-  $("canvas").classList.remove("dragging", "panning");
-  gesture = null;
 }
-stage.addEventListener("pointerup", endGesture);
-stage.addEventListener("pointercancel", endGesture);
+stage.addEventListener("pointerup", (event) => endGesture(event));
+stage.addEventListener("pointercancel", (event) => endGesture(event, true));
 stage.addEventListener("click", (event) => {
   if (suppressClick) { event.stopPropagation(); event.preventDefault(); return; }
   if (!event.target.closest("#graph .node, #graph .edge") && selected) showOverview();
@@ -2791,6 +2828,13 @@ function moveTo(id) {
 }
 const typing = (target) => target.closest && target.closest("input, select, textarea, [contenteditable]");
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && gesture && gesture.kind === "node" && gesture.moved) {
+    // Escape during a drag puts the entry back.
+    event.preventDefault();
+    for (const id of pointers.keys()) if (stage.hasPointerCapture(id)) stage.releasePointerCapture(id);
+    endGesture({ pointerId: [...pointers.keys()][0] }, true);
+    return;
+  }
   if (event.key === "Escape") {
     closePopovers();
     if ($("search-results").childElementCount) { closeSearch(); return; }
