@@ -20,11 +20,11 @@ archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.y
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml packages ortools
 ```
 
-lct-task3 carries the same configuration as its own `architecture.yaml`,
-with comments and titles in Russian (the repository's language), and runs it
-with `make arch`. The project's file is the source: the copy here follows it
-(branch `refactor/finer-architecture` of the fork) and is what ArchGraph's
-tests parse. Running
+This file is the only description of lct-task3's architecture. ArchGraph is
+a local tool for that project and is kept out of its repository: work on the
+architecture happens here, and `archgraph serve --root /path/to/lct-task3
+--config examples/lct-task3/architecture.yaml` shows it. ArchGraph's tests
+parse this file too. Running
 ArchGraph writes only `.archgraph/` into the target, which ignores itself.
 
 ## Nodes and rules

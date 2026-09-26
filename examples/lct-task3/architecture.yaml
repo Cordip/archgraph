@@ -1,8 +1,8 @@
 # Desired architecture for lct-task3, a field-service planning app: a Python
 # backend (FastAPI, OR-Tools) and a React + TypeScript frontend with one
 # global stylesheet. Layers follow the repository's docs/architecture.md.
-# This is an English copy of lct-task3's own architecture.yaml, which is the
-# source; change that file first.
+# This file is the only description of lct-task3's architecture: ArchGraph
+# is a local tool and stays out of that repository.
 #
 #   archgraph --root /path/to/lct-task3 \
 #       --config examples/lct-task3/architecture.yaml check

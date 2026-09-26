@@ -7,35 +7,31 @@ they refer to are described in [ui-backlog.md](ui-backlog.md).
 
 ## 1. One architecture file per project
 
-The project's own `architecture.yaml` is the only description. ArchGraph's
-`examples/<project>/architecture.yaml` follows it, never the other way round,
-and `archgraph serve` runs with the project's file, so an edit shows in the
-UI and in the project's own check (`make arch` in lct-task3) at once.
+Each target project has one description, kept where the work on it happens.
+For lct-task3 that is `examples/lct-task3/architecture.yaml` in this
+repository: ArchGraph is a local tool there and stays out of lct-task3's
+repository (no `architecture.yaml`, no `make arch`). `archgraph serve` runs
+with this file, so an edit shows in the UI at once.
 
-- lct-task3: bring `entry_points`, `provider.packages`, `libs.ortools` and
-  `only-the-core-uses-the-solver` from the example into the project's file.
-- Merge `ui-redesign` into `main` and reinstall the binary
-  (`cargo install --path .`), so that the project's `make arch` and
-  `archgraph serve` use the current build.
+- Done: `ui-redesign` merged into `main` and the binary reinstalled.
 
 ## 2. Finer nodes and rules
 
 A clean check must mean something. A node that maps a whole directory with
 no layers inside it cannot fail however its files depend on each other.
 
-- lct-task3: split `core` (17 files) into layers (models and helpers;
-  travel, geometry and zones; solver and validation; replanning,
-  explanations and metrics), `api` into routes, jobs, candidates and store,
-  and the frontend components by screen area. Derive the layers from
-  `docs/architecture.md` and the observed dependencies; a violation the new
-  rules find is either a refactoring target or evidence that the layer is
-  wrong, and is recorded as such.
+- Done for lct-task3: `core-layers` (planning; explanations and metrics;
+  validator; domain rules; models and utilities), `api-layers` (endpoints
+  over jobs, previews and the store) and `component-layers` (screens, panels,
+  map, shared elements). Every observed dependency between them points down,
+  so the check stays clean; a violation they find later is either a
+  refactoring target or evidence that a layer is wrong.
 
 ## 3. When the check runs
 
-Decided for lct-task3: by hand only (`make arch`), with no CI job and no git
-hook, since ArchGraph is a personal tool there. Step 2 found no violations, so
-there is no baseline either. Revisit if a CI job or a pre-push hook
+Decided for lct-task3: by hand only (`archgraph check` with the example
+configuration), with no CI job and no git hook, since ArchGraph is a personal
+tool there. Step 2 found no violations, so there is no baseline either. Revisit if a CI job or a pre-push hook
 (`core.hooksPath`, failing when `archgraph` or `gitnexus` is missing) becomes
 worth it; the README's "Checking architecture in your CI" describes the job.
 
