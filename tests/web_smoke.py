@@ -139,7 +139,16 @@ PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "nod
 API_SOURCE = "\n".join(["use crate::domain::a;" if i == 150 else f"// filler line {i}: nothing names the target here" for i in range(1, 301)]) + "\n"
 SOURCES = {"src/api/a.rs": API_SOURCE,
            "src/domain/a.rs": "// Domain model\nuse std::fmt;\nuse ortools::constraint_solver; // line 3\n\npub struct Invoice {\n    pub total: u64,\n}\n",
-           "web/src/App.tsx": "import { main } from './main';\n\nexport function App(): string {\n  return \"app\"; // a comment\n}\n"}
+           "web/src/App.tsx": "import { main } from './main';\n\nexport function App(): string {\n  return \"app\"; // a comment\n}\n",
+           # Markup: a Vue component's sections, and Ruby holes in ERB, even
+           # inside an attribute value and over several lines.
+           "web/src/Card.vue": "<template>\n  <div class=\"card\" :title=\"label\">\n    <!-- a note\n         over two lines -->\n"
+                               "    <span>{{ label }}</span>\n  </div>\n</template>\n\n<script setup lang=\"ts\">\n"
+                               "import { computed } from \"vue\";\nconst label = computed(() => \"card\"); // shown\n</script>\n\n"
+                               "<style scoped>\n.card { color: #333; }\n</style>\n",
+           "app/views/cards/show.html.erb": "<h1 class=\"title\"><%= @card.title %></h1>\n<% if @card.done? %>\n  <p>Done</p>\n<% end %>\n"
+                                            "<%# a note for the template %>\n<a href=\"<%= card_path(@card) %>\">Open</a>\n<%\n"
+                                            "  total = @card.items.sum(:price) # in cents\n%>\n"}
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
@@ -1334,6 +1343,28 @@ def main():
         assert "not a mapped file" in page.locator(".viewer-refusal").inner_text()
         assert page.locator(".code-scroll").is_hidden()
         checks.append("unsafe paths are refused before any fetch; the endpoint's refusal of an unmapped file is shown")
+
+        # Markup colouring: a Vue component's template, script and style, and
+        # ERB's Ruby holes, with states carried over lines.
+        def spans(line):
+            return page.evaluate("""(n) => [...document.querySelectorAll(`#pane-secondary .code-row[data-line='${n}'] .code-text > span`)]
+                .map((s) => `${s.className.slice(2)}:${s.textContent}`)""", line)
+        assert page.evaluate("openSource({ path: 'web/src/Card.vue' })") is True
+        assert spans(2) == ["keyword:<div", 'string:"card"', 'string:"label"'], spans(2)
+        assert spans(4) == ["comment:         over two lines -->"], spans(4)
+        assert spans(5) == ["keyword:<span", "keyword:</span"], spans(5)
+        assert spans(10) == ["keyword:import", "keyword:from", 'string:"vue"'], spans(10)
+        assert spans(11) == ["keyword:const", 'string:"card"', "comment:// shown"], spans(11)
+        assert spans(12) == ["keyword:</script"], spans(12)
+        assert spans(15) == ["number:#333"], spans(15)
+        assert page.evaluate("openSource({ path: 'app/views/cards/show.html.erb' })") is True
+        assert spans(1) == ["keyword:<h1", 'string:"title"', "type:<%=", "type:%>", "keyword:</h1"], spans(1)
+        assert spans(2) == ["type:<%", "keyword:if", "type:%>"], spans(2)
+        assert spans(5) == ["type:<%#", "comment: a note for the template ", "type:%>"], spans(5)
+        assert spans(6) == ["keyword:<a", 'string:"', "type:<%=", "type:%>", 'string:"', "keyword:</a"], spans(6)
+        assert spans(8) == ["comment:# in cents"], spans(8)
+        assert spans(9) == ["type:%>"], spans(9)
+        checks.append("Vue components colour their template tags, TypeScript and CSS; ERB colours Ruby inside <% %> (also in attribute values and over lines) and tags outside")
 
         # A large file: only the rows in view are elements, and it opens and
         # scrolls quickly.

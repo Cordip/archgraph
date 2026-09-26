@@ -792,7 +792,9 @@ infinite canvas, drawn like a drawing sheet:
 - **Source** opens below the details when a file is selected (a card, a
   file in a list or the table) or an evidence line is clicked: the file with
   line numbers and light colouring for Rust, TypeScript/JavaScript, Python,
-  Ruby and CSS, its path with a copy button, and a divider between details
+  Ruby, CSS, Vue components (tags in the template, TypeScript in
+  `<script>`, CSS in `<style>`) and ERB (Ruby inside `<% %>`, tags
+  outside), its path with a copy button, and a divider between details
   and source whose position is remembered. The inspector widens while it is
   open, and the canvas keeps what it showed in place: the selected entry or
   wire stays where it was in the visible canvas (the view's centre stays the

@@ -50,8 +50,12 @@ const Viewer = (() => {
       keywords: words("alias and begin break case class def defined? do else elsif end ensure false for if in module next nil not or redo require require_relative rescue retry return self super then true undef unless until when while yield include extend attr_reader attr_accessor") },
     css: { block: ["/*", "*/"], strings: { "\"": false, "'": false }, css: true, keywords: words("") },
   };
+  // Markup (see scanMarkup): a Vue component is HTML whose <script> and
+  // <style> hold TypeScript and CSS; ERB is HTML with Ruby in <% %>.
+  LANGUAGES.vue = { markup: true, sections: { script: LANGUAGES.js, style: LANGUAGES.css } };
+  LANGUAGES.erb = { markup: true, erb: true, sections: {} };
   const EXTENSIONS = { rs: "rust", ts: "js", tsx: "js", js: "js", jsx: "js", mjs: "js", cjs: "js", mts: "js", cts: "js",
-    py: "python", pyi: "python", rb: "ruby", rake: "ruby", css: "css", scss: "css", less: "css" };
+    py: "python", pyi: "python", rb: "ruby", rake: "ruby", css: "css", scss: "css", less: "css", vue: "vue", erb: "erb" };
   function languageOf(path) {
     const dot = path.lastIndexOf(".");
     return LANGUAGES[EXTENSIONS[dot < 0 ? "" : path.slice(dot + 1).toLowerCase()]] || null;
@@ -66,6 +70,7 @@ const Viewer = (() => {
   // the next line starts in. Every loop step advances, so the scan is
   // linear in the line's length.
   function scanLine(line, state, lang, out) {
+    if (lang.markup) return scanMarkup(line, state, lang, out);
     const push = (start, end, kind) => { if (out && end > start) out.push([start, end, kind]); };
     let i = 0;
     const n = line.length;
@@ -158,6 +163,109 @@ const Viewer = (() => {
       i++;
     }
     return null;
+  }
+  // Scans a line of HTML-like markup, as lightly as the other languages:
+  // tag names are keywords, attribute values strings, <!-- --> comments
+  // comments. Text between tags is left plain. Two kinds of holes are
+  // handed to another language's scanLine, with their spans shifted back
+  // onto the line:
+  // - the raw text of a <script> or <style> element (Vue: `lang.sections`),
+  //   up to its closing tag, as browsers read it;
+  // - ERB's <% %> (and <%= %>, <%- %>), Ruby up to the next `%>` wherever
+  //   it starts, even inside an attribute value or a comment, since ERB
+  //   runs before the HTML is read; <%# %> is a comment. The delimiters are
+  //   marked as types so that the Ruby stands out from the page.
+  // The state a line leaves is null in plain text, else an object that
+  // says where the line ended: in a tag, a quoted value, a comment, a
+  // section (with the inner language's state) or a Ruby hole (with the
+  // state to return to at `%>`).
+  function scanMarkup(line, state, lang, out) {
+    // A span that continues the previous one of its kind extends it.
+    const push = (start, end, kind) => {
+      if (!out || end <= start) return;
+      const last = out[out.length - 1];
+      if (last && last[1] === start && last[2] === kind) last[1] = end; else out.push([start, end, kind]);
+    };
+    const embedded = (inner, from, to, start) => {
+      const spans = out ? [] : null;
+      const next = scanLine(line.slice(from, to), start, inner, spans);
+      if (spans) for (const [a, b, kind] of spans) out.push([a + from, b + from, kind]);
+      return next;
+    };
+    // The first of `needle` and, in ERB, a Ruby hole: [index, isHole].
+    const nextStop = (needle, from) => {
+      const at = line.indexOf(needle, from), hole = lang.erb ? line.indexOf("<%", from) : -1;
+      return hole >= 0 && (at < 0 || hole < at) ? [hole, true] : [at, false];
+    };
+    let { mode = "text", quote = "", tag = "", section = "", inner = null, remark = false, back = null } = state || {};
+    const n = line.length;
+    let i = 0;
+    while (i < n) {
+      if (mode === "section") {
+        const close = line.indexOf(`</${section}`, i);
+        inner = embedded(lang.sections[section], i, close < 0 ? n : close, inner);
+        if (close < 0) break;
+        mode = "text"; section = ""; inner = null; i = close;
+        continue;
+      }
+      if (mode === "ruby") {
+        const close = line.indexOf("%>", i);
+        if (remark) push(i, close < 0 ? n : close, "comment");
+        else inner = embedded(LANGUAGES.ruby, i, close < 0 ? n : close, inner);
+        if (close < 0) break;
+        push(close, close + 2, "type");
+        ({ mode, quote, tag } = back);
+        back = null; inner = null; remark = false; i = close + 2;
+        continue;
+      }
+      if (lang.erb && line.startsWith("<%", i)) {
+        let j = i + 2;
+        remark = line[j] === "#";
+        if (line[j] === "=" || line[j] === "-" || line[j] === "#") j++;
+        push(i, j, "type");
+        back = { mode, quote, tag };
+        mode = "ruby"; inner = null; i = j;
+        continue;
+      }
+      if (mode === "comment" || mode === "value") {
+        const kind = mode === "comment" ? "comment" : "string", end = mode === "comment" ? "-->" : quote;
+        const [at, hole] = nextStop(end, i);
+        if (at < 0) { push(i, n, kind); break; }
+        if (hole) { push(i, at, kind); i = at; continue; }
+        push(i, at + end.length, kind);
+        i = at + end.length;
+        mode = mode === "comment" ? "text" : "tag";
+        continue;
+      }
+      if (mode === "tag") {
+        const c = line[i];
+        if (c === "\"" || c === "'") { push(i, i + 1, "string"); mode = "value"; quote = c; i++; continue; }
+        if (c === ">") {
+          mode = "text";
+          if (Object.prototype.hasOwnProperty.call(lang.sections, tag) && line[i - 1] !== "/") { mode = "section"; section = tag; inner = null; }
+          tag = "";
+        }
+        i++;
+        continue;
+      }
+      // Plain text: on to the next tag, comment or hole.
+      const at = line.indexOf("<", i);
+      if (at < 0) break;
+      i = at;
+      if (lang.erb && line.startsWith("<%", i)) continue;
+      if (line.startsWith("<!--", i)) { push(i, i + 4, "comment"); mode = "comment"; i += 4; continue; }
+      let j = i + 1;
+      const closing = line[j] === "/";
+      if (closing || line[j] === "!") j++;
+      if (!(line[j] >= "a" && line[j] <= "z") && !(line[j] >= "A" && line[j] <= "Z")) { i++; continue; }
+      const nameStart = j;
+      while (j < n && (isIdent(line[j]) || line[j] === "-" || line[j] === ":" || line[j] === ".")) j++;
+      push(i, j, "keyword");
+      mode = "tag";
+      tag = closing ? "" : line.slice(nameStart, j).toLowerCase();
+      i = j;
+    }
+    return mode === "text" ? null : { mode, quote, tag, section, inner, remark, back };
   }
   // The state each line starts in, from one pass over the file.
   function lineStates(lines, lang) {
