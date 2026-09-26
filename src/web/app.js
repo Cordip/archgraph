@@ -2704,7 +2704,10 @@ stage.addEventListener("pointermove", (event) => {
     camera = { ...camera, x: gesture.camera.x + dx, y: gesture.camera.y + dy };
     applyCamera(true);
   } else {
-    moveEntry(gesture.id, gesture.origin.x + dx / camera.k, gesture.origin.y + dy / camera.k);
+    // At most one move a frame, to the latest pointer position.
+    const current = gesture;
+    current.to = { x: gesture.origin.x + dx / camera.k, y: gesture.origin.y + dy / camera.k };
+    if (!current.frame) current.frame = requestAnimationFrame(() => { current.frame = 0; if (gesture === current) moveEntry(current.id, current.to.x, current.to.y); });
   }
 });
 function endGesture(event) {
@@ -2713,6 +2716,8 @@ function endGesture(event) {
   if (gesture.moved) {
     suppressClick = true;
     setTimeout(() => { suppressClick = false; }, 0);
+    // A move still waiting for its frame happens before the drop.
+    if (gesture.frame) { cancelAnimationFrame(gesture.frame); moveEntry(gesture.id, gesture.to.x, gesture.to.y); }
     if (gesture.kind === "node") { if (scene.board) dropOnGrid(gesture.id); else saveLayout(); }
     if (gesture.kind === "pan" || gesture.kind === "pinch") commitCamera();
   }

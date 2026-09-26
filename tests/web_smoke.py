@@ -179,6 +179,45 @@ SEGMENTS = """() => [...document.querySelectorAll('#graph .edge-line, #graph .tr
 })"""
 
 
+# Watches the drawing while an entry is dragged: mutations inside #graph,
+# animation frames, and calls to the layout functions and the entry's moves.
+DRAG_WATCH = """() => { const d = window.__drag = { mutations: 0, frames: 0, run: true, calls: {} };
+    const loop = () => { if (!d.run) return; d.frames++; requestAnimationFrame(loop); };
+    requestAnimationFrame(loop);
+    new MutationObserver((list) => { if (d.run) d.mutations += list.length; }).observe(document.getElementById('graph'), { subtree: true, childList: true, attributes: true });
+    // An entry's move is dragTo (or moveEntry, before moves waited for a frame).
+    for (const [name, counted] of [['route', 'route'], ['layoutTrunk', 'layoutTrunk'], ['drawScene', 'drawScene'], ['dragTo', 'moves'], ['moveEntry', 'moves']]) {
+        if (!window[name] || window['__plain_' + name]) continue;
+        const f = window['__plain_' + name] = window[name];
+        window[name] = function (...a) { window.__drag.calls[counted] = (window.__drag.calls[counted] || 0) + 1; return f.apply(this, a); };
+    } }"""
+
+# Four pointer moves in each of ten frames, as a fast mouse sends them.
+DRAG_BURST = """async ([x, y]) => { const stage = document.getElementById('stage');
+    for (let frame = 0; frame < 10; frame++) {
+        for (let i = 0; i < 4; i++) stage.dispatchEvent(new PointerEvent('pointermove', { pointerId: 1, pointerType: 'mouse', clientX: x + frame * 12 + i * 3, clientY: y + frame * 5, bubbles: true }));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+    } }"""
+
+
+def drag_rate_check(page, selector):
+    """A fast mouse sends several moves a frame; the entry moves at most once
+    a frame, to the latest position."""
+    box = page.locator("#graph " + selector).bounding_box()
+    x, y = box["x"] + 30, box["y"] + 15
+    page.mouse.move(x, y)
+    page.mouse.down()
+    page.mouse.move(x + 10, y + 4)
+    page.wait_for_timeout(50)
+    page.evaluate(DRAG_WATCH)
+    page.evaluate(DRAG_BURST, [x + 12, y + 6])
+    page.wait_for_timeout(50)
+    watch = page.evaluate("() => { window.__drag.run = false; return window.__drag; }")
+    assert 0 < watch["calls"].get("moves", 0) <= watch["frames"], watch
+    page.mouse.up()
+    page.wait_for_timeout(300)
+
+
 def angles_ok(page, step):
     bad = []
     for points in page.evaluate(SEGMENTS):
@@ -398,6 +437,10 @@ def main():
         nx, ny, nk = camera(page)
         assert (round(nx - cx), round(ny - cy)) == (80, 30) and service.get_attribute("transform") == original
         checks.append("node drag, remembered layout, reset layout, Space-drag pans over entries")
+        drag_rate_check(page, ".node[data-id='node:external.service']")
+        page.locator("#reset-layout").click()
+        page.wait_for_timeout(500)
+        checks.append("a dragged entry moves at most once a frame")
 
         # Filters: relation kinds, origins, outside entries, violations only.
         page.locator("#filters-button").click()
