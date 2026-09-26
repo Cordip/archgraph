@@ -212,3 +212,10 @@ Add new entries at the end: what happened, why, and what to do.
     and draw highlights on `#lift`; measure with a trace (Paint events
     grouped by `nodeId`), not with frame times in headless Chromium, whose
     software raster dwarfs everything else.
+29. **An SVG drawing without effect nodes layerizes slowly.** When the
+    dimmed wires lost their group opacity, each frame of the expanded
+    zammad level spent 80-110 ms in `PaintArtifactCompositor::Update`
+    (trace event `Layerize`), even when only `#lift` changed; an opacity on
+    each wire group (`.999`, invisible) brought it back to about 3 ms, and
+    `isolation: isolate` did not. Check `Layerize` in a trace after any
+    change to how wires are dimmed or grouped.
