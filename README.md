@@ -781,6 +781,14 @@ infinite canvas, drawn like a drawing sheet:
   the selected entry, edge or violation with its evidence. A node's details
   list what it depends on and what uses it, each opening that dependency's
   evidence. Both side panels collapse; on narrow screens they are drawers.
+  On wider screens the right panel (details and source together) is resized
+  by dragging its left edge, or with the arrow keys on the focused edge
+  (Shift for bigger steps, Home and End for the narrowest and widest,
+  Enter or a double-click for the default). A drag moves only the edge and
+  applies the width on release (Escape cancels it), since resizing the
+  canvas redraws a large level. The panel is at least 300 px wide and the
+  canvas keeps at least 320 px; the width with the source open and the
+  width without it are remembered separately in the browser.
 - **Source** opens below the details when a file is selected (a card, a
   file in a list or the table) or an evidence line is clicked: the file with
   line numbers and light colouring for Rust, TypeScript/JavaScript, Python,

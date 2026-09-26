@@ -157,6 +157,91 @@ function togglePanel(name, force) {
   else { panels[name] = force ?? !panels[name]; store("archgraph.panels.v1", panels); }
   applyPanels();
 }
+// The inspector's left edge resizes it, on wide screens only (a drawer
+// spans the window). Details alone and details with the source want
+// different widths, so each has its own, remembered; without one the
+// stylesheet's default applies. The stylesheet also keeps the canvas at
+// least 320 px wide whatever is remembered. A pointer drag moves only the
+// edge and applies the width on release: resizing the canvas lays the
+// whole drawing out again, too slow to repeat on every move of a large level.
+const INSPECTOR_MIN = 300, CANVAS_MIN = 320, INSPECTOR_STEP = 24;
+const inspectorWidths = stored("archgraph.inspector.v1", {});
+const widthKey = () => (document.body.classList.contains("viewer-open") ? "source" : "details");
+function inspectorLimits() {
+  const main = $("app").getBoundingClientRect().width, side = $("sidebar").getBoundingClientRect().width;
+  return { min: INSPECTOR_MIN, max: Math.max(INSPECTOR_MIN, Math.floor(main - side - CANVAS_MIN)) };
+}
+function applyInspectorWidths() {
+  for (const key of ["details", "source"]) {
+    const width = inspectorWidths[key];
+    if (Number.isFinite(width)) document.documentElement.style.setProperty(`--insp-${key}`, `${width}px`);
+    else document.documentElement.style.removeProperty(`--insp-${key}`);
+  }
+  showInspectorWidth();
+}
+function showInspectorWidth() {
+  const handle = $("inspector-resizer"), { min, max } = inspectorLimits();
+  const width = Math.round($("inspector").getBoundingClientRect().width);
+  handle.setAttribute("aria-valuemin", String(min));
+  handle.setAttribute("aria-valuemax", String(max));
+  if (width) handle.setAttribute("aria-valuenow", String(width));
+  handle.setAttribute("aria-valuetext", `${width} pixels wide`);
+}
+function setInspectorWidth(width) {
+  const { min, max } = inspectorLimits();
+  if (width === null) delete inspectorWidths[widthKey()];
+  else inspectorWidths[widthKey()] = Math.round(clamp(width, min, max));
+  store("archgraph.inspector.v1", inspectorWidths);
+  applyInspectorWidths();
+}
+{
+  const handle = $("inspector-resizer");
+  let drag = null;
+  const move = (event) => {
+    if (!drag || event.pointerId !== drag.pointer) return;
+    drag.width = clamp(drag.start + drag.x - event.clientX, drag.min, drag.max);
+    handle.style.transform = `translateX(${Math.round(drag.start - drag.width)}px)`;
+    handle.setAttribute("aria-valuenow", String(Math.round(drag.width)));
+  };
+  const end = (event, cancel) => {
+    if (!drag || (event && event.pointerId !== drag.pointer)) return;
+    const { width, start } = drag;
+    drag = null;
+    handle.style.transform = "";
+    handle.classList.remove("dragging");
+    document.body.classList.remove("resizing");
+    for (const [type, listener] of [["pointermove", move], ["pointerup", end], ["pointercancel", cancelDrag]]) window.removeEventListener(type, listener);
+    if (!cancel && Math.round(width) !== Math.round(start)) setInspectorWidth(width); else showInspectorWidth();
+  };
+  const cancelDrag = (event) => end(event, true);
+  handle.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    handle.focus({ preventScroll: true });
+    const start = $("inspector").getBoundingClientRect().width;
+    drag = { pointer: event.pointerId, x: event.clientX, start, width: start, ...inspectorLimits() };
+    handle.classList.add("dragging");
+    document.body.classList.add("resizing");
+    // Heard on window, as the canvas's drags are: the release may land anywhere.
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", cancelDrag);
+  });
+  handle.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && drag) { end(null, true); event.preventDefault(); event.stopPropagation(); return; }
+    const width = $("inspector").getBoundingClientRect().width, step = event.shiftKey ? INSPECTOR_STEP * 4 : INSPECTOR_STEP;
+    const { min, max } = inspectorLimits();
+    if (event.key === "ArrowLeft") setInspectorWidth(width + step);
+    else if (event.key === "ArrowRight") setInspectorWidth(width - step);
+    else if (event.key === "Home") setInspectorWidth(min);
+    else if (event.key === "End") setInspectorWidth(max);
+    else if (event.key === "Enter") setInspectorWidth(null);
+    else return;
+    event.preventDefault();
+  });
+  handle.addEventListener("dblclick", () => setInspectorWidth(null));
+  applyInspectorWidths();
+}
 // On narrow screens the details are a drawer; open it after the user picks
 // something, or the click seems to do nothing.
 function revealDetails() {
@@ -166,7 +251,7 @@ function revealDetails() {
 // widens the inspector; keepView holds what the canvas shows in place.
 const viewer = Viewer.create($("pane-secondary"), document.querySelector(".pane-splitter"), $("inspector"), {
   fetch: api,
-  layout: keepView,
+  layout: () => { keepView(); showInspectorWidth(); },
 });
 // request: { path, lines?, note?, refersTo?, kind? } (see Viewer.open).
 function openSource(request) {
@@ -2736,7 +2821,7 @@ function viewAnchor(size) {
   }
   return { x: size.width / 2, y: size.height / 2, fx: 0.5, fy: 0.5 };
 }
-new ResizeObserver(keepView).observe($("canvas"));
+new ResizeObserver(() => { keepView(); showInspectorWidth(); }).observe($("canvas"));
 
 // ---------------------------------------------------------------- minimap
 function drawMinimap() {

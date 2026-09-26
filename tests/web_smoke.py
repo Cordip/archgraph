@@ -1366,6 +1366,75 @@ def main():
         assert page.locator("#pane-secondary").is_hidden()
         checks.append("the viewer closes with its button, and with the selection on Escape")
 
+        # The inspector's left edge resizes the whole right panel, by pointer
+        # and by keyboard. Details alone and details with the source have
+        # their own remembered widths, and the canvas keeps 320 px.
+        def width(selector):
+            return page.locator(selector).bounding_box()["width"]
+        handle = page.locator("#inspector-resizer")
+        remembered = lambda: page.evaluate("JSON.parse(localStorage.getItem('archgraph.inspector.v1') || '{}')")
+        start = width("#inspector")
+        edge = handle.bounding_box()
+        page.mouse.move(edge["x"] + edge["width"] / 2, edge["y"] + edge["height"] / 3)
+        page.mouse.down()
+        page.mouse.move(edge["x"] + edge["width"] / 2 - 120, edge["y"] + edge["height"] / 3, steps=6)
+        # While dragged only the edge moves; the width is applied on release.
+        assert width("#inspector") == start and page.locator("#inspector-resizer.dragging").count() == 1
+        assert abs(handle.bounding_box()["x"] - (edge["x"] - 120)) < 1
+        page.mouse.up()
+        assert abs(width("#inspector") - (start + 120)) < 1.5, (start, width("#inspector"))
+        assert remembered() == {"details": round(start + 120)}, remembered()
+        assert handle.get_attribute("aria-valuenow") == str(round(width("#inspector")))
+        handle.focus()
+        page.keyboard.press("ArrowLeft")
+        assert abs(width("#inspector") - (start + 144)) < 1.5
+        page.keyboard.press("ArrowRight")
+        page.keyboard.press("ArrowRight")
+        assert abs(width("#inspector") - (start + 96)) < 1.5
+        page.keyboard.press("End")
+        assert abs(width("#canvas") - 320) < 1.5, width("#canvas")
+        page.keyboard.press("Home")
+        assert abs(width("#inspector") - 300) < 1.5 and remembered() == {"details": 300}
+        # Escape during a drag puts the edge back.
+        edge = handle.bounding_box()
+        page.mouse.move(edge["x"] + 5, edge["y"] + 200)
+        page.mouse.down()
+        page.mouse.move(edge["x"] - 200, edge["y"] + 200, steps=4)
+        page.keyboard.press("Escape")
+        page.mouse.up()
+        assert abs(width("#inspector") - 300) < 1.5 and page.locator("#inspector-resizer.dragging").count() == 0
+        # With the source open the panel starts wide, and its width is its own.
+        page.locator("#graph .edge-label", has_text="2 kinds").click()
+        page.locator("#details .evidence .source-link", has_text="src/api/a.rs").first.click()
+        page.wait_for_selector("#pane-secondary[data-path='src/api/a.rs']")
+        wide = width("#inspector")
+        assert wide > 500, wide
+        handle.focus()
+        page.keyboard.press("Shift+ArrowRight")
+        assert abs(width("#inspector") - (wide - 96)) < 1.5
+        assert remembered() == {"details": 300, "source": round(wide - 96)}, remembered()
+        page.locator("#viewer-close").click()
+        assert abs(width("#inspector") - 300) < 1.5
+        # A double-click gives the default width back; the canvas follows.
+        handle.dblclick()
+        assert abs(width("#inspector") - 360) < 1.5 and remembered() == {"source": round(wide - 96)}
+        checks.append("the right panel resizes from its left edge by drag (applied on release, Escape cancels) and by arrow keys, Home, End; details and details with source keep their own remembered widths; the canvas keeps 320 px; double-click resets")
+
+        # Phone width: the panel is a drawer, with no resize edge, and nothing
+        # scrolls the page sideways, with the source open or not.
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_timeout(100)
+        assert handle.is_hidden()
+        assert page.evaluate("document.documentElement.scrollWidth") == 390
+        assert page.evaluate("openSource({ path: 'src/api/a.rs' })") is True
+        page.wait_for_timeout(300)
+        assert page.locator("#inspector").bounding_box()["width"] == 390
+        assert page.evaluate("document.documentElement.scrollWidth") == 390
+        page.evaluate("viewer.close(); togglePanel('inspector', false)")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.wait_for_timeout(100)
+        checks.append("at phone width the right panel is a drawer without a resize edge and the page never scrolls sideways")
+
         screenshot = os.environ.get("ARCHGRAPH_UI_SCREENSHOT")
         if screenshot:
             page.screenshot(path=screenshot, full_page=True)

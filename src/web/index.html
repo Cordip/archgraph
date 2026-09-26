@@ -177,6 +177,8 @@
       </div>
     </section>
     <aside id="inspector" class="inspector" aria-label="Inspector">
+      <!-- Its left edge resizes the whole panel (app.js, "panels"). -->
+      <div id="inspector-resizer" class="inspector-resizer" role="separator" aria-orientation="vertical" tabindex="0" aria-controls="inspector" aria-label="Resize the details panel" title="Drag to resize; double-click for the default width"></div>
       <!-- Two stacked panes: the details, and the source viewer (viewer.js) below them. -->
       <section class="pane" id="pane-details" aria-labelledby="pane-details-title">
         <div class="pane-head">
