@@ -478,7 +478,10 @@ function renderLift() {
   const out = [];
   for (const { element } of scene.cullItems || []) {
     if (!copies.has(element)) continue;
-    const item = copies.get(element), copy = element.cloneNode(true);
+    const item = copies.get(element);
+    // A batched wire's group holds only its hit path: copy its full drawing.
+    const copy = item && item.batch ? element.cloneNode(false) : element.cloneNode(true);
+    if (item && item.batch) { copy.append(...item.parts.map((part) => part.cloneNode(true))); copy.classList.remove("batched"); }
     copy.classList.add(kind);
     if (hovered && pointed && element === scene.nodeEls.get(pointed)) copy.classList.add("pointed");
     copy.removeAttribute("tabindex");
@@ -1807,7 +1810,8 @@ function drawScene() {
       if (Array.isArray(place) && place.length === 2 && place.every(Number.isFinite)) { box.x = place[0]; box.y = place[1]; moved.add(id); }
     }
   }
-  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], trunkEls: [], cards: [], textKey: null });
+  Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], trunkEls: [], cards: [], textKey: null,
+    batching: display.focus && scene.edges.length > FOCUS_EDGE_LIMIT });
   graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${display.focus && scene.edges.length > FOCUS_EDGE_LIMIT ? " faint" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
@@ -1831,6 +1835,8 @@ function drawScene() {
   scene.trunks = trunks;
   // Violating edges are drawn last, on top of the others.
   plans.sort((a, b) => (a.edge.violation_rule_ids.length > 0) - (b.edge.violation_rule_ids.length > 0) || a.order - b.order);
+  scene.batchLayer = svg("g", { class: "edge-batch", "aria-hidden": "true" });
+  graph.append(scene.batchLayer);
   for (const plan of plans) graph.append(drawEdge(plan));
   // Trunks go over the wires they carry, violating ones last.
   const tags = [];
@@ -1921,7 +1927,18 @@ function drawEdge(plan) {
   const marker = plan.trunk ? null : `url(#${ids.end})`;
   // Without colours a highlighted wire turns to ink; with them it keeps its colour.
   const litMarker = marker && !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
-  scene.edgeEls.push({ edge, bounds: planBounds(plan), core: plan.core || null, trunk: plan.trunk || null, element: group, line, end, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
+  const item = { edge, bounds: planBounds(plan), core: plan.core || null, trunk: plan.trunk || null, element: group, line, end, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0,
+    parts: [...group.childNodes] };
+  // A dimmed wire is drawn by the batch layer; its own group keeps only the
+  // hit path, the label and the tooltip (see drawBatch).
+  if (scene.batching && !violating && !cut && !look.strands) {
+    const net = look.net !== null && look.net !== undefined ? `n${look.net % PALETTE}` : "";
+    item.batch = { style: `w${weight}${net ? ` ${net}` : ""}`, net, d: plan.d, gap: Boolean(gap), end: end && end.getAttribute("d"), tip: end ? endTip(plan) : null,
+      arrow: plan.trunk ? null : ids.end, via: plan.points ? plan.points[0] : null };
+    group.classList.add("batched");
+    for (const part of item.parts) if (part !== hit && part !== label && part.nodeName !== "title") part.remove();
+  }
+  scene.edgeEls.push(item);
   return group;
 }
 const violates = (edge) => edge.violation_rule_ids.length > 0;
@@ -1929,6 +1946,15 @@ const violates = (edge) => edge.violation_rule_ids.length > 0;
 // pattern (--end) then shows only the stretch next to the tip. END_MAX
 // covers the arrowhead and 12 px at the smallest zoom.
 const END_MAX = 300;
+// A wire's tip and the direction it arrives in.
+function endTip(plan) {
+  const points = plan.points || [plan.curves.at(-1)[2], plan.curves.at(-1)[3]];
+  const tip = points.at(-1);
+  let from = points.at(-2);
+  for (let i = points.length - 2; i >= 0 && Math.hypot(tip.x - points[i].x, tip.y - points[i].y) < 0.5; i--) from = points[i - 1] || points[0];
+  if (!plan.points && Math.hypot(tip.x - from.x, tip.y - from.y) < 0.5) from = plan.curves.at(-1)[0];
+  return { tip, dir: unit(from, tip) };
+}
 function endStretch(plan) {
   let points;
   if (plan.points) points = plan.points;
@@ -2119,7 +2145,7 @@ function updateWires() {
   const k = zoomStep(camera.k), graph = $("graph");
   if (scene.wireKey === k) return;
   scene.wireKey = k;
-  const scales = { wire: Math.min(12, Math.max(1, WIRE_MIN_PX / (1.3 * k))), strand: Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))), arrow: Math.min(12, Math.max(1, ARROW_MIN_PX / (11 * k))) };
+  const scales = scene.scales = { wire: Math.min(12, Math.max(1, WIRE_MIN_PX / (1.3 * k))), strand: Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))), arrow: Math.min(12, Math.max(1, ARROW_MIN_PX / (11 * k))) };
   $("canvas").style.setProperty("--ws", String(Math.round(scales.wire * 100) / 100));
   $("canvas").style.setProperty("--ts", String(Math.round(scales.strand * 100) / 100));
   // The solid end of a wire: under the arrowhead, then 12 px on screen.
@@ -2138,6 +2164,13 @@ function trunkScope(trunk) {
 }
 // Puts an edge on a new course (a dragged entry's rubber band).
 function reshapeEdge(item, plan) {
+  if (item.batch) {
+    // A wire on the move is drawn on its own again.
+    item.batch = null;
+    item.element.classList.remove("batched");
+    item.element.replaceChildren(...item.parts);
+    drawBatch();
+  }
   for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
   if (item.end) item.end.setAttribute("d", endStretch(plan));
   item.bounds = planBounds(plan);
@@ -2396,6 +2429,66 @@ function cull() {
     if (element.parentNode !== graph || element.nextSibling !== next) graph.insertBefore(element, next);
     next = element;
   }
+  drawBatch();
+}
+// ---------------------------------------------------------------- batching
+// With focus mode at rest, the dimmed wires (all but violations, suggested
+// cuts and buses) are drawn as a few paths, one per look: their lines, their
+// solid ends, their arrowheads and (on a board) their vias and crossing gaps,
+// each style of them one path. Gaps then separate wires of different looks
+// only. The browser then paints a handful of paths instead of
+// several per wire. Each wire keeps its own group with its hit path and
+// tooltip, so pointing at it works as before, and a lit wire is drawn whole
+// on the lift layer. Only wires in the DOM (see cull) are in the batch.
+function drawBatch() {
+  const layer = scene.batchLayer;
+  if (!layer) return;
+  const looks = new Map(), arrows = new Map(), vias = new Map();
+  const scale = scene.scales ? scene.scales.arrow : 1, unitLength = 1.1 * scale, via = 0.8 * scale;
+  for (const item of scene.edgeEls) {
+    const batch = item.batch;
+    if (!batch || !item.element.isConnected) continue;
+    if (!looks.has(batch.style)) looks.set(batch.style, { lines: [], ends: [], gaps: [] });
+    const look = looks.get(batch.style);
+    look.lines.push(batch.d);
+    if (batch.gap) look.gaps.push(batch.d);
+    if (batch.end) look.ends.push(batch.end);
+    if (batch.arrow && batch.tip) {
+      // The marker's triangle: 10 units long with its tip one unit past the
+      // wire's end, 10 units wide.
+      const { tip, dir } = batch.tip, n = { x: -dir.y, y: dir.x };
+      const point = { x: tip.x + dir.x * unitLength, y: tip.y + dir.y * unitLength }, base = { x: tip.x - dir.x * 9 * unitLength, y: tip.y - dir.y * 9 * unitLength };
+      const d = `M ${round(point.x)} ${round(point.y)} L ${round(base.x + n.x * 5 * unitLength)} ${round(base.y + n.y * 5 * unitLength)} L ${round(base.x - n.x * 5 * unitLength)} ${round(base.y - n.y * 5 * unitLength)} Z`;
+      if (!arrows.has(batch.arrow)) arrows.set(batch.arrow, []);
+      arrows.get(batch.arrow).push(d);
+    }
+    if (batch.via) {
+      const r = 3.4 * via, { x, y } = batch.via;
+      if (!vias.has(batch.net)) vias.set(batch.net, []);
+      vias.get(batch.net).push(`M ${round(x - r)} ${round(y)} a ${round(r)} ${round(r)} 0 1 0 ${round(2 * r)} 0 a ${round(r)} ${round(r)} 0 1 0 ${round(-2 * r)} 0`);
+    }
+  }
+  const out = [];
+  for (const [style, look] of [...looks].sort(([a], [b]) => a.localeCompare(b))) {
+    const group = svg("g", { class: `edge ${style}` });
+    // A look's gaps cut the looks drawn before it where its wires cross them.
+    if (look.gaps.length) group.append(svg("path", { class: "edge-gap", d: look.gaps.join(" ") }));
+    group.append(svg("path", { class: "edge-line", d: look.lines.join(" ") }));
+    if (look.ends.length) group.append(svg("path", { class: "edge-line edge-end", d: look.ends.join(" ") }));
+    out.push(group);
+  }
+  for (const [net, list] of [...vias].sort(([a], [b]) => a.localeCompare(b))) {
+    const path = svg("path", { class: `via${net ? ` ${net}` : ""}`, d: list.join(" ") });
+    path.style.strokeWidth = `${round(1.6 * via * 10) / 10}px`;
+    { const group = svg("g", { class: "edge" }); group.append(path); out.push(group); }
+  }
+  for (const [id, list] of [...arrows].sort(([a], [b]) => a.localeCompare(b))) {
+    const net = id.startsWith("arrow-n") ? `arrow-net n${id.slice(7)}` : "arrow";
+    const path = svg("path", { class: net, d: list.join(" ") });
+    path.style.strokeWidth = `${round(1.6 * unitLength * 10) / 10}px`;
+    { const group = svg("g", { class: "edge" }); group.append(path); out.push(group); }
+  }
+  layer.replaceChildren(...out);
 }
 
 // ---------------------------------------------------------------- camera

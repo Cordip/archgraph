@@ -440,7 +440,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .w2 .edge-line { stroke-width: calc(1.8px * var(--ws, 1)); }
 .w3 .edge-line { stroke-width: calc(2.5px * var(--ws, 1)); }
 .w4 .edge-line { stroke-width: calc(3.3px * var(--ws, 1)); }
+/* Hit paths take the pointer along their stroke in the drawing, never on the
+   lift layer, whose copies would take it from the wire under them. They stay
+   transparent rather than visibility: hidden, which stopped Chromium from
+   drawing anything more once a wire was lifted (AGENTS.md gotchas). */
 .edge-hit { fill: none; stroke: transparent; stroke-width: calc(16px * var(--ws, 1)); }
+#graph .edge-hit { pointer-events: stroke; }
 /* Only the hit paths take the pointer: hit-testing every drawn stroke of a
    large level costs milliseconds on each mouse move. */
 #graph .edge path:not(.edge-hit) { pointer-events: none; }

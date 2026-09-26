@@ -920,22 +920,47 @@ def main():
         own = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f05.ts']"
         other = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f01.ts']:not([data-to='file:d/f05.ts'])"
         assert page.evaluate("scene.edges.length") == 66 and page.locator("#graph.faint").count() == 1
-        # At rest the other wires are lighter solid strokes: the wire, not its
-        # group, is lightened (so its arrowhead keeps full colour), and a
-        # dashed net is drawn solid until it is lit.
+        # At rest the other wires are drawn together, a few paths for all of
+        # them (one per look: colour and weight), lighter and solid: the wire,
+        # not its group, is lightened (so its arrowhead keeps full colour),
+        # and a dashed net is drawn solid until it is lit. Each wire keeps its
+        # own group with its hit path, so pointing at it still works.
         stroke = lambda selector, prop: page.locator(selector).first.evaluate(f"e => getComputedStyle(e).{prop}")
+        batch = page.evaluate("""() => ({ paths: document.querySelectorAll('#graph .edge-batch path').length,
+            own: [...document.querySelectorAll('#graph > .edge:not(.trunk):not(.violating)')].map((g) => g.querySelectorAll('.edge-line, .edge-gap').length).reduce((a, b) => a + b, 0),
+            batched: document.querySelectorAll('#graph > .edge.batched').length,
+            hits: document.querySelectorAll('#graph > .edge.batched > .edge-hit').length,
+            arrows: [...document.querySelectorAll('#graph .edge-batch :is(.arrow, .arrow-net)')].map((p) => p.getAttribute('d').split('Z').length - 1).reduce((a, b) => a + b, 0),
+            arrowed: document.querySelectorAll('#graph > .edge.batched:not(.branch)').length,
+            lines: [...document.querySelectorAll('#graph .edge-batch .edge-line:not(.edge-end)')].map((p) => [parseFloat(getComputedStyle(p).strokeOpacity), getComputedStyle(p).strokeDasharray]),
+            groups: [...document.querySelectorAll('#graph .edge-batch > g')].map((g) => parseFloat(getComputedStyle(g).opacity)) })""")
+        assert 0 < batch["paths"] <= 40 and batch["own"] == 0 and batch["batched"] > 40 and batch["hits"] == batch["batched"], batch
+        assert batch["arrows"] == batch["arrowed"] > 0, batch
+        assert all(0.4 <= opacity <= 0.5 and dash == "none" for opacity, dash in batch["lines"]), batch["lines"]
+        # The batch's groups keep an opacity below 1, like every wire group.
+        assert all(opacity < 1 for opacity in batch["groups"]), batch["groups"]
         assert opacity(own) > 0.99 and opacity(other) > 0.99, (opacity(own), opacity(other))
-        assert 0.4 <= float(stroke(own + " .edge-line", "strokeOpacity")) <= 0.5, stroke(own + " .edge-line", "strokeOpacity")
         dashed = "#graph .edge.c1:not(.trunk):not(.violating)"
-        assert stroke(dashed + " .edge-line", "strokeDasharray") == "none", stroke(dashed + " .edge-line", "strokeDasharray")
+        assert page.locator(dashed).count() > 0
         assert opacity("#graph .edge.violating") > 0.99
         # Each arrowhead's wire ends in a solid stretch at full strength: the
         # arrowhead's length and about 12 px more on screen.
         ends = page.evaluate("""() => [...document.querySelectorAll('#graph .edge-line[marker-end]')].map((line) => {
             const end = line.parentNode.querySelector('.edge-end'), style = end && getComputedStyle(end);
-            return end ? [parseFloat(style.strokeDasharray) * camera.k, style.strokeOpacity, parseFloat(getComputedStyle(line).strokeOpacity)] : null; })""")
+            return end ? [parseFloat(style.strokeDasharray) * camera.k, style.strokeOpacity] : null; }).concat(
+            [...document.querySelectorAll('#graph .edge-batch .edge-end')].map((end) => [parseFloat(getComputedStyle(end).strokeDasharray) * camera.k, getComputedStyle(end).strokeOpacity]))""")
         assert ends and all(end and end[0] >= 12 and end[1] == "1" for end in ends), ends[:5]
-        assert any(end[2] < 0.5 for end in ends), ends[:5]
+        # Pointing at a wire drawn in the batch lifts a whole copy of it.
+        point = page.evaluate("""(selector) => { for (const hit of document.querySelectorAll(selector)) { const length = hit.getTotalLength(), m = hit.getScreenCTM();
+            for (let t = 0.2; t < 0.8; t += 0.05) { const q = hit.getPointAtLength(length * t), x = m.a * q.x + m.c * q.y + m.e, y = m.b * q.x + m.d * q.y + m.f;
+                const target = document.elementFromPoint(x, y); if (target === hit) return { x, y, from: hit.parentNode.dataset.from, to: hit.parentNode.dataset.to }; } } return null; }""", other + " > .edge-hit")
+        assert point, "no visible point on a batched wire"
+        page.mouse.move(point["x"], point["y"])
+        page.wait_for_timeout(200)
+        pointed_wire = f"#lift-graph .edge[data-from='{point['from']}'][data-to='{point['to']}']"
+        assert page.locator(pointed_wire + " .edge-line:not(.edge-end)").count() == 1, point
+        assert page.locator("#lift-graph .edge.batched").count() == 0
+        page.mouse.move(0, 0)
         # Nets past the sixth hue repeat it with dashes, never dots: every
         # drawn piece of a pattern is at least three times the stroke's width.
         patterns = page.evaluate("""() => { const ns = 'http://www.w3.org/2000/svg', box = document.createElementNS(ns, 'svg'); document.body.append(box);
@@ -969,6 +994,8 @@ def main():
         page.locator("#focus-mode").click()
         page.wait_for_timeout(300)
         assert page.locator("#graph.faint").count() == 0 and opacity(other) > 0.99
+        # Not faint, every wire is drawn on its own again.
+        assert page.locator("#graph .edge-batch path").count() == 0 and page.locator(other + " .edge-line").count() > 0
         assert page.locator("#focus-mode").get_attribute("aria-pressed") == "false"
         assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1')).focus") is False
         page.locator("#focus-mode").click()
