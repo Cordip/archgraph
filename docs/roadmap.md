@@ -116,3 +116,6 @@ work on the architecture done from this repository. The skill should cover:
   violation.
 - Installing it globally (`~/.claude/skills/archgraph`) so it works from
   any directory, as well as with `archgraph init --install-skill`.
+
+- Done: the bundled skill now covers all of this, and it is linked into
+  `~/.claude/skills/archgraph` on the development machine.

@@ -982,7 +982,12 @@ archgraph check app.billing
 Do not declare completion while check exits 2. Exit 1 means verification failed
 and must be repaired, not that the architecture is clean. Do not edit
 `architecture.yaml` unless the task explicitly requests an architecture change.
-The bundled [agent skill](skills/archgraph/SKILL.md) records this workflow.
+The bundled [agent skill](skills/archgraph/SKILL.md) records this workflow,
+and also how to find the architecture file in either mode, write rules and
+prove they can fail, read the results and point a person at the UI.
+`init --install-skill` copies it into a project; to use it from any
+directory, link it into the user's skills instead
+(`ln -s "$PWD/skills/archgraph" ~/.claude/skills/archgraph`).
 Markdown context and `--json` contain the same focus state, incoming/outgoing
 observed dependencies, rules, violations, concrete evidence and agent contract.
 
