@@ -5,13 +5,18 @@ can change the desired architecture and the code towards it without the
 description drifting from the code. Steps in the agreed order; the UI ideas
 they refer to are described in [ui-backlog.md](ui-backlog.md).
 
-## 1. One architecture file per project
+## 1. One architecture file per project, in one of two modes
 
-Each target project has one description, kept where the work on it happens.
-For lct-task3 that is `examples/lct-task3/architecture.yaml` in this
-repository: ArchGraph is a local tool there and stays out of lct-task3's
-repository (no `architecture.yaml`, no `make arch`). `archgraph serve` runs
-with this file, so an edit shows in the UI at once.
+Each target project has one `architecture.yaml` (README, "Where the
+architecture file lives"):
+
+- **In the project (the default):** at the project's root, committed with
+  the code.
+- **Outside the project (development):** kept in this repository when the
+  file should not be committed to the project, and every command passes
+  `--root <project> --config <file here>`. lct-task3 uses this mode with
+  `examples/lct-task3/architecture.yaml`; `archgraph serve` runs with it, so
+  an edit shows in the UI at once.
 
 - Done: `ui-redesign` merged into `main` and the binary reinstalled.
 
@@ -91,7 +96,8 @@ local tool whose configuration for a target project lives outside that
 project (for lct-task3, `examples/lct-task3/architecture.yaml` here), with the
 work on the architecture done from this repository. The skill should cover:
 
-- Running every command against an outside target: `--root <target>
+- The two modes of step 1, and running every command against an outside
+  target in the development mode: `--root <target>
   --config <file>`, where the index lives (`.gitnexus/`, `.archgraph/` in the
   target, ignored there) and that nothing else may be written into the
   target.

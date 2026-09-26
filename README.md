@@ -64,6 +64,33 @@ upgrading GitNexus. See
 [examples/zammad/README.md](examples/zammad/README.md) and
 [IMPLEMENTATION.md](IMPLEMENTATION.md).
 
+## Where the architecture file lives
+
+ArchGraph supports two ways of keeping `architecture.yaml`:
+
+- **In the project (the default).** The file sits at the project's root and
+  is committed with the code, so the architecture is reviewed and versioned
+  like any other change. Commands run from the project need no options:
+  `archgraph check`, `archgraph serve`.
+- **Outside the project (development).** While the architecture is being
+  worked out, or when ArchGraph should leave no trace in a repository, the
+  file lives in another repository, for example this one
+  (`examples/lct-task3/architecture.yaml` describes lct-task3), and every
+  command names both:
+
+  ```bash
+  archgraph --root /path/to/project \
+      --config /path/to/archgraph/examples/project/architecture.yaml check
+  ```
+
+  Give `--config` as an absolute path: a relative one is resolved against
+  `--root`. The project then only receives `.gitnexus/` from GitNexus and
+  `.archgraph/` (the compiled IR and the provider cache), which ignores
+  itself, so the project's Git status stays clean.
+
+Moving from the second mode to the first is copying the file into the
+project and committing it.
+
 ## Architecture source
 
 A compact example (the complete, deeper example is
