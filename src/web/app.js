@@ -116,12 +116,14 @@ async function checkForUpdates() {
   const changed = latest.revision !== meta.revision;
   meta = latest;
   showRefreshState(false);
-  if (!changed) return false;
+  // An open file is checked on every poll; it is reloaded with a new revision.
+  if (!changed) { await viewer.sync(false); return false; }
   showNotesButton();
   await loadTree();
   let id = currentProjection ? currentProjection.focus.id : meta.project.root;
   try { await api(`/api/focus/${encodeURIComponent(id)}`); } catch { id = meta.project.root; }
   await loadFocus(id, false);
+  await viewer.sync(true);
   return true;
 }
 function showError(error) { $("error").textContent = error.message || String(error); $("error").hidden = false; }
@@ -159,6 +161,30 @@ function togglePanel(name, force) {
 // something, or the click seems to do nothing.
 function revealDetails() {
   if (narrow.matches) togglePanel("inspector", true);
+}
+// The source viewer in the inspector's second pane (viewer.js). Opening it
+// widens the inspector, so the canvas is refitted to its new size.
+const viewer = Viewer.create($("pane-secondary"), document.querySelector(".pane-splitter"), $("inspector"), {
+  fetch: api,
+  layout: () => { if (scene) applyCamera(); },
+});
+// request: { path, lines?, note?, refersTo?, kind? } (see Viewer.open).
+function openSource(request) {
+  revealDetails();
+  return viewer.open(request);
+}
+// A button naming a file that opens it in the viewer.
+function sourceButton(text, request, className = "source-link") {
+  const button = html("button", text, className);
+  button.type = "button";
+  button.title = `Show the source of ${request.path}`;
+  button.addEventListener("click", () => openSource(request));
+  return button;
+}
+// The lines of `file` that import package `id`, as the package report gives them.
+function packageLines(id, file) {
+  const known = allPackages.find((item) => item.id === id);
+  return ((known && known.imports) || []).filter((use) => use.file === file).map((use) => use.line);
 }
 
 // ---------------------------------------------------------------- node list
@@ -560,8 +586,17 @@ function addEvidence(parent, evidence, total, limit = Infinity) {
   const list = html("ol", null, "evidence");
   for (const item of (evidence || []).slice(0, limit)) {
     const row = html("li", null, "evidence-item");
-    const target = item.to_file.startsWith("package:") ? `${packageName(item.to_file)} (package)` : item.to_file;
-    row.append(html("div", `${item.from_file}\n→ ${target}`, "evidence-pair"));
+    const isPackage = item.to_file.startsWith("package:");
+    // The source file opens with the lines that reach the target marked:
+    // the package report's lines for a package, otherwise lines found in
+    // the text, since GitNexus gives files and not lines.
+    const pair = html("div", null, "evidence-pair");
+    const lines = isPackage ? packageLines(item.to_file, item.from_file) : [];
+    pair.append(sourceButton(item.from_file, isPackage
+      ? { path: item.from_file, lines, note: lines.length ? `Imports ${packageName(item.to_file)}.` : `Imports ${packageName(item.to_file)}; the package report names no line in this file.` }
+      : { path: item.from_file, refersTo: item.to_file, kind: item.kind }), "\n→ ");
+    pair.append(isPackage ? html("span", `${packageName(item.to_file)} (package)`) : sourceButton(item.to_file, { path: item.to_file }));
+    row.append(pair);
     const line = html("div", null, "evidence-meta");
     line.append(html("span", item.kind, "tag"));
     if (hasValue(item.confidence)) line.append(html("span", `confidence ${item.confidence}`));
@@ -682,13 +717,17 @@ function showNode(node, element) {
   const openGroup = scene && openGroupOf(node);
   if (openGroup) actions.append(actionButton(`Collapse ${openGroup.label}`, () => setGroupOpen(openGroup, false), "secondary"));
   if (scene && scene.byId.has(node.id) && view === "diagram") actions.append(actionButton("Centre on canvas", () => centreOn(node.id), "secondary"));
+  if (node.entry_kind === "file" && node.file_path) actions.append(actionButton("Show source", () => openSource({ path: node.file_path }), "secondary"));
   if (actions.childElementCount) panel.append(actions);
   if (node.package) packageDetails(panel, node);
-  if (node.entry_kind === "file") panel.append(html("p", "File identity only. Use GitNexus or your editor for source and symbol details.", "muted"));
   if (node.entry_kind === "direct_files") {
     panel.append(html("h3", "Directly owned files"));
     const files = html("ul", null, "plain-list");
-    for (const file of currentProjection.focus.direct_files) files.append(html("li", file, "detail-id"));
+    for (const file of currentProjection.focus.direct_files) {
+      const item = html("li");
+      item.append(sourceButton(file, { path: file }, "source-link detail-id"));
+      files.append(item);
+    }
     panel.append(files);
   }
   if (node.entry_kind === "group") {
@@ -716,6 +755,8 @@ function showNode(node, element) {
   dependencyList(panel, "Depends on", edges.filter((edge) => edge.from === node.id), (edge) => edge.to);
   dependencyList(panel, "Used by", edges.filter((edge) => edge.to === node.id), (edge) => edge.from);
   revealDetails();
+  // Selecting a file shows its source next to its details.
+  if (node.entry_kind === "file" && node.file_path) viewer.open({ path: node.file_path });
 }
 // Who imports a package: every file and line, grouped by the node owning the
 // file, each node a link to its place in the architecture.
@@ -752,7 +793,7 @@ function packageDetails(panel, node) {
     const lines = html("ul", null, "plain-list importer-lines");
     for (const item of items) {
       const line = html("li", null, "importer-line");
-      line.append(html("span", `${item.file}:${item.line}`, "detail-id"));
+      line.append(sourceButton(`${item.file}:${item.line}`, { path: item.file, lines: [item.line], note: `Imports ${item.specifier}.` }, "source-link detail-id"));
       line.append(html("span", `${item.specifier}${item.type_only ? " (type only)" : ""}`, "importer-specifier"));
       lines.append(line);
     }
@@ -903,7 +944,7 @@ function packageSection(panel, ids, group) {
     for (const use of (known && known.imports) || []) {
       if (!sources.has(use.file)) continue;
       const row = html("li", null, "importer-line");
-      row.append(html("span", `${use.file}:${use.line}`, "detail-id"), html("span", `${use.specifier}${use.type_only ? " (type only)" : ""}`, "detail-id"));
+      row.append(sourceButton(`${use.file}:${use.line}`, { path: use.file, lines: [use.line], note: `Imports ${use.specifier}.` }, "source-link detail-id"), html("span", `${use.specifier}${use.type_only ? " (type only)" : ""}`, "detail-id"));
       lines.append(row);
     }
     if (lines.childElementCount) item.append(lines);
@@ -2854,7 +2895,8 @@ document.addEventListener("keydown", (event) => {
     closePopovers();
     if ($("search-results").childElementCount) { closeSearch(); return; }
     if (narrow.matches && drawer) { togglePanel(drawer, false); return; }
-    if (selected && !typing(event.target)) showOverview();
+    // Clearing the selection also closes the source it opened.
+    if (selected && !typing(event.target)) { showOverview(); viewer.close(); }
     return;
   }
   if (typing(event.target)) return;
@@ -3394,7 +3436,7 @@ $("sidebar-toggle").addEventListener("click", () => togglePanel("sidebar"));
 $("inspector-toggle").addEventListener("click", () => togglePanel("inspector"));
 $("inspector-close").addEventListener("click", () => togglePanel("inspector", false));
 $("scrim").addEventListener("click", () => togglePanel(drawer, false));
-$("overview-button").addEventListener("click", showOverview);
+$("overview-button").addEventListener("click", () => { showOverview(); viewer.close(); });
 $("notes-button").addEventListener("click", () => {
   togglePanel("inspector", true);
   showOverview();

@@ -134,6 +134,12 @@ PROJECTIONS = {
 }
 PACKAGES = [{"id": ORTOOLS["id"], "name": "ortools", "ecosystem": "python", "node": "packages", "file_count": 2, "nodes": ["app.api", "app.domain"],
              "imports": ORTOOLS["imports"]}]
+# Source text for the code viewer (GET /api/source). The evidence file
+# imports its target on line 150, far enough down to need scrolling.
+API_SOURCE = "\n".join(["use crate::domain::a;" if i == 150 else f"// filler line {i}: nothing names the target here" for i in range(1, 301)]) + "\n"
+SOURCES = {"src/api/a.rs": API_SOURCE,
+           "src/domain/a.rs": "// Domain model\nuse std::fmt;\nuse ortools::constraint_solver; // line 3\n\npub struct Invoice {\n    pub total: u64,\n}\n",
+           "web/src/App.tsx": "import { main } from './main';\n\nexport function App(): string {\n  return \"app\"; // a comment\n}\n"}
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
@@ -330,7 +336,7 @@ def main():
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("https://archgraph.invalid/**", lambda route: route.fulfill(body="<!doctype html><title>fixture</title>", content_type="text/html"))
         page.goto("https://archgraph.invalid/")
-        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION], "packages": PACKAGES}
+        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION], "packages": PACKAGES, "sources": SOURCES}
         index = (ROOT / "src/web/index.html").read_text()
         index = re.sub(r'<script[^>]*>.*?</script>', '', index, flags=re.S)
         index = re.sub(r'<link[^>]*rel="stylesheet"[^>]*>', '', index)
@@ -347,6 +353,25 @@ def main():
                 else if (url.pathname === '/api/violations') payload = {violations: fixture.violations};
                 else if (url.pathname === '/api/packages') payload = {enabled: true, packages: fixture.packages};
                 else if (url.pathname.startsWith('/api/focus/')) payload = fixture.projections[decodeURIComponent(url.pathname.slice('/api/focus/'.length))];
+                else if (url.pathname === '/api/source') {
+                    // Like the server: mapped files only, the text left out
+                    // while the caller's hash still matches.
+                    const path = url.searchParams.get('path');
+                    window.__sourceFetches = (window.__sourceFetches || 0) + 1;
+                    if (path === 'src/big/huge.ts' && !fixture.sources[path]) {
+                        const lines = [];
+                        for (let i = 1; i <= 20000; i++) lines.push(`export const value${i} = compute("row ${i}", ${i} * 2); // note ${i}`);
+                        fixture.sources[path] = lines.join('\n') + '\n';
+                    }
+                    const text = fixture.sources[path];
+                    if (text === undefined) return new Response(JSON.stringify({error: `\`${path}\` is not a mapped file of this architecture (excluded, outside the source roots or unknown); only mapped files are served`, reason: 'unmapped'}), {status: 403, headers: {'Content-Type': 'application/json'}});
+                    let hash = 0;
+                    for (let i = 0; i < text.length; i++) hash = (hash * 31 + text.charCodeAt(i)) | 0;
+                    hash = String(hash >>> 0);
+                    const unchanged = url.searchParams.get('if_hash') === hash;
+                    payload = {path, node: 'app.fixture', line_count: text.split('\n').length - 1, bytes: text.length, hash, unchanged};
+                    if (!unchanged) payload.text = text;
+                }
                 else if (url.pathname === '/api/search') {
                     const q = (url.searchParams.get('q') || '').toLowerCase();
                     payload = fixture.nodes.filter(n => n.id.toLowerCase().includes(q) || n.title.toLowerCase().includes(q));
@@ -358,6 +383,7 @@ def main():
         """)
         page.add_script_tag(content=(ROOT / "src/web/board.js").read_text())
         page.add_script_tag(content=(ROOT / "src/web/dsm.js").read_text())
+        page.add_script_tag(content=(ROOT / "src/web/viewer.js").read_text())
         page.add_script_tag(content=(ROOT / "src/web/app.js").read_text())
         page.wait_for_function("document.getElementById('focus-title').textContent === 'Application'")
         assert page.locator("#graph .node").count() == 3
@@ -384,7 +410,7 @@ def main():
         assert "<img src=x" in page.locator("#details").inner_text()
         assert page.locator("#details img").count() == 0
         assert page.evaluate("window.__injected") is None
-        assert page.locator("script").count() == 3
+        assert page.locator("script").count() == 4
         checks.append("edge evidence and hostile provider text rendered without HTML execution")
 
         # The canvas is one tab stop: arrow keys move between entries, Enter
@@ -1174,6 +1200,130 @@ def main():
         assert page.locator("#refresh-status").is_hidden()
         assert page.locator("#error").is_hidden()
         checks.append("live reload follows new revisions, keeps the focus while it exists, and reports failed reloads")
+
+        # The code viewer: selecting a file shows its source in the second
+        # pane, an evidence line scrolls to the lines it points at, and a
+        # path the viewer must not ask for is refused before any fetch.
+        page.evaluate("loadFocus('app.web.ui')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app.web.ui'")
+        assert page.locator("#pane-secondary").is_hidden()
+        page.locator("#graph .node[data-id='file:web/src/App.tsx']").click()
+        page.wait_for_selector("#pane-secondary[data-state='shown']")
+        assert page.locator("body.viewer-open").count() == 1 and page.locator(".pane-splitter").is_visible()
+        assert page.locator("#pane-secondary .code-row").count() == 5
+        assert page.locator("#pane-secondary .code-text").first.inner_text() == "import { main } from './main';"
+        assert page.locator("#viewer-title").text_content() == "web/src/App.tsx"
+        assert page.locator("#pane-secondary .code-ln").nth(3).inner_text() == "4"
+        # Light colouring: keywords, strings and comments.
+        assert page.locator("#pane-secondary .t-keyword", has_text="export").count() == 1
+        assert page.locator("#pane-secondary .t-string", has_text='"app"').count() == 1
+        assert page.locator("#pane-secondary .t-comment").inner_text() == "// a comment"
+        checks.append("selecting a file card opens its source with line numbers and light syntax colouring in the split right panel")
+
+        # The divider is a separator that remembers its position.
+        page.locator(".pane-splitter").focus()
+        page.keyboard.press("ArrowDown")
+        assert page.locator(".pane-splitter").get_attribute("aria-valuenow") == "45"
+        assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.viewer.v1')).split") == 0.45
+
+        # Live reload: a new revision reloads the open file; between
+        # revisions a changed file is only marked stale, with a reload button.
+        page.evaluate("""() => { const f = window.__fixture; f.meta = {...f.meta, revision: f.meta.revision + 1};
+            f.sources['web/src/App.tsx'] = "import { main } from './main';\\n// reloaded\\n"; }""")
+        assert page.evaluate("checkForUpdates()") is True
+        page.wait_for_function("document.querySelectorAll('#pane-secondary .code-row').length === 2")
+        assert "file changed" in page.locator(".viewer-stale").inner_text() and page.locator("#pane-secondary[data-stale]").count() == 0
+        page.evaluate("() => { window.__fixture.sources['web/src/App.tsx'] = 'changed on disk\\n'; }")
+        assert page.evaluate("checkForUpdates()") is False
+        assert "changed on disk" in page.locator(".viewer-stale").inner_text() and page.locator("#pane-secondary[data-stale='true']").count() == 1
+        page.locator(".viewer-stale button", has_text="Reload").click()
+        page.wait_for_function("document.querySelector('#pane-secondary .code-text').textContent === 'changed on disk'")
+        assert page.locator(".viewer-stale").is_hidden()
+        checks.append("live reload refreshes an open file with a new revision, and marks it stale with a Reload button when only the file changed")
+
+        # An evidence line: the source file opens scrolled to the line that
+        # imports the target (found in the text: GitNexus gives no lines).
+        page.evaluate("loadFocus('app')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
+        page.locator("#graph .edge-label", has_text="2 kinds").click()
+        page.locator("#details .evidence .source-link", has_text="src/api/a.rs").first.click()
+        page.wait_for_selector("#pane-secondary[data-path='src/api/a.rs']")
+        page.wait_for_timeout(100)
+        current = page.locator("#pane-secondary .code-row.current")
+        assert current.get_attribute("data-line") == "150" and "guess" in current.get_attribute("class")
+        scroller, row = page.locator(".code-scroll").bounding_box(), current.bounding_box()
+        assert scroller["y"] <= row["y"] and row["y"] + row["height"] <= scroller["y"] + scroller["height"], (scroller, row)
+        assert "Lines that import src/domain/a" in page.locator(".viewer-marks").inner_text()
+        # A package import comes with its line from the package report.
+        page.evaluate("loadFocus('packages')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'packages'")
+        page.locator("#graph .node[data-id='package:python/ortools']").click()
+        page.locator("#details .source-link", has_text="src/domain/a.rs:3").click()
+        page.wait_for_selector("#pane-secondary[data-path='src/domain/a.rs']")
+        assert page.evaluate("viewer.current().marks") == [3] and page.evaluate("viewer.current().exact") is True
+        assert page.locator("#pane-secondary .code-row.current.exact").get_attribute("data-line") == "3"
+        checks.append("an evidence line opens its file scrolled to and highlighting the importing line (text search, marked as such) or the package report's exact line")
+
+        # Hovering the canvas with the viewer open still changes nothing in the drawing.
+        page.evaluate("loadFocus('app')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
+        page.locator("#graph .edge-label", has_text="2 kinds").click()
+        page.locator("#details .evidence .source-link", has_text="src/api/a.rs").first.click()
+        page.wait_for_selector("#pane-secondary[data-path='src/api/a.rs']")
+        page.wait_for_timeout(600)
+        page.evaluate("""() => { window.__viewerMutations = 0; new MutationObserver((list) => { window.__viewerMutations += list.length; }).observe(document.getElementById('graph'), { subtree: true, attributes: true, childList: true }); }""")
+        for name in ("API", "Domain", "API"):
+            page.get_by_role("button", name=name, exact=True).hover()
+            page.wait_for_timeout(50)
+        page.mouse.move(0, 0)
+        page.wait_for_timeout(100)
+        assert page.evaluate("window.__viewerMutations") == 0, page.evaluate("window.__viewerMutations")
+        checks.append("with the viewer open, a hover still makes no mutation in #graph")
+
+        # Refused paths: an unsafe path is refused without a request, and
+        # the server's refusal of an unmapped file is shown as it says.
+        fetches = page.evaluate("window.__sourceFetches")
+        for path in ("../etc/passwd", "/etc/passwd", "src/./api/a.rs", "package:python/ortools"):
+            assert page.evaluate("(p) => openSource({ path: p })", path) is False
+            assert page.locator("#pane-secondary[data-state='refused']").count() == 1
+            assert "Cannot show this file" in page.locator(".viewer-refusal").inner_text()
+        assert page.evaluate("window.__sourceFetches") == fetches
+        assert page.evaluate("openSource({ path: 'notes.txt' })") is False
+        assert page.evaluate("window.__sourceFetches") == fetches + 1
+        assert "not a mapped file" in page.locator(".viewer-refusal").inner_text()
+        assert page.locator(".code-scroll").is_hidden()
+        checks.append("unsafe paths are refused before any fetch; the endpoint's refusal of an unmapped file is shown")
+
+        # A large file: only the rows in view are elements, and it opens and
+        # scrolls quickly.
+        timing = page.evaluate("""async () => {
+            const started = performance.now();
+            await openSource({ path: 'src/big/huge.ts' });
+            const opened = performance.now() - started;
+            const scroller = document.querySelector('.code-scroll');
+            const times = [];
+            for (const line of [5000, 10000, 15000, 19990]) {
+                const t = performance.now();
+                scroller.scrollTop = (line - 1) * 20;
+                scroller.dispatchEvent(new Event('scroll'));
+                await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+                times.push(performance.now() - t);
+            }
+            return { opened, times, prepare: viewer.current().prepareMs, rows: document.querySelectorAll('#pane-secondary .code-row').length,
+                     last: document.querySelector('#pane-secondary .code-row:last-child').dataset.line };
+        }""")
+        assert timing["rows"] < 300 and int(timing["last"]) == 20000, timing
+        assert timing["opened"] < 1500 and max(timing["times"]) < 250, timing
+        checks.append(f"a 20,000-line file renders only {timing['rows']} rows: opened in {timing['opened']:.0f} ms (scan {timing['prepare']:.0f} ms), each jump while scrolling within {max(timing['times']):.0f} ms")
+
+        page.locator("#viewer-close").click()
+        assert page.locator("#pane-secondary").is_hidden() and page.locator("body.viewer-open").count() == 0
+        page.locator("#graph .edge-label", has_text="2 kinds").click()
+        page.locator("#details .evidence .source-link", has_text="src/api/a.rs").first.click()
+        page.wait_for_selector("#pane-secondary[data-path='src/api/a.rs']")
+        page.keyboard.press("Escape")
+        assert page.locator("#pane-secondary").is_hidden()
+        checks.append("the viewer closes with its button, and with the selection on Escape")
 
         screenshot = os.environ.get("ARCHGRAPH_UI_SCREENSHOT")
         if screenshot:

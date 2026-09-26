@@ -9,6 +9,7 @@
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2315202b' stroke-width='1.8'%3E%3Crect x='2.5' y='2.5' width='8' height='6'/%3E%3Crect x='13.5' y='2.5' width='8' height='6'/%3E%3Crect x='8' y='15.5' width='8' height='6'/%3E%3Cpath d='M6.5 8.5v3.5h5.5v3.5M17.5 8.5v3.5h-5.5'/%3E%3C/svg%3E">
   <script src="/board.js" defer></script>
   <script src="/dsm.js" defer></script>
+  <script src="/viewer.js" defer></script>
   <script src="/app.js" defer></script>
 </head>
 <body>
@@ -176,7 +177,7 @@
       </div>
     </section>
     <aside id="inspector" class="inspector" aria-label="Inspector">
-      <!-- Two stacked panes: details now; the second is reserved for a file viewer. -->
+      <!-- Two stacked panes: the details, and the source viewer (viewer.js) below them. -->
       <section class="pane" id="pane-details" aria-labelledby="pane-details-title">
         <div class="pane-head">
           <h2 id="pane-details-title">Details</h2>
@@ -188,7 +189,7 @@
         <div id="details" class="pane-body" aria-live="polite" tabindex="-1"></div>
       </section>
       <div class="pane-splitter" role="separator" aria-orientation="horizontal" hidden></div>
-      <section class="pane" id="pane-secondary" hidden></section>
+      <section class="pane viewer" id="pane-secondary" hidden></section>
     </aside>
   </main>
 </body>

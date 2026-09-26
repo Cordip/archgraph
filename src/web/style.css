@@ -526,9 +526,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 :is(#graph, #lift-graph).has-hover .node.hover, :is(#graph, #lift-graph).has-hover .edge.hover { opacity: 1; }
 
 /* Inspector: two stacked panes; the second is reserved for a file viewer. */
-.inspector { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; background: var(--sheet); border-left: 1.5px solid var(--frame); }
-.inspector.split { grid-template-rows: minmax(0, 1fr) 6px minmax(0, 1fr); }
-.pane { display: flex; flex-direction: column; min-height: 0; }
+.inspector { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--sheet); border-left: 1.5px solid var(--frame); }
+.inspector.split { grid-template-rows: minmax(0, var(--split-top, 2fr)) 7px minmax(0, var(--split-bottom, 3fr)); }
+/* Code needs more width than details: the inspector widens while the
+   viewer is open, unless it is closed. */
+body.viewer-open:not(.inspector-closed) { --insp-w: clamp(360px, 42vw, 720px); }
+.pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .pane-head { display: flex; align-items: center; gap: 6px; min-height: 48px; padding: 5px 8px 5px 18px; border-bottom: 1px solid var(--rule); }
 .pane-head h2 { flex: 1; margin: 0; font-size: 15px; color: var(--ink-3); }
 .pane-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px 32px; font-size: 14.5px; overflow-wrap: anywhere; }
@@ -662,3 +665,58 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
 .importer-lines { margin: 4px 0 0; padding: 0; list-style: none; }
 .importer-line { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 10px; padding: 1px 0; }
 .importer-specifier { font: 12.5px var(--font-code); color: var(--ink-3); overflow-wrap: anywhere; }
+
+/* Source viewer: the file as a detail sheet under the details. The code is
+   on the card colour with the line numbers in a ruled margin; the line the
+   evidence points at is washed like a highlighter, and its number becomes
+   a filled marker, as a detail callout on a drawing. */
+.pane-splitter { position: relative; cursor: row-resize; touch-action: none; background: var(--sheet); border-top: 1px solid var(--rule); border-bottom: 1.5px solid var(--frame); }
+.pane-splitter::before { content: ""; position: absolute; inset: -6px 0; }
+.pane-splitter::after { content: ""; position: absolute; top: 2px; left: 50%; width: 36px; height: 1.5px; margin-left: -18px; background: var(--ink-3); box-shadow: 0 -2px 0 var(--sheet), 0 2px 0 var(--sheet); }
+.pane-splitter:hover, .pane-splitter.dragging, .pane-splitter:focus-visible { background: var(--pencil-soft); }
+.pane-splitter:focus-visible { outline-offset: -2px; }
+.viewer { background: var(--sheet); }
+.viewer-head { gap: 2px; padding-left: 14px; }
+.viewer-head h2.viewer-title { display: flex; min-width: 0; font: 13px/1.4 var(--font-code); color: var(--ink-3); white-space: nowrap; }
+.viewer-dir { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.viewer-base { flex: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--ink); }
+.viewer-copy { flex: none; white-space: nowrap; }
+.viewer-facts { display: flex; flex-wrap: wrap; gap: 2px 14px; margin: 0; padding: 5px 14px 6px; font-size: 12.5px; color: var(--ink-3); border-bottom: 1px solid var(--rule); }
+.viewer-facts:empty { display: none; }
+.viewer-node { font-family: var(--font-code); color: var(--ink-2); }
+.viewer-stale { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 6px 14px; font-size: 13px; color: var(--ink); background: var(--amber-soft); border-bottom: 1px solid var(--rule); box-shadow: inset 3px 0 0 var(--amber); }
+.viewer-stale.info { background: var(--pencil-soft); box-shadow: inset 3px 0 0 var(--pencil); }
+.viewer-stale .text-button { padding: 2px 0; font-weight: 600; }
+.viewer-marks { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; padding: 7px 14px; font-size: 13px; background: color-mix(in srgb, var(--hilite) 26%, var(--sheet)); border-bottom: 1px solid var(--rule); box-shadow: inset 3px 0 0 var(--pencil); }
+.viewer-marks.guess { background: var(--pencil-soft); }
+.viewer-mark-text { flex: 1 1 220px; margin: 0; color: var(--ink); }
+.viewer-steps { display: flex; flex: none; align-items: center; gap: 6px; }
+.viewer-step { padding: 2px 8px; font-size: 12.5px; background: var(--sheet); border: 1px solid var(--rule); }
+.viewer-step:hover { color: var(--pencil); border-color: var(--pencil); }
+.viewer-step-count { font-size: 12.5px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.code-scroll { --code-line: 20px; position: relative; flex: 1; min-height: 0; overflow: auto; font: 12.5px/var(--code-line) var(--font-code); color: var(--ink); background: var(--card); tab-size: 4; overscroll-behavior: contain; }
+.code-scroll:focus-visible { outline-offset: -2px; }
+.code-sizer { position: relative; min-width: 100%; width: calc(var(--gutter, 5ch) + var(--cols, 0) * 1ch + 4ch); }
+.code-rows { position: absolute; top: 0; left: 0; right: 0; }
+.code-row { display: flex; height: var(--code-line); white-space: pre; }
+.code-ln { position: sticky; left: 0; z-index: 1; flex: none; width: var(--gutter, 5ch); padding-right: 1ch; text-align: right; color: var(--ink-3); background: var(--sheet); border-right: 1px solid var(--rule); user-select: none; font-variant-numeric: tabular-nums; }
+.code-text { flex: 1; padding: 0 2ch 0 1.5ch; }
+.code-row.mark .code-text { background: color-mix(in srgb, var(--hilite) 40%, transparent); }
+.code-row.mark.guess .code-text { background: var(--pencil-soft); }
+.code-row.mark .code-ln { color: var(--ink); box-shadow: inset -3px 0 0 var(--pencil); }
+.code-row.current .code-ln { color: var(--sheet); font-weight: 700; background: var(--pencil); box-shadow: none; }
+.t-keyword { color: var(--pencil); }
+.t-string { color: var(--n2); }
+.t-comment { color: var(--ink-3); font-style: italic; }
+.t-number { color: var(--n1); }
+.t-type { color: var(--n3); }
+.viewer-message { flex: 1; padding: 14px; overflow: auto; }
+.viewer-refusal { margin: 0; padding: 8px 12px; font-size: 13.5px; color: var(--ink); background: var(--red-soft); border-left: 3px solid var(--red); overflow-wrap: anywhere; }
+.viewer[data-state="loading"] .code-scroll { opacity: .5; }
+/* File names in the details that open the viewer. */
+.source-link { padding: 0; font: inherit; color: var(--pencil); text-align: left; background: none; border: 0; text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--pencil) 35%, transparent); text-underline-offset: 2px; overflow-wrap: anywhere; }
+.source-link:hover { text-decoration-color: currentColor; }
+@media (max-width: 900px) {
+  body.viewer-open .inspector { height: min(88%, 900px); }
+  .viewer-copy { padding: 4px 4px; }
+}
