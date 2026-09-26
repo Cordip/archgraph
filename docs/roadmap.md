@@ -31,11 +31,13 @@ no layers inside it cannot fail however its files depend on each other.
   rules find is either a refactoring target or evidence that the layer is
   wrong, and is recorded as such.
 
-## 3. Checks in CI
+## 3. When the check runs
 
-- `archgraph baseline` for the violations accepted in step 2, then a CI job
-  that runs `archgraph check` and fails only on new ones (README, "Checking
-  architecture in your CI").
+Decided for lct-task3: by hand only (`make arch`), with no CI job and no git
+hook, since ArchGraph is a personal tool there. Step 2 found no violations, so
+there is no baseline either. Revisit if a CI job or a pre-push hook
+(`core.hooksPath`, failing when `archgraph` or `gitnexus` is missing) becomes
+worth it; the README's "Checking architecture in your CI" describes the job.
 
 ## 4. "What if" edits in the UI
 
