@@ -691,7 +691,8 @@ def main():
         assert page.locator("#graph .node.package").count() == 2
         assert page.locator("#graph .node.package .package-glyph").count() == 2
         assert page.locator("#graph .node.package.selected").count() == 1
-        assert "imported by 2 files" in page.locator(f"#graph .node.package[data-id='{ORTOOLS['id']}']").text_content()
+        # The tooltip, not the fitted line, so the check holds with any font width.
+        assert "imported by 2 file(s)" in page.locator(f"#graph .node.package[data-id='{ORTOOLS['id']}'] > title").text_content()
         # A long name is cut short of the corner glyph, and the tooltip keeps it whole.
         wide = page.locator(f'#graph .node.package[data-id="{FONTSOURCE["id"]}"]')
         title_right = wide.locator(".node-title").evaluate("e => e.getBBox().x + e.getBBox().width")
@@ -854,7 +855,22 @@ def main():
         page.locator("#reset-layout").click()
         page.wait_for_timeout(500)
         assert page.evaluate(SEGMENTS) == first
-        checks.append("PCB mode: every segment at a multiple of 45°, parallel traces at least a pitch apart, deterministic routing, a dragged card snaps to the grid and re-routes, positions stored per mode")
+        # Released over a tool card (the legend) instead of the drawing, a
+        # drag still ends: the entry is dropped, not left on the lift layer.
+        legend = page.locator("#legend").bounding_box()
+        box = card.bounding_box()
+        page.mouse.move(box["x"] + 30, box["y"] + 20)
+        page.mouse.down()
+        page.mouse.move(legend["x"] + legend["width"] / 2, legend["y"] + 12, steps=8)
+        page.mouse.up()
+        page.wait_for_timeout(500)
+        assert page.evaluate("!scene.drag && !document.getElementById('viewport').classList.contains('entry-drag')")
+        assert page.locator("#graph .node[data-id='file:w/d.ts']").count() == 1
+        assert page.locator("#lift .node").count() == 0
+        page.locator("#reset-layout").click()
+        page.wait_for_timeout(500)
+        assert page.evaluate(SEGMENTS) == first
+        checks.append("PCB mode: every segment at a multiple of 45°, parallel traces at least a pitch apart, deterministic routing, a dragged card snaps to the grid and re-routes, positions stored per mode, a drag released over a tool card still drops")
 
         page.locator("#mode-hex").click()
         assert page.locator("#graph.mode-hex").count() == 1

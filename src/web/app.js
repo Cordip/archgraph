@@ -2721,7 +2721,10 @@ stage.addEventListener("pointerdown", (event) => {
     gesture = { kind: "pan", x: event.clientX, y: event.clientY, camera: { ...camera }, moved: false };
   }
 });
-stage.addEventListener("pointermove", (event) => {
+// Moves and the release are heard on the window: pointer capture on the
+// stage does not hold once a dragged entry moves onto #lift, and a release
+// over a tool card must still end the gesture.
+window.addEventListener("pointermove", (event) => {
   if (!pointers.has(event.pointerId)) return;
   pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
   if (!gesture) return;
@@ -2773,8 +2776,8 @@ function endGesture(event, cancelled = false) {
     if (ended.kind === "pan" || ended.kind === "pinch") commitCamera();
   }
 }
-stage.addEventListener("pointerup", (event) => endGesture(event));
-stage.addEventListener("pointercancel", (event) => endGesture(event, true));
+window.addEventListener("pointerup", (event) => endGesture(event));
+window.addEventListener("pointercancel", (event) => endGesture(event, true));
 stage.addEventListener("click", (event) => {
   if (suppressClick) { event.stopPropagation(); event.preventDefault(); return; }
   if (!event.target.closest("#graph .node, #graph .edge") && selected) showOverview();

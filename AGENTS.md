@@ -241,3 +241,12 @@ Add new entries at the end: what happened, why, and what to do.
     commit waited for that raster (`WaitForCommitCompletion` in a trace).
     Move what changes during a gesture to a small layer (`#lift`) and leave
     the large one alone; look for long commits, not only script time.
+34. **The browser smoke test passed here and failed in CI because of fonts.**
+    CI's runner has other fonts (Liberation, DejaVu), so cards were wider and
+    a test drag ended over the legend. That exposed a real bug: the release
+    went to the legend, not the stage, and the drag never ended (pointer
+    capture on the stage does not hold once the entry moves onto `#lift`).
+    Pointer moves and releases are now heard on `window`. To reproduce CI's
+    layout, run the smoke test with one font family, e.g.
+    `FONTCONFIG_FILE=<file with <dir>/usr/share/fonts/truetype/dejavu</dir>>`,
+    and check text through tooltips rather than lines fitted to a width.
