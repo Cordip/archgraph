@@ -86,9 +86,14 @@ user:
   comment describes how the algorithm works and why it is written this way,
   as the Go runtime does.
 
-Open questions: whether the skill carries per-language rules (Rust,
-TypeScript, Python) or one set with examples in each, and whether a check
-(nesting depth, one-line `if`) backs the parts that a tool can measure.
+- Done: [skills/boring-code](../skills/boring-code/SKILL.md), one set of
+  rules with examples in Rust, TypeScript and Python, and a review
+  checklist. Formatters and a project's own written rules take precedence,
+  and untouched code is restyled only as a separate change. It is linked
+  into `~/.claude/skills/boring-code` on the development machine.
+- Next, if the rules prove useful: a check for what a tool can measure
+  (nesting depth, one-line `if`, function length), reported like
+  `archgraph unused`, as candidates rather than failures.
 
 ## 7. A skill for using ArchGraph
 

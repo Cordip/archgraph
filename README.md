@@ -987,7 +987,10 @@ and also how to find the architecture file in either mode, write rules and
 prove they can fail, read the results and point a person at the UI.
 `init --install-skill` copies it into a project; to use it from any
 directory, link it into the user's skills instead
-(`ln -s "$PWD/skills/archgraph" ~/.claude/skills/archgraph`).
+(`ln -s "$PWD/skills/archgraph" ~/.claude/skills/archgraph`). A second
+skill, [boring-code](skills/boring-code/SKILL.md), is about how the code
+itself reads (one shape for every function, shallow nesting, comments that
+say why) and is linked the same way; `init` does not install it.
 Markdown context and `--json` contain the same focus state, incoming/outgoing
 observed dependencies, rules, violations, concrete evidence and agent contract.
 
