@@ -852,6 +852,10 @@ def main():
             x, bottom, left, right, top = state["arrowAt"]
             assert left <= x <= right and abs(bottom - top) < 30, (mode, state)
             assert state["tagGap"] < 6, (mode, state)
+            # Paths that look alike are one path: the casings and hit paths
+            # of all six tails, the chevrons, and each colour's strand.
+            parts = trunk.evaluate("t => ['.trunk-casing', '.trunk-hit', '.trunk-chevron', '.trunk-strand'].map((s) => t.querySelectorAll(s).length)")
+            assert parts == [1, 1, 1, 6], (mode, parts)
             if mode != "curves":
                 assert not angles_ok(page, 45 if mode == "pcb" else 60), (mode, angles_ok(page, 45 if mode == "pcb" else 60))
                 first = page.evaluate(SEGMENTS)

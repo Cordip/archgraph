@@ -1962,29 +1962,33 @@ function drawTrunk(trunk, tags) {
   // they fade evenly.
   const body = svg("g", { class: "trunk-body" });
   const casings = svg("g", { class: "trunk-casings" }), strands = svg("g", { class: "trunk-strands" });
-  const arrow = svg("path", { class: "trunk-arrow" }), chevrons = svg("g", { class: "trunk-chevrons" });
+  const arrow = svg("path", { class: "trunk-arrow" }), chevrons = svg("path", { class: "trunk-chevron" });
   body.append(casings, strands, arrow, chevrons);
   // Lit for only some of its wires, the body dims and copies of their
   // strands show their own course through it.
   const overlay = svg("g", { class: "trunk-overlay" });
   group.append(body, overlay);
-  const casingPaths = [], strandPaths = [];
+  // A trunk has dozens of tails, and paths that look alike are one path: the
+  // casings (all under the strands), the hit paths, the chevrons, and each
+  // strand of the ribbon through all the tails that carry it.
+  const hit = svg("path", { class: "edge-hit trunk-hit" });
+  const casing = svg("path", { class: violations ? "edge-casing trunk-casing" : "edge-gap trunk-casing" });
+  casings.append(hit, casing);
+  const strandPaths = [], slotPaths = new Map();
   for (const [edge] of trunk.tails) {
-    const hit = svg("path", { class: "edge-hit trunk-hit" });
-    const casing = svg("path", { class: violations ? "edge-casing trunk-casing" : "edge-gap trunk-casing" });
-    casingPaths.push({ edge, hit, element: casing });
-    casings.append(hit, casing);
     for (const slot of ribbon.slots.get(edge)) {
-      const strand = ribbon.strands[slot];
-      const path = svg("path", { class: `trunk-strand${ribbon.wide ? " wide" : ""}${strand.className ? ` ${strand.className}` : ""}` });
-      strandPaths.push({ edge, slot, element: path });
-      strands.append(path);
+      if (!slotPaths.has(slot)) {
+        const strand = ribbon.strands[slot];
+        slotPaths.set(slot, svg("path", { class: `trunk-strand${ribbon.wide ? " wide" : ""}${strand.className ? ` ${strand.className}` : ""}` }));
+        strands.append(slotPaths.get(slot));
+      }
+      strandPaths.push({ edge, slot, element: slotPaths.get(slot) });
     }
   }
   // Chevrons run along the longest tail.
   let spine = null, spineLength = -1;
   for (const tail of trunk.tails.values()) { const length = tailLength(tail); if (length > spineLength) { spine = tail; spineLength = length; } }
-  const item = { trunk, element: group, body, ribbon, violations, casingPaths, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [],
+  const item = { trunk, element: group, body, ribbon, violations, hit, casing, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [],
     bounds: padBox(boxOf([...trunk.tails.values()].flatMap((tail) => tail.points || tail.curves.flat())), 60) };
   // The tag: the count and the target; zoomed far out only the count.
   const tag = svg("g", { class: "trunk-tag" });
@@ -2038,19 +2042,17 @@ function layoutTrunk(item, k) {
   const half = width / 2 + 2.5 * scale, length = Math.max(half * 2.5, 9 * scale);
   const offset = (slot) => (slot - (ribbon.strands.length - 1) / 2) * strandWidth;
   const trimmed = new Map([...trunk.tails].map(([edge, tail]) => [edge, trimTail(tail, length * 0.7)]));
-  const seen = new Set();
-  for (const { edge, hit, element } of item.casingPaths) {
-    const d = tailPath(trimmed.get(edge), 0);
-    // Tails share their last stretch: one casing per distinct course.
-    element.setAttribute("d", seen.has(d) ? "" : d);
-    hit.setAttribute("d", seen.has(d) ? "" : d);
-    seen.add(d);
-    // The casing's border keeps about 2.5 px (a gap 1 px) on screen.
-    element.style.strokeWidth = `${round(width + (item.violations ? Math.max(7, 5 / k) : Math.max(3, 2 / k)))}px`;
-    hit.style.strokeWidth = `${round(Math.max(width + 8 * scale, 16))}px`;
-  }
+  // Tails share their last stretch: one casing per distinct course.
+  const courses = [...new Set([...trunk.tails.keys()].map((edge) => tailPath(trimmed.get(edge), 0)))].join(" ");
+  item.casing.setAttribute("d", courses);
+  item.hit.setAttribute("d", courses);
+  // The casing's border keeps about 2.5 px (a gap 1 px) on screen.
+  item.casing.style.strokeWidth = `${round(width + (item.violations ? Math.max(7, 5 / k) : Math.max(3, 2 / k)))}px`;
+  item.hit.style.strokeWidth = `${round(Math.max(width + 8 * scale, 16))}px`;
   const paths = item.strandPaths.map(({ edge, slot }) => tailPath(trimmed.get(edge), offset(slot)));
-  item.strandPaths.forEach(({ element }, i) => { element.setAttribute("d", paths[i]); element.style.strokeWidth = `${round(strandWidth * 1.08)}px`; });
+  const joined = new Map();
+  item.strandPaths.forEach(({ element }, i) => { if (!joined.has(element)) joined.set(element, []); joined.get(element).push(paths[i]); });
+  for (const [element, list] of joined) { element.setAttribute("d", list.join(" ")); element.style.strokeWidth = `${round(strandWidth * 1.08)}px`; }
   item.paths = paths;
   const { tip, dir } = tailEnd(item.spine);
   const normal = { x: -dir.y, y: dir.x };
@@ -2081,7 +2083,7 @@ function layoutTrunk(item, k) {
       chevrons.push(`M ${round(here.x - u.x * size * 0.7 + m.x * size)} ${round(here.y - u.y * size * 0.7 + m.y * size)} L ${round(here.x + u.x * size * 0.3)} ${round(here.y + u.y * size * 0.3)} L ${round(here.x - u.x * size * 0.7 - m.x * size)} ${round(here.y - u.y * size * 0.7 - m.y * size)}`);
     }
   }
-  item.chevrons.replaceChildren(...chevrons.map((d) => svg("path", { d, class: "trunk-chevron" })));
+  item.chevrons.setAttribute("d", chevrons.join(" "));
   item.chevrons.style.strokeWidth = `${round(Math.max(1.4 * scale, strandWidth * 0.6))}px`;
   placeTag(item);
 }
