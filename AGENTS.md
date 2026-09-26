@@ -234,3 +234,10 @@ Add new entries at the end: what happened, why, and what to do.
     wheel run driven by it has no fixed rate, so it overstates the camera
     commits and understates frame times. To measure wheel zoom, dispatch
     `WheelEvent`s from the page at a fixed interval (16 ms).
+33. **A small change to a large layer can block the main thread on
+    raster.** Dragging a card on the expanded zammad level spent about
+    1.5 ms a move in script, yet ran at 9 moves a second: its long wires
+    invalidated much of the overscanned drawing layer, and each frame's
+    commit waited for that raster (`WaitForCommitCompletion` in a trace).
+    Move what changes during a gesture to a small layer (`#lift`) and leave
+    the large one alone; look for long commits, not only script time.

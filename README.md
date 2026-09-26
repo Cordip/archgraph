@@ -699,8 +699,11 @@ infinite canvas, drawn like a drawing sheet:
 
 - **Canvas.** Drag empty space (or anything while holding Space) to pan; use
   the wheel or a pinch to zoom at the pointer, a two-finger scroll to pan.
-  Drag an entry to move it: positions are remembered per focus in the
-  browser, and **Reset layout** puts everything back. **Fit**, **Selection**
+  Drag an entry to move it: while it moves, the drawing is dimmed and its
+  wires take a simple course (a straight line, or one elbow or a Z on a
+  board); the drop lays the level out again and Escape cancels the move.
+  Positions are remembered per focus in the browser, and **Reset layout**
+  puts everything back. **Fit**, **Selection**
   and the zoom percentage are in the bottom-right corner with a minimap.
   Double-click an architecture node (or Shift+Enter) to open it: the view
   dives into the card; going up zooms back out of it.
