@@ -324,6 +324,21 @@ def camera(page):
     return numbers[0] - box["width"] / 2, numbers[1] - box["height"] / 2, numbers[2]
 
 
+def canvas_place(page, selector):
+    """Where an element's centre is in the canvas, as fractions of its size."""
+    c = page.locator("#canvas").bounding_box()
+    b = page.locator(selector).bounding_box()
+    return {"fx": (b["x"] + b["width"] / 2 - c["x"]) / c["width"], "fy": (b["y"] + b["height"] / 2 - c["y"]) / c["height"],
+            "width": c["width"], "height": c["height"]}
+
+
+def canvas_centre(page):
+    """The drawing's point at the canvas's centre, in drawing units."""
+    x, y, k = camera(page)
+    box = page.locator("#canvas").bounding_box()
+    return (box["width"] / 2 - x) / k, (box["height"] / 2 - y) / k
+
+
 def main():
     checks = []
     with sync_playwright() as playwright:
@@ -1207,8 +1222,17 @@ def main():
         page.evaluate("loadFocus('app.web.ui')")
         page.wait_for_function("document.getElementById('focus-id').textContent === 'app.web.ui'")
         assert page.locator("#pane-secondary").is_hidden()
-        page.locator("#graph .node[data-id='file:web/src/App.tsx']").click()
+        app_card = "#graph .node[data-id='file:web/src/App.tsx']"
+        before = canvas_place(page, app_card)
+        page.locator(app_card).click()
         page.wait_for_selector("#pane-secondary[data-state='shown']")
+        # The inspector widens and the canvas narrows; the selected card
+        # keeps its place in the visible canvas instead of staying put
+        # against the canvas's left edge and drifting off centre.
+        page.wait_for_timeout(50)
+        after = canvas_place(page, app_card)
+        assert after["width"] < before["width"] - 100, (before, after)
+        assert abs(after["fx"] - before["fx"]) * after["width"] < 2 and abs(after["fy"] - before["fy"]) * after["height"] < 2, (before, after)
         assert page.locator("body.viewer-open").count() == 1 and page.locator(".pane-splitter").is_visible()
         assert page.locator("#pane-secondary .code-row").count() == 5
         assert page.locator("#pane-secondary .code-text").first.inner_text() == "import { main } from './main';"
@@ -1219,6 +1243,23 @@ def main():
         assert page.locator("#pane-secondary .t-string", has_text='"app"').count() == 1
         assert page.locator("#pane-secondary .t-comment").inner_text() == "// a comment"
         checks.append("selecting a file card opens its source with line numbers and light syntax colouring in the split right panel")
+        # Closing the viewer gives the width back, the card still in place.
+        page.locator("#viewer-close").click()
+        page.wait_for_timeout(50)
+        closed = canvas_place(page, app_card)
+        assert abs(closed["width"] - before["width"]) < 1 and abs(closed["fx"] - before["fx"]) * closed["width"] < 2, (before, closed)
+        # Without a selection the view's centre stays the centre, here when
+        # the node list is hidden and shown again.
+        page.evaluate("showOverview()")
+        centre = canvas_centre(page)
+        for _ in range(2):
+            page.locator("#sidebar-toggle").click()
+            page.wait_for_timeout(50)
+            moved = canvas_centre(page)
+            assert abs(moved[0] - centre[0]) < 2 and abs(moved[1] - centre[1]) < 2, (centre, moved)
+        checks.append("the canvas keeps the selected card, or the view's centre, in place when the viewer opens or closes or a panel is shown or hidden")
+        page.locator(app_card).click()
+        page.wait_for_selector("#pane-secondary[data-state='shown']")
 
         # The divider is a separator that remembers its position.
         page.locator(".pane-splitter").focus()

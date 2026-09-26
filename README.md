@@ -786,8 +786,11 @@ infinite canvas, drawn like a drawing sheet:
   line numbers and light colouring for Rust, TypeScript/JavaScript, Python,
   Ruby and CSS, its path with a copy button, and a divider between details
   and source whose position is remembered. The inspector widens while it is
-  open; closing it, or clearing the selection (Escape, **Back to this
-  level**), closes it. An evidence line scrolls to the lines it is about and
+  open, and the canvas keeps what it showed in place: the selected entry or
+  wire stays where it was in the visible canvas (the view's centre stays the
+  centre when nothing selected is in view), as it does when a side panel is
+  shown or hidden or the window is resized. Closing the viewer, or clearing
+  the selection (Escape, **Back to this level**), closes it. An evidence line scrolls to the lines it is about and
   marks them, with a note saying how they were found:
   - an import of a package (`provider.packages`) has its exact line;
   - a dependency between files has none, since GitNexus reports files and

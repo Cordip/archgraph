@@ -163,10 +163,10 @@ function revealDetails() {
   if (narrow.matches) togglePanel("inspector", true);
 }
 // The source viewer in the inspector's second pane (viewer.js). Opening it
-// widens the inspector, so the canvas is refitted to its new size.
+// widens the inspector; keepView holds what the canvas shows in place.
 const viewer = Viewer.create($("pane-secondary"), document.querySelector(".pane-splitter"), $("inspector"), {
   fetch: api,
-  layout: () => { if (scene) applyCamera(); },
+  layout: keepView,
 });
 // request: { path, lines?, note?, refersTo?, kind? } (see Viewer.open).
 function openSource(request) {
@@ -2687,15 +2687,19 @@ function centreOn(id, minK = 0.9) {
   const size = stageSize(), k = Math.max(camera.k, minK);
   animateTo({ k, x: size.width / 2 - (box.x + box.width / 2) * k, y: size.height / 2 - (box.y + box.height / 2) * k });
 }
+// The running camera animation's ends, which keepView moves with the view.
+let motion = null;
 function animateTo(target, duration = 320) {
   const token = ++cameraAnimation;
+  motion = null;
   if (reducedMotion.matches || !duration) { camera = { ...target }; applyCamera(); return Promise.resolve(); }
-  const start = { ...camera }, began = performance.now();
+  const ends = motion = { start: { ...camera }, target: { ...target } }, began = performance.now();
   return new Promise((resolve) => {
     const step = (now) => {
       if (token !== cameraAnimation) { resolve(); return; }
       const t = Math.min(1, (now - began) / duration);
       const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+      const { start, target } = ends;
       camera = { k: start.k * Math.pow(target.k / start.k, eased), x: start.x + (target.x - start.x) * eased, y: start.y + (target.y - start.y) * eased };
       applyCamera(t < 1);
       if (t < 1) requestAnimationFrame(step); else resolve();
@@ -2703,6 +2707,36 @@ function animateTo(target, duration = 320) {
     requestAnimationFrame(step);
   });
 }
+// The camera is measured from the canvas's top left corner, so a canvas
+// that changes size (the viewer widens the inspector, a panel is shown or
+// hidden, the window is resized) would leave the drawing pinned to that
+// corner: a selected card in the middle drifts off centre or out of view.
+// Instead the point the user is looking at keeps its place relative to the
+// canvas: the selection's centre if it is in view, else the view's centre.
+let canvasSize = null;
+function keepView() {
+  const rect = $("canvas").getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const before = canvasSize;
+  canvasSize = { width: rect.width, height: rect.height };
+  if (!scene || !before || (before.width === rect.width && before.height === rect.height)) return;
+  const anchor = viewAnchor(before);
+  const dx = anchor.fx * rect.width - anchor.x, dy = anchor.fy * rect.height - anchor.y;
+  camera = { ...camera, x: camera.x + dx, y: camera.y + dy };
+  if (motion) for (const end of [motion.start, motion.target]) { end.x += dx; end.y += dy; }
+  applyCamera();
+}
+function viewAnchor(size) {
+  const ids = !selected || !scene.positions ? [] : selected.kind === "node" ? [selected.id] : selected.kind === "edge" ? [selected.from, selected.to] : [];
+  const boxes = ids.map((id) => scene.positions.get(id)).filter(Boolean);
+  if (boxes.length) {
+    const box = boxOf(boxes.flatMap((b) => [b, { x: b.x + b.width, y: b.y + b.height }]));
+    const x = (box.x + box.width / 2) * camera.k + camera.x, y = (box.y + box.height / 2) * camera.k + camera.y;
+    if (x >= 0 && x <= size.width && y >= 0 && y <= size.height) return { x, y, fx: x / size.width, fy: y / size.height };
+  }
+  return { x: size.width / 2, y: size.height / 2, fx: 0.5, fy: 0.5 };
+}
+new ResizeObserver(keepView).observe($("canvas"));
 
 // ---------------------------------------------------------------- minimap
 function drawMinimap() {
@@ -3444,7 +3478,7 @@ $("notes-button").addEventListener("click", () => {
   $("diagnostics-section").scrollIntoView({ block: "start" });
 });
 narrow.addEventListener("change", () => { drawer = null; applyPanels(); });
-window.addEventListener("resize", () => { if (scene) applyCamera(); });
+window.addEventListener("resize", keepView);
 window.addEventListener("popstate", () => { if (meta) loadFocus(new URL(location.href).searchParams.get("focus") || meta.project.root, false); });
 applyPanels();
 (async () => {
