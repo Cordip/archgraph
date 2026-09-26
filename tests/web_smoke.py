@@ -228,6 +228,16 @@ def drag_checks(page, selector, key, board):
     assert 0 < calls.get("moves", 0) <= watch["frames"], watch
     assert not any(calls.get(name) for name in ("route", "layoutTrunk", "drawScene")), watch
     assert page.locator("#lift-graph " + selector).count() == 1 and page.locator("#graph " + selector).count() == 0
+    # Meanwhile its wires take simple courses: straight on curves, one
+    # elbow or a Z on a board.
+    courses = page.evaluate("""() => [...document.querySelectorAll('#lift-graph .edge-line:not(.edge-end)')].map((line) => {
+        const numbers = line.getAttribute('d').match(/-?[\\d.]+/g).map(Number), points = [];
+        for (let i = 0; i + 1 < numbers.length; i += 2) points.push([numbers[i], numbers[i + 1]]);
+        return [line.getAttribute('d').replace(/[^A-Z]/g, ''), points]; })""")
+    assert courses, "the dragged entry's wires are on the lift layer"
+    for commands, points in courses:
+        assert set(commands) <= {"M", "L"} and len(points) <= (4 if board else 2), (commands, points)
+        assert not board or all(abs(p[0] - q[0]) < 0.6 or abs(p[1] - q[1]) < 0.6 for p, q in zip(points, points[1:])), points
     page.evaluate("() => { window.__drag.calls = {}; }")
     page.mouse.up()
     page.wait_for_timeout(400)

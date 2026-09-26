@@ -2257,9 +2257,9 @@ function drawNode(node, box, first) {
 // drawing for the lift layer, which is small to repaint, and the drawing is
 // dimmed as a whole and left alone until the drop: moving across the large
 // drawing made the browser repaint much of it on every frame. The wires
-// follow as curves, with their colours and arrowheads, at most once a
-// frame; the drop lays the whole level out again, and Escape puts the
-// entry back.
+// follow as simple courses (a straight line on curves, a single elbow or Z
+// on a board, with their colours and arrowheads) at most once a frame; the
+// drop lays the whole level out again, and Escape puts the entry back.
 function startDrag(id) {
   const graph = $("graph"), lift = $("lift-graph");
   const card = scene.nodeEls.get(id);
@@ -2289,10 +2289,22 @@ function startDrag(id) {
   $("viewport").classList.add("entry-drag");
   scene.drag = { id, items, ghost, wasMoved: scene.moved.has(id), elements: new Set([card, ...items.map((item) => item.element)]) };
 }
-// A wire's course while its entry is dragged: a curve between the sides
-// facing each other.
+// A wire's simple course while its entry is dragged: from the sides
+// freeRoute picks, straight on curves, one elbow or a Z on a board.
 function dragRoute(item) {
-  return freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) });
+  const plan = freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) });
+  const s = plan.start, e = plan.end;
+  if (!scene.board) {
+    plan.curves = [[s, s, e, e]];
+    plan.d = `M ${round(s.x)} ${round(s.y)} L ${round(e.x)} ${round(e.y)}`;
+  } else {
+    const vertical = s.x === plan.curves[0][1].x;
+    const mid = vertical ? (s.y + e.y) / 2 : (s.x + e.x) / 2;
+    const points = vertical ? [s, { x: s.x, y: mid }, { x: e.x, y: mid }, e] : [s, { x: mid, y: s.y }, { x: mid, y: e.y }, e];
+    plan.points = Math.abs(s.x - e.x) < 0.5 || Math.abs(s.y - e.y) < 0.5 ? [s, e] : points;
+    plan.d = Board.pathData(plan.points);
+  }
+  return plan;
 }
 function dragTo(x, y) {
   const drag = scene.drag;
