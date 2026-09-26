@@ -915,7 +915,10 @@ def main():
         assert stroke(lifted(own) + " .edge-line", "strokeOpacity") == "1"
         assert page.locator("#lift-graph .edge-end[marker-end]").count() == 0
         page.locator("#graph .node[data-id='file:d/f07.ts']").hover()
-        assert stroke(lifted(dashed) + " .edge-line", "strokeDasharray") != "none"
+        lit_dash = page.locator(lifted(dashed) + " .edge-line:not(.edge-end)").first.evaluate("e => [getComputedStyle(e).strokeDasharray.split(/[ ,]+/).map(parseFloat), parseFloat(getComputedStyle(e).strokeWidth)]")
+        # Lit, a dashed net shows its pattern, in dashes as long as at rest
+        # relative to the heavier stroke.
+        assert min(lit_dash[0][::2]) >= 3 * lit_dash[1], lit_dash
         assert opacity("#stage") < 0.3
         page.mouse.move(0, 0)
         page.wait_for_timeout(300)

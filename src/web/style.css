@@ -409,10 +409,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .edge.bus > .edge-line { stroke: none; }
 /* Past six nets the hues repeat with a dash pattern: dashes of four
    lengths, never dots, which read as a faint grey line at a distance. */
-.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: calc(7px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
-.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: calc(14px * var(--ws, 1)) calc(4px * var(--ws, 1)); }
-.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: calc(11px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
-.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+/* A lit wire is drawn heavier, so its dashes grow with it. */
+:is(#graph, #lift-graph) .edge:is(.lit, .hover) { --dw: calc(var(--ws, 1) * 2.4); }
+.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: calc(7px * var(--dw, var(--ws, 1))) calc(3px * var(--dw, var(--ws, 1))); }
+.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: calc(14px * var(--dw, var(--ws, 1))) calc(4px * var(--dw, var(--ws, 1))); }
+.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: calc(11px * var(--dw, var(--ws, 1))) calc(3px * var(--dw, var(--ws, 1))) calc(4px * var(--dw, var(--ws, 1))) calc(3px * var(--dw, var(--ws, 1))); }
+.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: calc(4px * var(--dw, var(--ws, 1))) calc(3px * var(--dw, var(--ws, 1))); }
 /* A violation keeps the wire's own colour inside a red casing. */
 .edge-casing { fill: none; stroke: var(--red); stroke-width: calc(8px * var(--ws, 1)); stroke-linejoin: round; }
 .w3 .edge-casing { stroke-width: calc(9px * var(--ws, 1)); }
