@@ -476,7 +476,7 @@ function renderLift() {
     copies.set(item.tagGroup, { tag: item, partial });
   }
   const out = [];
-  for (const element of graph.children) {
+  for (const { element } of scene.cullItems || []) {
     if (!copies.has(element)) continue;
     const item = copies.get(element), copy = element.cloneNode(true);
     copy.classList.add(kind);
@@ -1843,6 +1843,16 @@ function drawScene() {
     graph.append(element);
     for (const fit of element.fits) fitText(...fit);
   });
+  // Everything that can leave the DOM when it is out of view, in drawing
+  // order (see cull).
+  scene.cullItems = [
+    ...scene.edgeEls.map((item) => ({ element: item.element, bounds: () => item.bounds })),
+    ...scene.trunkEls.map((item) => ({ element: item.element, bounds: () => item.bounds })),
+    ...scene.trunkEls.map((item) => ({ element: item.tagGroup, bounds: () => (item.end ? padBox({ x: item.end.tip.x, y: item.end.tip.y, width: 0, height: 0 }, TAG_REACH) : item.bounds) })),
+    ...scene.entries.map((node) => ({ element: scene.nodeEls.get(node.id), bounds: () => scene.positions.get(node.id) })),
+  ];
+  scene.cullDirty = true;
+  scene.pinned = new Set([scene.nodeEls.get(scene.entries[0] && scene.entries[0].id)].filter(Boolean));
   updateText();
   drawLegend();
   updateDisplayUI();
@@ -1911,7 +1921,7 @@ function drawEdge(plan) {
   const marker = plan.trunk ? null : `url(#${ids.end})`;
   // Without colours a highlighted wire turns to ink; with them it keeps its colour.
   const litMarker = marker && !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
-  scene.edgeEls.push({ edge, core: plan.core || null, trunk: plan.trunk || null, element: group, line, end, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
+  scene.edgeEls.push({ edge, bounds: planBounds(plan), core: plan.core || null, trunk: plan.trunk || null, element: group, line, end, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
   return group;
 }
 const violates = (edge) => edge.violation_rule_ids.length > 0;
@@ -1974,7 +1984,8 @@ function drawTrunk(trunk, tags) {
   // Chevrons run along the longest tail.
   let spine = null, spineLength = -1;
   for (const tail of trunk.tails.values()) { const length = tailLength(tail); if (length > spineLength) { spine = tail; spineLength = length; } }
-  const item = { trunk, element: group, body, ribbon, violations, casingPaths, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [] };
+  const item = { trunk, element: group, body, ribbon, violations, casingPaths, strandPaths, arrow, chevrons, overlay, spine, spineLength, shapes: [],
+    bounds: padBox(boxOf([...trunk.tails.values()].flatMap((tail) => tail.points || tail.curves.flat())), 60) };
   // The tag: the count and the target; zoomed far out only the count.
   const tag = svg("g", { class: "trunk-tag" });
   const variant = (className, content, strip) => {
@@ -2127,6 +2138,8 @@ function trunkScope(trunk) {
 function reshapeEdge(item, plan) {
   for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
   if (item.end) item.end.setAttribute("d", endStretch(plan));
+  item.bounds = planBounds(plan);
+  scene.cullDirty = true;
   if (item.strands.length) strandPaths(plan, item.count).forEach((d, i) => item.strands[i].setAttribute("d", d));
   const point = bezier(plan.curves[0], 0.5);
   item.label.setAttribute("x", round(point.x));
@@ -2229,6 +2242,7 @@ function moveEntry(id, x, y) {
   box.y = y;
   if (!scene.board) scene.moved.add(id);
   scene.nodeEls.get(id).setAttribute("transform", `translate(${round(x)}, ${round(y)})`);
+  scene.cullDirty = true;
   for (const item of scene.edgeEls) {
     if (item.edge.from !== id && item.edge.to !== id) continue;
     reshapeEdge(item, freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) }));
@@ -2314,6 +2328,74 @@ function settle(before, anchor) {
   requestAnimationFrame(step);
 }
 
+// ---------------------------------------------------------------- culling
+// Only what is in view (the canvas and its overscan, plus a margin) is in
+// the DOM: on a large level that is a fraction of its cards and wires, and
+// the browser styles, lays out, paints and hit-tests only those. Everything
+// else is detached, kept in scene.cullItems in drawing order, and comes back
+// when the camera is committed after a gesture. A grid of CULL_CELL-sized
+// buckets finds the items in view without looking at all of them.
+const CULL_CELL = 800, CULL_MARGIN = 0.15, TAG_REACH = 800;
+function boxOf(points) {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const p of points) { if (p.x < x0) x0 = p.x; if (p.y < y0) y0 = p.y; if (p.x > x1) x1 = p.x; if (p.y > y1) y1 = p.y; }
+  return points.length ? { x: x0, y: y0, width: x1 - x0, height: y1 - y0 } : { x: 0, y: 0, width: 0, height: 0 };
+}
+const padBox = (box, pad) => ({ x: box.x - pad, y: box.y - pad, width: box.width + 2 * pad, height: box.height + 2 * pad });
+// A wire's routed extent (for curves, the control points bound the curve),
+// with its label and room for casings and the arrowhead.
+function planBounds(plan) {
+  const points = plan.points ? [...plan.points] : plan.curves.flat();
+  if (plan.label) points.push(plan.label);
+  return padBox(boxOf(points), 40);
+}
+function buildCullIndex() {
+  const cells = new Map();
+  scene.cullItems.forEach((item, index) => {
+    const box = item.box = item.bounds();
+    for (let cx = Math.floor(box.x / CULL_CELL); cx <= Math.floor((box.x + box.width) / CULL_CELL); cx++) {
+      for (let cy = Math.floor(box.y / CULL_CELL); cy <= Math.floor((box.y + box.height) / CULL_CELL); cy++) {
+        const key = `${cx},${cy}`;
+        if (!cells.has(key)) cells.set(key, []);
+        cells.get(key).push(index);
+      }
+    }
+  });
+  scene.cullIndex = cells;
+  scene.cullDirty = false;
+}
+// The drawing area in world units: the canvas, its overscan and a margin.
+function viewBox() {
+  const { x: ox, y: oy, width, height } = overscan(), k = camera.k;
+  const mx = ox + width * CULL_MARGIN, my = oy + height * CULL_MARGIN;
+  return { x: (-mx - camera.x) / k, y: (-my - camera.y) / k, width: (width + 2 * mx) / k, height: (height + 2 * my) / k };
+}
+function cull() {
+  if (!scene || !scene.cullItems) return;
+  // Tags follow their trunk's arrowhead, placed when the trunks are laid out.
+  if (scene.cullDirty || scene.cullItems.some((item) => item.box === undefined)) buildCullIndex();
+  const view = viewBox(), wanted = new Set(), items = scene.cullItems;
+  for (let cx = Math.floor(view.x / CULL_CELL); cx <= Math.floor((view.x + view.width) / CULL_CELL); cx++) {
+    for (let cy = Math.floor(view.y / CULL_CELL); cy <= Math.floor((view.y + view.height) / CULL_CELL); cy++) {
+      for (const index of scene.cullIndex.get(`${cx},${cy}`) || []) {
+        const box = items[index].box;
+        if (box.x <= view.x + view.width && box.x + box.width >= view.x && box.y <= view.y + view.height && box.y + box.height >= view.y) wanted.add(index);
+      }
+    }
+  }
+  items.forEach((item, index) => { if (scene.pinned && scene.pinned.has(item.element)) wanted.add(index); });
+  const graph = $("graph");
+  items.forEach((item, index) => { if (!wanted.has(index) && item.element.parentNode) item.element.remove(); });
+  // Put the wanted ones back in drawing order: each before the next wanted.
+  let next = null;
+  for (let index = items.length - 1; index >= 0; index--) {
+    if (!wanted.has(index)) continue;
+    const element = items[index].element;
+    if (element.parentNode !== graph || element.nextSibling !== next) graph.insertBefore(element, next);
+    next = element;
+  }
+}
+
 // ---------------------------------------------------------------- camera
 // The canvas box: #stage fills it, but while a gesture runs #stage is moved
 // with #viewport (see applyCamera), so its own box is not the canvas.
@@ -2367,6 +2449,7 @@ function commitCamera() {
   $("stage").classList.toggle("coarse", camera.k < 0.45);
   drawn = { ...camera };
   updateText();
+  cull();
   if (hovered || selection) renderLift();
 }
 function setCamera(target) {
@@ -2598,6 +2681,9 @@ function moveTo(id) {
   for (const element of scene.nodeEls.values()) element.setAttribute("tabindex", "-1");
   const element = scene.nodeEls.get(id);
   element.setAttribute("tabindex", "0");
+  // The keyboard's entry stays in the DOM wherever the view is.
+  scene.pinned = new Set([element]);
+  if (!element.isConnected) cull();
   element.focus({ preventScroll: true });
   const box = scene.positions.get(id), size = stageSize();
   const x = box.x * camera.k + camera.x, y = box.y * camera.k + camera.y;

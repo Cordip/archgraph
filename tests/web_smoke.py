@@ -507,14 +507,36 @@ def main():
         assert page.locator("#graph .node.group").count() == 1
         assert page.locator("#graph .node.file").count() == 0
         page.locator("#graph .node.group").dblclick()
-        page.wait_for_function("document.querySelectorAll('#graph .node.file').length === 200")
+        page.wait_for_function("() => scene.entries.filter((n) => n.entry_kind === 'file').length === 200")
+        # Zoomed in, only the cards and wires in view (with the overscan) are
+        # in the DOM; the rest come back, in drawing order, as the view moves.
+        page.locator("#zoom-fit").click()
+        page.wait_for_timeout(600)
+        order = lambda: page.evaluate("[...document.getElementById('graph').children].map((e) => e.dataset.id || e.dataset.from || e.dataset.trunk || e.getAttribute('class')).join('|')")
+        assert page.locator("#graph .node.file").count() == 200
+        whole = order()
+        page.evaluate("(() => { const b = scene.positions.get(scene.entries.find((n) => n.entry_kind === 'file').id); setCamera({k: 2.5, x: 200 - b.x * 2.5, y: 300 - b.y * 2.5}); })()")
+        rendered = page.locator("#graph .node.file").count()
+        assert 0 < rendered < 60, rendered
+        # An entry out of view still takes the keyboard's focus, and a lifted
+        # copy shows it whole.
+        far = page.evaluate("scene.entries.filter((n) => n.entry_kind === 'file').at(-1).id")
+        assert page.evaluate(f"!scene.nodeEls.get('{far}').isConnected")
+        page.evaluate(f"hoverCanvas({{ nodes: new Set(['{far}']), edges: new Set() }}, {{ node: '{far}' }})")
+        assert page.locator(f"#lift-graph .node[data-id='{far}']").count() == 1
+        page.evaluate("hoverCanvas(null)")
+        page.evaluate(f"moveTo('{far}')")
+        assert page.evaluate(f"document.activeElement === scene.nodeEls.get('{far}') && scene.nodeEls.get('{far}').isConnected")
+        page.locator("#zoom-fit").click()
+        page.wait_for_timeout(600)
+        assert order() == whole
         assert page.locator("#collapse-groups").is_visible()
         page.locator("#collapse-groups").click()
         assert page.locator("#graph .node.group").count() == 1
         page.locator("#view-table").click()
         assert page.locator("#table-wrap .entry-row").count() == 200
         page.locator("#view-diagram").click()
-        checks.append("large levels as expandable directory groups; the table lists every file")
+        checks.append("large levels as expandable directory groups; the table lists every file; zoomed in, only the cards in view are in the DOM, and they come back in drawing order")
 
         # A matrix of 200 files scrolls in its own pane with sticky headers
         # and never scrolls the page sideways; double-clicking a group row
