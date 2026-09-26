@@ -877,9 +877,14 @@ def main():
         own = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f05.ts']"
         other = "#graph .edge:not(.trunk):not(.violating)[data-from='file:d/f01.ts']:not([data-to='file:d/f05.ts'])"
         assert page.evaluate("scene.edges.length") == 66 and page.locator("#graph.faint").count() == 1
-        # At rest the wires are dimmed, not below .35; violations and trunks
-        # stay at full strength.
-        assert 0.34 <= opacity(own) < 0.5 and 0.34 <= opacity(other) < 0.5, (opacity(own), opacity(other))
+        # At rest the other wires are lighter solid strokes: the wire, not its
+        # group, is lightened (so its arrowhead keeps full colour), and a
+        # dashed net is drawn solid until it is lit.
+        stroke = lambda selector, prop: page.locator(selector).first.evaluate(f"e => getComputedStyle(e).{prop}")
+        assert opacity(own) == 1 and opacity(other) == 1, (opacity(own), opacity(other))
+        assert 0.4 <= float(stroke(own + " .edge-line", "strokeOpacity")) <= 0.5, stroke(own + " .edge-line", "strokeOpacity")
+        dashed = "#graph .edge.c1:not(.trunk):not(.violating)"
+        assert stroke(dashed + " .edge-line", "strokeDasharray") == "none", stroke(dashed + " .edge-line", "strokeDasharray")
         assert opacity("#graph .edge.violating") == 1
         if page.locator("#graph .edge.trunk[data-trunk]").count():
             assert opacity("#graph .edge.trunk[data-trunk]") == 1 and opacity("#graph .edge.trunk .trunk-body") == 1
@@ -887,6 +892,9 @@ def main():
         page.wait_for_timeout(300)
         lifted = lambda selector: selector.replace("#graph", "#lift-graph")
         assert opacity(lifted(own)) == 1 and page.locator(lifted(other)).count() == 0, opacity(lifted(own))
+        assert stroke(lifted(own) + " .edge-line", "strokeOpacity") == "1"
+        page.locator("#graph .node[data-id='file:d/f07.ts']").hover()
+        assert stroke(lifted(dashed) + " .edge-line", "strokeDasharray") != "none"
         assert opacity("#stage") < 0.3
         page.mouse.move(0, 0)
         page.wait_for_timeout(300)

@@ -489,11 +489,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 :is(#graph, #lift-graph).quiet .edge-label, .edge.crowded .edge-label { display: none; }
 :is(#graph, #lift-graph).compact .edge-label { display: none; }
 :is(#graph, #lift-graph) .edge.hover .edge-label, :is(#graph, #lift-graph):not(.has-hover) .edge.lit .edge-label { display: inline; }
-/* Focus mode on a busy level: at rest, trunks and violations stay at full
-   strength and the other wires (branches included) are dimmed, not below
-   .35 so they still read zoomed out; pointing at or selecting something
-   brings its wires back. */
-:is(#graph, #lift-graph).faint:not(.has-hover):not(.has-selection) .edge:not(.trunk):not(.violating) { opacity: .35; }
+/* Focus mode on a busy level, at rest: trunks and violations keep full
+   strength; the other wires are drawn solid (their dash patterns come back
+   when they are lit) and lighter. Only the stroke is lightened, so their
+   arrowheads keep full colour and the direction reads without pointing.
+   (Dash patterns also cost a large part of the raster time.) */
+#graph.faint .edge:not(.trunk):not(.violating) :is(.edge-line, .edge-strand) { stroke-opacity: .45; stroke-dasharray: none; }
 :is(#graph, #lift-graph).violations-only .node:not(.violating), :is(#graph, #lift-graph).violations-only .edge:not(.violating) { opacity: .16; }
 :is(#graph, #lift-graph).idle-only .node:not(.idle), :is(#graph, #lift-graph).idle-only .edge { opacity: .16; }
 :is(#graph, #lift-graph).has-selection .node:not(.lit), :is(#graph, #lift-graph).has-selection .edge:not(.lit) { opacity: .18; }
