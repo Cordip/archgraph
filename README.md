@@ -906,11 +906,41 @@ GET /api/focus/{node_id}
 GET /api/violations
 GET /api/search?q=...
 GET /api/packages
+GET /api/source?path=<repository-relative path>[&if_hash=<hash>]
 ```
 
-There is no arbitrary Cypher endpoint, source-file endpoint, mutation endpoint,
-or authentication. Binding beyond loopback requires explicit `--host` and
-exposes architecture metadata to reachable clients. Dynamic browser text uses
+`/api/source` is the only endpoint that reads repository files, and its scope
+is narrow. It serves a file only when the architecture being served maps it
+to a node (files that are excluded, outside `source_roots`, unassigned or
+ambiguous are refused, whatever is on disk), and only as UTF-8 text. The
+checks run in this order, and a refusal carries an HTTP status, a `reason`
+code and a message:
+
+| Refused | Status | `reason` |
+| --- | --- | --- |
+| no path | 400 | `empty` |
+| an absolute path (`/…`, `\…`, `C:…`) | 400 | `absolute` |
+| a `..` segment | 400 | `parent` |
+| any other spelling than the IR's (`./`, `//`, backslashes) | 400 | `not_normalized` / `invalid` |
+| a file the IR does not map to a node | 403 | `unmapped` |
+| a file deleted since the compile | 404 | `missing` |
+| a file that is itself a symlink | 403 | `symlink` |
+| a path that resolves outside the canonical repository root | 403 | `outside` |
+| a directory or special file | 403 | `not_file` |
+| more than 1 MiB (1,048,576 bytes; at most one byte more is read) | 413 | `too_large` |
+| content with a NUL byte | 415 | `binary` |
+| content that is not valid UTF-8 | 415 | `not_utf8` |
+
+A served file comes with its node, `line_count`, `bytes` and `hash` (FNV-1a
+64 of the bytes, for telling a changed file from an unchanged one; not a
+security hash). With `if_hash` equal to the current hash the text is left
+out and `unchanged` is true. A server built from a fixed snapshot without a
+repository root (`server::router`) refuses every request (`disabled`).
+
+There is no arbitrary Cypher endpoint, no way to read an unmapped file, no
+mutation endpoint and no authentication. Binding beyond loopback requires
+explicit `--host` and exposes architecture metadata, and the source of every
+mapped file, to reachable clients. Dynamic browser text uses
 `textContent`; the server provides a restrictive Content Security Policy and no
 cross-origin access grants.
 

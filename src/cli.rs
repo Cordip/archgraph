@@ -574,9 +574,9 @@ pub async fn run(cli: Cli) -> Result<u8> {
             ..
         } => {
             if !host.is_loopback() {
-                eprintln!("warning: binding to {host} exposes read-only architecture metadata to reachable clients; there is no authentication");
+                eprintln!("warning: binding to {host} exposes read-only architecture metadata and the source of mapped files to reachable clients; there is no authentication");
             }
-            let live = server::Live::new(ir, refresh_seconds > 0);
+            let live = server::Live::with_sources(ir, refresh_seconds > 0, &root)?;
             if refresh_seconds > 0 {
                 let seen = Sources::read(&config_path, &provider).await;
                 tokio::spawn(watch_sources(

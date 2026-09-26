@@ -1,6 +1,7 @@
 use crate::{
     model::{ArchitectureIr, EVIDENCE_LIMIT},
     projection::{self, NodeSummary, Projection},
+    source,
 };
 use anyhow::{Context, Result};
 use axum::{
@@ -16,6 +17,7 @@ use serde_json::{json, Value};
 use std::{
     collections::BTreeSet,
     net::{IpAddr, SocketAddr},
+    path::{Path as FilePath, PathBuf},
     sync::{Arc, RwLock},
 };
 
@@ -25,6 +27,9 @@ use std::{
 pub struct Live {
     state: RwLock<LiveState>,
     watching: bool,
+    /// The canonical repository root, when the server may show the source
+    /// of mapped files (`GET /api/source`); `None` refuses every request.
+    source_root: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -44,7 +49,23 @@ impl Live {
                 refresh_error: None,
             }),
             watching,
+            source_root: None,
         })
+    }
+    /// Like `new`, and serves the source of mapped files under `root`.
+    pub fn with_sources(ir: ArchitectureIr, watching: bool, root: &FilePath) -> Result<Arc<Self>> {
+        let root = root
+            .canonicalize()
+            .with_context(|| format!("cannot resolve repository root {}", root.display()))?;
+        Ok(Arc::new(Self {
+            state: RwLock::new(LiveState {
+                ir: Arc::new(ir),
+                revision: 1,
+                refresh_error: None,
+            }),
+            watching,
+            source_root: Some(root),
+        }))
     }
     fn read(&self) -> std::sync::RwLockReadGuard<'_, LiveState> {
         self.state
@@ -94,6 +115,7 @@ pub fn live_router(live: Arc<Live>) -> Router {
         .route("/api/violations", get(violations))
         .route("/api/search", get(search))
         .route("/api/packages", get(packages))
+        .route("/api/source", get(source))
         .fallback(not_found)
         .layer(middleware::map_response(security_headers))
         .with_state(live)
@@ -237,11 +259,46 @@ async fn packages(State(live): State<Arc<Live>>) -> Json<Value> {
         .collect();
     Json(json!({"enabled": ir.packages.is_some(), "packages": packages}))
 }
+#[derive(Deserialize)]
+struct SourceQuery {
+    #[serde(default)]
+    path: String,
+    /// The hash of the text the viewer shows; the text is left out when it
+    /// still matches.
+    if_hash: Option<String>,
+}
+/// The source of one mapped file; see `source::read_mapped` for the scope.
+async fn source(
+    State(live): State<Arc<Live>>,
+    Query(query): Query<SourceQuery>,
+) -> std::result::Result<Json<source::SourceFile>, (StatusCode, Json<Value>)> {
+    let refused = |status: u16, reason: &str, message: String| {
+        (
+            StatusCode::from_u16(status).unwrap_or(StatusCode::FORBIDDEN),
+            Json(json!({"error": message, "reason": reason})),
+        )
+    };
+    let Some(root) = live.source_root.clone() else {
+        return Err(refused(
+            404,
+            "disabled",
+            "this server shows no source files; run archgraph serve to view mapped files".into(),
+        ));
+    };
+    let ir = live.current();
+    let read = tokio::task::spawn_blocking(move || {
+        source::read_mapped(&ir, &root, &query.path, query.if_hash.as_deref())
+    })
+    .await
+    .map_err(|error| refused(500, "internal", format!("reading the file failed: {error}")))?;
+    read.map(Json)
+        .map_err(|refusal| refused(refusal.status, refusal.reason, refusal.message))
+}
 async fn not_found() -> impl IntoResponse {
     (
         StatusCode::NOT_FOUND,
         Json(
-            json!({"error":"not found; this server exposes read-only architecture metadata, not Cypher or source files"}),
+            json!({"error":"not found; this server exposes read-only architecture metadata and the source of mapped files (/api/source), not Cypher"}),
         ),
     )
 }
