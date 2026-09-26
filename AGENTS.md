@@ -219,3 +219,18 @@ Add new entries at the end: what happened, why, and what to do.
     each wire group (`.999`, invisible) brought it back to about 3 ms, and
     `isolation: isolate` did not. Check `Layerize` in a trace after any
     change to how wires are dimmed or grouped.
+30. **`visibility: hidden` hit paths stopped Chromium from drawing.** With
+    the wires' hit paths hidden (to save painting) instead of transparent,
+    lifting a wire on the expanded zammad level left the canvas and parts
+    of the page blank, in every later frame. The DOM was correct, so only a
+    screenshot showed it. Keep hit paths `stroke: transparent`, and look at
+    a screenshot after changing how invisible paths are drawn.
+31. **Playwright scrolls a clipped container to reach an element.** A hover
+    or click on an element under a tool bar scrolled the `overflow: hidden`
+    canvas, moved the drawing and made a smoke check pass for the wrong
+    reason. The canvas uses `overflow: clip`, which cannot scroll; move the
+    camera so the target is clear of the tools instead.
+32. **Playwright's `mouse.wheel` waits for each event to be handled.** A
+    wheel run driven by it has no fixed rate, so it overstates the camera
+    commits and understates frame times. To measure wheel zoom, dispatch
+    `WheelEvent`s from the page at a fixed interval (16 ms).

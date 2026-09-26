@@ -828,6 +828,14 @@ px (a ribbon at most about 12 px), and arrowheads at least 9 px, so wires,
 their colours and their directions stay readable at 20%. The widths change
 in 10% steps of the zoom.
 
+**Large levels.** Only what is in view, and a margin around it, is in the
+drawing: cards, wires and trunks further away join it when the view settles
+after a pan or zoom, and search, the minimap, Fit and highlighting still
+reach them. The drawing extends half a canvas beyond each edge, so a long
+pan shows no blank strip. With focus mode on, the dimmed wires are drawn
+together as a few paths, one per colour and weight; pointing at one still
+lights it.
+
 **Text size.** Card titles and wire labels keep a readable size on screen:
 below 100% they grow as the view zooms out, up to what a card can hold, and
 are refitted so that long names never overflow. Below 60% a card shows only
