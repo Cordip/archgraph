@@ -494,6 +494,11 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 :is(#graph, #lift-graph).quiet .edge-label, .edge.crowded .edge-label { display: none; }
 :is(#graph, #lift-graph).compact .edge-label { display: none; }
 :is(#graph, #lift-graph) .edge.hover .edge-label, :is(#graph, #lift-graph):not(.has-hover) .edge.lit .edge-label { display: inline; }
+/* Each wire's group gets an (invisible) opacity of its own. Without it,
+   Chromium's layerization walks the drawing's paint chunks one by one on
+   every frame the page changes, even when only #lift changed: 80-110 ms a
+   frame on a level of 10,000 paths, against 3 ms with it. */
+#graph .edge { opacity: .999; }
 /* Focus mode on a busy level, at rest: trunks and violations keep full
    strength; the other wires are drawn solid (their dash patterns come back
    when they are lit) and lighter. Only the stroke is lightened, so their

@@ -881,11 +881,11 @@ def main():
         # group, is lightened (so its arrowhead keeps full colour), and a
         # dashed net is drawn solid until it is lit.
         stroke = lambda selector, prop: page.locator(selector).first.evaluate(f"e => getComputedStyle(e).{prop}")
-        assert opacity(own) == 1 and opacity(other) == 1, (opacity(own), opacity(other))
+        assert opacity(own) > 0.99 and opacity(other) > 0.99, (opacity(own), opacity(other))
         assert 0.4 <= float(stroke(own + " .edge-line", "strokeOpacity")) <= 0.5, stroke(own + " .edge-line", "strokeOpacity")
         dashed = "#graph .edge.c1:not(.trunk):not(.violating)"
         assert stroke(dashed + " .edge-line", "strokeDasharray") == "none", stroke(dashed + " .edge-line", "strokeDasharray")
-        assert opacity("#graph .edge.violating") == 1
+        assert opacity("#graph .edge.violating") > 0.99
         # Each arrowhead's wire ends in a solid stretch at full strength: the
         # arrowhead's length and about 12 px more on screen.
         ends = page.evaluate("""() => [...document.querySelectorAll('#graph .edge-line[marker-end]')].map((line) => {
@@ -907,7 +907,7 @@ def main():
         casing = page.evaluate("() => { const a = getComputedStyle(document.querySelector('#arrow-n0 path')); return [a.stroke, parseFloat(a.strokeWidth), a.paintOrder, getComputedStyle(document.getElementById('stage')).getPropertyValue('--sheet').trim()]; }")
         assert casing[1] >= 1 and casing[2].startswith("stroke"), casing
         if page.locator("#graph .edge.trunk[data-trunk]").count():
-            assert opacity("#graph .edge.trunk[data-trunk]") == 1 and opacity("#graph .edge.trunk .trunk-body") == 1
+            assert opacity("#graph .edge.trunk[data-trunk]") > 0.99 and opacity("#graph .edge.trunk .trunk-body") == 1
         page.locator("#graph .node[data-id='file:d/f05.ts']").hover()
         page.wait_for_timeout(300)
         lifted = lambda selector: selector.replace("#graph", "#lift-graph")
@@ -922,7 +922,7 @@ def main():
         assert opacity("#stage") == 1
         page.locator("#focus-mode").click()
         page.wait_for_timeout(300)
-        assert page.locator("#graph.faint").count() == 0 and opacity(other) == 1
+        assert page.locator("#graph.faint").count() == 0 and opacity(other) > 0.99
         assert page.locator("#focus-mode").get_attribute("aria-pressed") == "false"
         assert page.evaluate("JSON.parse(localStorage.getItem('archgraph.view.v1')).focus") is False
         page.locator("#focus-mode").click()
@@ -943,6 +943,9 @@ def main():
         page.mouse.move(0, 0)
         page.wait_for_timeout(100)
         assert page.evaluate("window.__mutations") == 0 and page.evaluate("window.__calls") == {"route": 0, "layoutTrunk": 0, "drawScene": 0}, (page.evaluate("window.__mutations"), page.evaluate("window.__calls"))
+        # Every wire group carries an opacity of its own (below 1): without
+        # one, each frame's layerization is 30 times slower on a large level.
+        assert page.evaluate("[...document.querySelectorAll('#graph .edge')].every((e) => parseFloat(getComputedStyle(e).opacity) < 1)")
         stage = page.locator("#stage").bounding_box()
         page.mouse.move(stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2)
         for _ in range(2):
