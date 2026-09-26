@@ -158,6 +158,13 @@ archgraph check <relevant-node>
 Always pass `--index-only`: without it GitNexus also writes its own agent
 files into the project.
 
+Before a refactoring of more than one step, run `archgraph snapshot` (saved
+in `.archgraph/snapshots/before.json`, never committed). `archgraph diff
+[node]` then reports what the work has changed so far: violation
+observations resolved and new, dependencies added and removed, and files
+added, removed or moved. Use it to report progress, and to catch a new
+dependency the refactoring introduced that no rule forbids yet.
+
 `archgraph check <relevant-node> --reindex` combines these operations and respects
 `GITNEXUS_BIN` / `provider.command`. It is incremental. After editing
 `package.json`, `tsconfig*.json` or workspace files, use `--reindex=full`:

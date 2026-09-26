@@ -55,7 +55,9 @@ From [ui-backlog.md](ui-backlog.md), in this order:
 - [x] 5.1 The code viewer in the split right panel (a violation or evidence
   line opens the source): done, with the read-only `GET /api/source`
   limited to mapped files (see "Human focus UI" in the README).
-- [ ] 5.2 `archgraph snapshot` with a live graph diff.
+- [ ] 5.2 `archgraph snapshot` with a live graph diff. The command,
+  `archgraph diff` and `GET /api/diff` are done (README, "Snapshots: what a
+  refactoring changed"); drawing the comparison on the canvas is next.
 - [ ] 5.3 Agent plan files drawn over the graph.
 
 ## 6. A skill for boring, readable code
