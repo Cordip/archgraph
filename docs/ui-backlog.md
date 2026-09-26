@@ -2,7 +2,8 @@
 
 Planned work on the web UI (`archgraph serve`) that is not built yet, in no
 fixed order. Each entry says what problem it solves; the design is open
-unless stated.
+unless stated. Built items leave this list: the code viewer in the split
+right panel is described under "Human focus UI" in the README.
 
 ## Merge files with identical dependency sets into one card
 
@@ -28,15 +29,6 @@ the zoom; the routing is expensive on large levels and a view that
 rearranges itself while zooming is hard to follow. Titles drawn over the
 cards regardless of their width would overlap their neighbours on dense
 levels. A good answer probably labels groups rather than cards.
-
-## Code viewer in a split right panel
-
-The inspector already reserves a second, stacked pane
-(`#pane-secondary` in `index.html`) for a file viewer: selecting a file or
-an evidence line would show the source around that line next to the
-details. This needs a read-only source endpoint limited to mapped files,
-which the server deliberately does not have today (see "Human focus UI" in
-the README), so the endpoint's scope and safety come first.
 
 ## `archgraph snapshot` with a live graph diff
 

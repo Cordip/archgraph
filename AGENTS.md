@@ -250,3 +250,14 @@ Add new entries at the end: what happened, why, and what to do.
     layout, run the smoke test with one font family, e.g.
     `FONTCONFIG_FILE=<file with <dir>/usr/share/fonts/truetype/dejavu</dir>>`,
     and check text through tooltips rather than lines fitted to a width.
+35. **A wide child of the inspector widened the whole page.** The code
+    viewer's rows are as wide as the longest line, and a grid's implicit
+    `auto` column grows to its content's min-content width, so the inspector
+    overflowed the window and pushed the sidebar off screen. Give a grid or
+    flex container that holds scrolling content `minmax(0, 1fr)` columns and
+    `min-width: 0`, and check at phone width that
+    `document.documentElement.scrollWidth` equals the viewport width.
+36. **`innerText` puts line breaks between flex items.** The viewer's title
+    is a directory and a file name in two spans of a flex row, and
+    Playwright's `inner_text()` returned them on two lines. Compare
+    `text_content()` for text split over flex or grid items.

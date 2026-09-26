@@ -749,6 +749,30 @@ infinite canvas, drawn like a drawing sheet:
   the selected entry, edge or violation with its evidence. A node's details
   list what it depends on and what uses it, each opening that dependency's
   evidence. Both side panels collapse; on narrow screens they are drawers.
+- **Source** opens below the details when a file is selected (a card, a
+  file in a list or the table) or an evidence line is clicked: the file with
+  line numbers and light colouring for Rust, TypeScript/JavaScript, Python,
+  Ruby and CSS, its path with a copy button, and a divider between details
+  and source whose position is remembered. The inspector widens while it is
+  open; closing it, or clearing the selection (Escape, **Back to this
+  level**), closes it. An evidence line scrolls to the lines it is about and
+  marks them, with a note saying how they were found:
+  - an import of a package (`provider.packages`) has its exact line;
+  - a dependency between files has none, since GitNexus reports files and
+    not lines, so the viewer searches the source file's text: first import
+    lines whose module path ends with the target's (`../domain/model`,
+    `domain.model`, `crate::domain::model`, a directory for its `index` or
+    `__init__`), otherwise lines naming the target's file name or its
+    CamelCase as a whole word (`ldap_source` or `LdapSource`, as Rails code
+    refers to a file). These are marked as found in the text; a `CALLS`
+    edge through a symbol with another name has no line to show, and the
+    note says so.
+
+  Only the rows in view are drawn, so a 12,000-line file opens in about
+  60 ms. With a live server an open file is reloaded with each new revision,
+  and marked stale, with a **Reload** button, when it changes on disk in
+  between. The viewer asks the server only for repository-relative paths
+  (see the endpoint's scope below) and shows its refusals.
 - **Table** lists the level's entries file by file, grouped by directory, with
   dependency counts, a filter and other orders.
 - **Matrix** is a dependency structure matrix of the level: one row and one
