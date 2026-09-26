@@ -886,6 +886,13 @@ def main():
         dashed = "#graph .edge.c1:not(.trunk):not(.violating)"
         assert stroke(dashed + " .edge-line", "strokeDasharray") == "none", stroke(dashed + " .edge-line", "strokeDasharray")
         assert opacity("#graph .edge.violating") == 1
+        # Each arrowhead's wire ends in a solid stretch at full strength: the
+        # arrowhead's length and about 12 px more on screen.
+        ends = page.evaluate("""() => [...document.querySelectorAll('#graph .edge-line[marker-end]')].map((line) => {
+            const end = line.parentNode.querySelector('.edge-end'), style = end && getComputedStyle(end);
+            return end ? [parseFloat(style.strokeDasharray) * camera.k, style.strokeOpacity, parseFloat(getComputedStyle(line).strokeOpacity)] : null; })""")
+        assert ends and all(end and end[0] >= 12 and end[1] == "1" for end in ends), ends[:5]
+        assert any(end[2] < 0.5 for end in ends), ends[:5]
         # Arrowheads are cased in the sheet's colour, so they read on the grid.
         casing = page.evaluate("() => { const a = getComputedStyle(document.querySelector('#arrow-n0 path')); return [a.stroke, parseFloat(a.strokeWidth), a.paintOrder, getComputedStyle(document.getElementById('stage')).getPropertyValue('--sheet').trim()]; }")
         assert casing[1] >= 1 and casing[2].startswith("stroke"), casing
@@ -896,6 +903,7 @@ def main():
         lifted = lambda selector: selector.replace("#graph", "#lift-graph")
         assert opacity(lifted(own)) == 1 and page.locator(lifted(other)).count() == 0, opacity(lifted(own))
         assert stroke(lifted(own) + " .edge-line", "strokeOpacity") == "1"
+        assert page.locator("#lift-graph .edge-end[marker-end]").count() == 0
         page.locator("#graph .node[data-id='file:d/f07.ts']").hover()
         assert stroke(lifted(dashed) + " .edge-line", "strokeDasharray") != "none"
         assert opacity("#stage") < 0.3

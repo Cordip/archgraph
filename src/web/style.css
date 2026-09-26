@@ -498,7 +498,9 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
    when they are lit) and lighter. Only the stroke is lightened, so their
    arrowheads keep full colour and the direction reads without pointing.
    (Dash patterns also cost a large part of the raster time.) */
-#graph.faint .edge:not(.trunk):not(.violating) :is(.edge-line, .edge-strand) { stroke-opacity: .45; stroke-dasharray: none; }
+#graph.faint .edge:not(.trunk):not(.violating) :is(.edge-line:not(.edge-end), .edge-strand) { stroke-opacity: .45; stroke-dasharray: none; }
+/* A wire's last stretch (endStretch) is solid whatever the wire's pattern. */
+:is(#graph, #lift-graph) .edge .edge-line.edge-end { stroke-dasharray: var(--end, 24px) 100000px; stroke-opacity: 1; }
 :is(#graph, #lift-graph).violations-only .node:not(.violating), :is(#graph, #lift-graph).violations-only .edge:not(.violating) { opacity: .16; }
 :is(#graph, #lift-graph).idle-only .node:not(.idle), :is(#graph, #lift-graph).idle-only .edge { opacity: .16; }
 :is(#graph, #lift-graph).has-selection .node:not(.lit), :is(#graph, #lift-graph).has-selection .edge:not(.lit) { opacity: .18; }

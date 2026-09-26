@@ -483,7 +483,7 @@ function renderLift() {
     if (hovered && pointed && element === scene.nodeEls.get(pointed)) copy.classList.add("pointed");
     copy.removeAttribute("tabindex");
     copy.removeAttribute("role");
-    if (item && item.line && item.marker) copy.querySelector(".edge-line").setAttribute("marker-end", item.litMarker);
+    if (item && item.line && item.marker) copy.querySelector(".edge-line:not(.edge-end)").setAttribute("marker-end", item.litMarker);
     if (item && (item.trunk || item.tag) && item.partial) copy.classList.add(`${kind}-partial`);
     // A trunk lit for only some of its wires shows their own strands over
     // its dimmed body.
@@ -1886,6 +1886,11 @@ function drawEdge(plan) {
   const line = svg("path", { d: plan.d, class: "edge-line" });
   if (!plan.trunk) line.setAttribute("marker-end", `url(#${ids.end})`);
   if (plan.points) line.setAttribute("marker-start", `url(#${ids.start})`);
+  // The last stretch before the arrowhead is solid and at full strength,
+  // under the wire itself, so the arrowhead visibly belongs to a wire even
+  // when the wire is dashed or lightened (see --end in updateWires).
+  const end = plan.trunk ? null : svg("path", { d: endStretch(plan), class: "edge-line edge-end" });
+  if (end) group.append(end);
   group.append(line);
   const strands = [];
   if (look.strands) {
@@ -1906,10 +1911,31 @@ function drawEdge(plan) {
   const marker = plan.trunk ? null : `url(#${ids.end})`;
   // Without colours a highlighted wire turns to ink; with them it keeps its colour.
   const litMarker = marker && !violating && (display.colour === "none" || look.strands) ? "url(#arrow-lit)" : marker;
-  scene.edgeEls.push({ edge, core: plan.core || null, trunk: plan.trunk || null, element: group, line, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
+  scene.edgeEls.push({ edge, core: plan.core || null, trunk: plan.trunk || null, element: group, line, end, hit, casing, gap, strands, label, marker, litMarker, violating, count: look.strands ? look.strands.length : 0 });
   return group;
 }
 const violates = (edge) => edge.violation_rule_ids.length > 0;
+// The last END_MAX units of a wire, drawn from its tip backwards: a dash
+// pattern (--end) then shows only the stretch next to the tip. END_MAX
+// covers the arrowhead and 12 px at the smallest zoom.
+const END_MAX = 300;
+function endStretch(plan) {
+  let points;
+  if (plan.points) points = plan.points;
+  else {
+    points = [plan.curves[0][0]];
+    for (const curve of plan.curves) for (let i = 1; i <= 32; i++) points.push(bezier(curve, i / 32));
+  }
+  const out = [points[points.length - 1]];
+  let left = END_MAX;
+  for (let i = points.length - 1; i > 0 && left > 0; i--) {
+    const p = points[i - 1], q = points[i], length = Math.hypot(q.x - p.x, q.y - p.y);
+    if (length >= left) { const t = left / length; out.push({ x: q.x + (p.x - q.x) * t, y: q.y + (p.y - q.y) * t }); break; }
+    out.push(p);
+    left -= length;
+  }
+  return Board.pathData(out);
+}
 // A trunk: a ribbon cable of strands (one per colour among its wires, see
 // ribbonOf) over a casing, an arrowhead as wide as the ribbon at the target,
 // chevrons along it pointing the way, and a tag beside the arrowhead with
@@ -2083,6 +2109,8 @@ function updateWires() {
   const scales = { wire: Math.min(12, Math.max(1, WIRE_MIN_PX / (1.3 * k))), strand: Math.min(12, Math.max(1, STRAND_MIN_PX / (Board.STRAND * k))), arrow: Math.min(12, Math.max(1, ARROW_MIN_PX / (11 * k))) };
   $("canvas").style.setProperty("--ws", String(Math.round(scales.wire * 100) / 100));
   $("canvas").style.setProperty("--ts", String(Math.round(scales.strand * 100) / 100));
+  // The solid end of a wire: under the arrowhead, then 12 px on screen.
+  $("canvas").style.setProperty("--end", `${round(11 * scales.arrow * 0.9 + 12 / k)}px`);
   for (const marker of document.querySelectorAll("#stage > defs > marker")) {
     if (!marker.dataset.width) { marker.dataset.width = marker.getAttribute("markerWidth"); marker.dataset.height = marker.getAttribute("markerHeight"); }
     marker.setAttribute("markerWidth", Math.round(Number(marker.dataset.width) * scales.arrow * 100) / 100);
@@ -2098,6 +2126,7 @@ function trunkScope(trunk) {
 // Puts an edge on a new course (a dragged entry's rubber band).
 function reshapeEdge(item, plan) {
   for (const path of [item.line, item.hit, item.casing, item.gap]) if (path) path.setAttribute("d", plan.d);
+  if (item.end) item.end.setAttribute("d", endStretch(plan));
   if (item.strands.length) strandPaths(plan, item.count).forEach((d, i) => item.strands[i].setAttribute("d", d));
   const point = bezier(plan.curves[0], 0.5);
   item.label.setAttribute("x", round(point.x));
