@@ -2072,9 +2072,9 @@ function placeTag(item) {
   }
 }
 // Wires keep a minimum width on screen (--ws scales their strokes) and
-// arrowheads a minimum size. Both change in steps of the zoom (10%), and
+// arrowheads a minimum size (11 px, their size at 100%). Both change in steps of the zoom (10%), and
 // each step lays the trunks out again.
-const WIRE_MIN_PX = 1.5, ARROW_MIN_PX = 9;
+const WIRE_MIN_PX = 1.5, ARROW_MIN_PX = 11;
 const zoomStep = (k) => Math.pow(1.1, Math.floor(Math.log(k) / Math.log(1.1) + 1e-9));
 function updateWires() {
   const k = zoomStep(camera.k), graph = $("graph");

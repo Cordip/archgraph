@@ -484,6 +484,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .arrow { fill: var(--line); }
 .arrow-error { fill: var(--red); }
 .arrow-lit { fill: var(--ink); }
+/* Arrowheads carry a thin casing of the sheet's colour, so they read on
+   the grid, on a card's border and over other wires. */
+#stage marker { overflow: visible; }
+.arrow, .arrow-error, .arrow-lit, .arrow-net { stroke: var(--sheet); stroke-width: 1.6; stroke-linejoin: round; paint-order: stroke; }
 .edge-label { font-size: calc(14px * var(--label-scale, 1)); fill: var(--ink-2); text-anchor: middle; paint-order: stroke; stroke: var(--sheet); stroke-width: calc(5px * var(--label-scale, 1)); stroke-linejoin: round; }
 .edge.violating .edge-label { fill: var(--red); font-weight: 600; }
 :is(#graph, #lift-graph).quiet .edge-label, .edge.crowded .edge-label { display: none; }

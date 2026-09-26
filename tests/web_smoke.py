@@ -833,7 +833,7 @@ def main():
                 marker: parseFloat(document.getElementById('arrow').getAttribute('markerWidth')) * camera.k,
                 arrow: (() => { const b = document.querySelector('#graph .trunk-arrow').getBoundingClientRect(); return Math.max(b.width, b.height); })(),
                 count: (() => { const t = document.querySelector('#graph [data-trunk-tag] .tag-short .tag-text'); return getComputedStyle(t).display !== 'none' && getComputedStyle(t.closest('.tag-short')).display !== 'none' ? t.getBoundingClientRect().height : 0; })() })""")
-            assert far["wire"] >= 1.45 and far["strand"] >= 1.95 and far["marker"] >= 8.5 and far["arrow"] >= 12 and far["count"] >= 11, (mode, far)
+            assert far["wire"] >= 1.45 and far["strand"] >= 1.95 and far["marker"] >= 10.5 and far["arrow"] >= 12 and far["count"] >= 11, (mode, far)
             page.locator("#zoom-fit").click()
             # Hovering the trunk lights its six wires and their entries.
             page.locator("#graph [data-trunk-tag] .trunk-tag").hover()
@@ -886,6 +886,9 @@ def main():
         dashed = "#graph .edge.c1:not(.trunk):not(.violating)"
         assert stroke(dashed + " .edge-line", "strokeDasharray") == "none", stroke(dashed + " .edge-line", "strokeDasharray")
         assert opacity("#graph .edge.violating") == 1
+        # Arrowheads are cased in the sheet's colour, so they read on the grid.
+        casing = page.evaluate("() => { const a = getComputedStyle(document.querySelector('#arrow-n0 path')); return [a.stroke, parseFloat(a.strokeWidth), a.paintOrder, getComputedStyle(document.getElementById('stage')).getPropertyValue('--sheet').trim()]; }")
+        assert casing[1] >= 1 and casing[2].startswith("stroke"), casing
         if page.locator("#graph .edge.trunk[data-trunk]").count():
             assert opacity("#graph .edge.trunk[data-trunk]") == 1 and opacity("#graph .edge.trunk .trunk-body") == 1
         page.locator("#graph .node[data-id='file:d/f05.ts']").hover()
