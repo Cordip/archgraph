@@ -43,6 +43,9 @@
   --n3: #b8568f;
   --n4: #2b8fcc;
   --n5: #8a7c00;
+  /* Revisions since a snapshot: a teal no wire colour and no status uses. */
+  --rev: #00717a;
+  --rev-soft: #dcf1f1;
   --side-w: 272px;
   --insp-w: var(--insp-details, 360px);
 }
@@ -81,6 +84,8 @@
     --n3: #e48cc2;
     --n4: #56ccf2;
     --n5: #eee04a;
+    --rev: #54d2d6;
+    --rev-soft: #0d3137;
   }
 }
 * { box-sizing: border-box; }
@@ -517,7 +522,7 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
    when they are lit) and lighter. Only the stroke is lightened, so their
    arrowheads keep full colour and the direction reads without pointing.
    (Dash patterns also cost a large part of the raster time.) */
-#graph.faint .edge:not(.trunk):not(.violating) :is(.edge-line:not(.edge-end), .edge-strand) { stroke-opacity: .45; stroke-dasharray: none; }
+#graph.faint .edge:not(.trunk):not(.violating):not(.rev) :is(.edge-line:not(.edge-end), .edge-strand) { stroke-opacity: .45; stroke-dasharray: none; }
 /* A wire's last stretch (endStretch) is solid whatever the wire's pattern. */
 :is(#graph, #lift-graph) .edge .edge-line.edge-end { stroke-dasharray: var(--end, 24px) 100000px; stroke-opacity: 1; }
 :is(#graph, #lift-graph).violations-only .node:not(.violating), :is(#graph, #lift-graph).violations-only .edge:not(.violating) { opacity: .16; }
@@ -525,6 +530,64 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 :is(#graph, #lift-graph).has-selection .node:not(.lit), :is(#graph, #lift-graph).has-selection .edge:not(.lit) { opacity: .18; }
 :is(#graph, #lift-graph).has-hover .node:not(.hover), :is(#graph, #lift-graph).has-hover .edge:not(.hover) { opacity: .14; }
 :is(#graph, #lift-graph).has-hover .node.hover, :is(#graph, #lift-graph).has-hover .edge.hover { opacity: 1; }
+
+/* Comparing with a snapshot, drawn like revisions on a sheet: a changed
+   entry or wire carries a tag (+ new, ↦ moved, ▲ or ▼ a count) in the
+   revision ink, and a new wire runs between two thin rails of it. What is
+   gone is drawn in grey phantom lines (long dash, two short): a gone wire
+   ends in an open arrowhead, a gone entry is a hatched ghost card. Tags
+   scale with the zoom like a trunk's tag. */
+.rev-tag { pointer-events: none; }
+.rev-scale { transform: scale(var(--tag-scale, 1)); }
+.rev-plate { fill: var(--rev-soft); stroke: var(--rev); stroke-width: 1.3; }
+.rev-text { font-size: 12px; font-weight: 600; fill: var(--rev); text-anchor: middle; }
+.rev-glyph { font-weight: 700; }
+:is(.ghost, .ghost-card) .rev-plate { fill: var(--sheet); stroke: var(--ink-3); stroke-dasharray: 3 2; }
+:is(.ghost, .ghost-card) .rev-text { fill: var(--ink-2); }
+.node.rev-new .box { stroke: var(--rev); stroke-width: 2.4; }
+.rev-casing { fill: none; stroke: var(--rev); stroke-width: calc(10px * var(--ws, 1)); stroke-linejoin: round; }
+.rev-gap { fill: none; stroke: var(--sheet); stroke-width: calc(6px * var(--ws, 1)); stroke-linejoin: round; }
+.w4 .rev-casing { stroke-width: calc(11px * var(--ws, 1)); }
+.tag-rev { fill: var(--rev); }
+.ghost-line { fill: none; stroke: var(--line); stroke-width: calc(1.6px * var(--ws, 1));
+  stroke-dasharray: calc(14px * var(--ws, 1)) calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(4px * var(--ws, 1)); }
+.arrow-ghost { fill: none; stroke: var(--line); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ghost-card { cursor: pointer; }
+.ghost-back { fill: var(--sheet); }
+.ghost-box { fill: url(#ghost-hatch); stroke: var(--ink-3); stroke-width: 1.3; stroke-dasharray: 14 4 3 4 3 4; }
+.ghost-hatch { stroke: var(--rule); stroke-width: 1.2; }
+.ghost-card .node-title { fill: var(--ink-2); }
+.ghost-note { font-style: italic; }
+:is(#graph, #lift-graph).changes-only :is(.node, .edge):not(.rev) { opacity: .16; }
+.mm-ghost { fill: none; stroke: var(--ink-3); stroke-width: 6; stroke-dasharray: 24 10; }
+/* The Compare control, its popover and its part of the legend. */
+#compare-button { display: inline-flex; align-items: center; gap: 6px; }
+#compare-button svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; }
+#compare-button.active { color: var(--rev); font-weight: 600; }
+#compare-button.active svg { fill: var(--rev-soft); }
+#compare-count { background: var(--rev); }
+#compare-count.warn { background: var(--amber); }
+#compare-panel { position: absolute; top: 54px; left: 0; }
+.compare-panel h2 { margin: 0 0 8px; font-size: 16px; }
+.compare-panel fieldset { margin: 0 0 6px; }
+.popover label.compare-option { align-items: flex-start; min-height: 0; padding: 5px 0; }
+.compare-option input[type="radio"] { flex: none; width: 16px; height: 16px; margin: 2px 0 0; accent-color: var(--rev); }
+.compare-option-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.35; }
+.compare-option-title { font-weight: 600; overflow-wrap: anywhere; }
+.compare-option-sub { font: 12.5px var(--font-code); color: var(--ink-3); }
+.compare-panel input[type="checkbox"] { accent-color: var(--rev); }
+.compare-panel label:has(input:disabled) { color: var(--ink-3); cursor: default; }
+.compare-note p { margin: 10px 0 0; font-size: 13.5px; }
+.compare-note code { white-space: nowrap; }
+.compare-error { padding: 6px 10px; color: var(--ink); background: var(--red-soft); border-left: 3px solid var(--red); overflow-wrap: anywhere; }
+.compare-warning { padding: 6px 10px; color: var(--ink); background: var(--amber-soft); border-left: 3px solid var(--amber); }
+.legend-subhead { margin: 8px 12px 2px; padding-top: 6px; font: 600 13px var(--font-tech); color: var(--ink-2); border-top: 1px solid var(--rule); }
+.legend-notice.rev { color: var(--ink); background: var(--rev-soft); border-color: var(--rev); }
+.legend-empty { margin: 2px 12px 4px; font-size: 12.5px; color: var(--ink-3); }
+.swatch .rev-casing { stroke-width: 9; }
+.swatch .rev-gap { stroke-width: 5; }
+.rev-swatch .rev-text { font-size: 10px; }
+.swatch .ghost-line { stroke-width: 1.8; stroke-dasharray: 8 2.5 2 2.5 2 2.5; }
 
 /* Inspector: two stacked panes; the second is reserved for a file viewer. */
 .inspector { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); min-width: 0; min-height: 0; background: var(--sheet); border-left: 1.5px solid var(--frame); }
@@ -653,7 +716,7 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
   .notes-count::before { content: "⚠ "; }
   .view-switch button { padding: 4px 10px; }
   .search { width: 100%; }
-  #filters-panel { top: 104px; }
+  #filters-panel, #compare-panel { top: 104px; }
   .minimap { display: none; }
   .legend { width: auto; max-height: 30vh; }
   .tools-bottom { left: 12px; align-items: stretch; }
@@ -664,6 +727,36 @@ button.secondary:hover { color: var(--pencil); border-color: var(--pencil); }
   .entries .num { width: auto; padding: 0 8px; }
   .entries .usage-col { width: auto; }
 }
+
+/* The level's details while comparing: what changed since the snapshot. */
+.compare-section { margin: 18px 0 8px; padding: 0 0 4px 12px; border-left: 3px solid var(--rev); }
+#details .compare-section h3 { margin-top: 0; }
+#details h4 { margin: 16px 0 6px; font: 600 14.5px var(--font-tech); }
+.compare-counts { display: grid; gap: 6px; margin: 10px 0; }
+.compare-count { display: grid; grid-template-columns: minmax(0, 8.5em) minmax(0, 1fr); gap: 2px 10px; align-items: baseline; }
+.compare-count dt { font-size: 13px; color: var(--ink-3); }
+.compare-count dd { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0; }
+.rev-chip { display: inline-flex; align-items: baseline; gap: 4px; padding: 0 8px; font-size: 13px; border: 1px solid; border-radius: 999px; }
+.rev-chip .rev-glyph { font-weight: 700; }
+.rev-chip.new, .rev-chip.changed { color: var(--rev); background: var(--rev-soft); }
+.rev-chip.gone { color: var(--ink-2); border-style: dashed; }
+.rev-chip.alert { color: var(--red); background: var(--red-soft); }
+.rev-chip.resolved { color: var(--ok); }
+.rev-note { margin: 10px 0; padding: 7px 11px; color: var(--ink); background: var(--rev-soft); border-left: 3px solid var(--rev); }
+#details .rev-note p { margin: 0; }
+#details .rev-note p + p { margin-top: 3px; }
+.rev-note .rev-glyph { margin-right: 8px; font-weight: 700; color: var(--rev); }
+.rev-note.gone { background: var(--page); border-left: 3px dashed var(--ink-3); }
+.rev-note.gone .rev-glyph { color: var(--ink-2); }
+.overview-violation.resolved { border-left-color: var(--ok); }
+.overview-violation.resolved .violation-rule { color: var(--ok); }
+.overview-violation:disabled, .dependency:disabled { color: inherit; cursor: default; }
+.dependency.gone .dependency-name { color: var(--ink-2); }
+.file-changes { margin: 4px 0; }
+.file-changes summary { font-size: 14px; cursor: pointer; }
+.file-change { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 10px; padding: 2px 0; }
+.file-change-note { font: 12.5px var(--font-code); color: var(--ink-3); overflow-wrap: anywhere; }
+.gone-path { color: var(--ink-3); text-decoration: line-through; }
 
 /* Package details: importing files grouped by node */
 .package-summary { color: var(--ink-2); }

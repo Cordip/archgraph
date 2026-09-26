@@ -30,13 +30,6 @@ rearranges itself while zooming is hard to follow. Titles drawn over the
 cards regardless of their width would overlap their neighbours on dense
 levels. A good answer probably labels groups rather than cards.
 
-## `archgraph snapshot` with a live graph diff
-
-A command that saves the compiled graph of the current revision, and a UI
-mode that draws the live graph against a saved snapshot: entries and wires
-added, removed or changed since then, and violations that appeared or went
-away. It would show what a refactoring changed while it is in progress.
-
 ## Agent plan files drawn over the graph
 
 A coding agent's plan (a file listing the moves, splits and dependency cuts

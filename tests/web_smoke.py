@@ -149,6 +149,54 @@ SOURCES = {"src/api/a.rs": API_SOURCE,
            "app/views/cards/show.html.erb": "<h1 class=\"title\"><%= @card.title %></h1>\n<% if @card.done? %>\n  <p>Done</p>\n<% end %>\n"
                                             "<%# a note for the template %>\n<a href=\"<%= card_path(@card) %>\">Open</a>\n<%\n"
                                             "  total = @card.items.sum(:price) # in cents\n%>\n"}
+# Snapshots (GET /api/snapshots) and what changed since `before`, level by
+# level (GET /api/diff/{node}), in the live levels' entry IDs.
+SNAPSHOTS = {"enabled": True, "snapshots": [{"name": "before", "commit": "5b29b17c0ffee"}, {"name": "old.2", "commit": None}]}
+
+
+def level_diff(focus, **changes):
+    empty = {"files_added": [], "files_removed": [], "files_moved": [], "files_reassigned": [],
+             "dependencies_added": [], "dependencies_removed": [], "violations_appeared": [], "violations_resolved": []}
+    diff = {"snapshot": "before", "commit": "5b29b17c0ffee", "focus": focus, "focus_existed": True,
+            "entries_added": [], "entries_removed": [], "entries_moved": [], "entries_resized": [],
+            "edges_added": [], "edges_removed": [], "edges_changed": [], "violations_appeared": [], "violations_resolved": [],
+            "summary": {**empty, "snapshot": "before", "commit": "5b29b17c0ffee", "scope": focus}, "revision": 1, "warning": None}
+    summary = changes.pop("summary", {})
+    diff.update(changes)
+    diff["summary"].update(summary)
+    return diff
+
+
+def diff_edge(source, target, kind="IMPORTS", origin="observed", before=None, after=None):
+    item = {"from": source, "to": target, "kind": kind, "origin": origin}
+    if before is not None:
+        item.update(count_before=before, count_after=after)
+    return item
+
+
+DIFFS = {
+    # The external service is new, with its (manual) wire; the API grew by a
+    # file; API → Domain gained CALLS and IMPORTS grew from 10 to 25; the
+    # Legacy node is gone, with its wire into Domain and one from Domain
+    # back to the API.
+    "app": level_diff("app", entries_added=["node:external.service"], entries_resized=[{"id": "node:app.api", "file_count_before": 1, "file_count_after": 2}],
+                      entries_removed=[{"id": "node:app.legacy", "title": "Legacy", "entry_kind": "architecture", "file_path": None, "architecture_id": "app.legacy", "outside_focus": False}],
+                      edges_added=[diff_edge("node:app.api", "node:app.domain", "CALLS"), diff_edge("node:app.api", "node:external.service", "http", "manual")],
+                      edges_changed=[diff_edge("node:app.api", "node:app.domain", before=10, after=25)],
+                      edges_removed=[diff_edge("node:app.legacy", "node:app.domain", before=7, after=0), diff_edge("node:app.domain", "node:app.api", "CALLS", before=3, after=0)],
+                      violations_appeared=[{"rule_id": "deny-api-domain", "from": "app.api", "to": "app.domain", "edge_kind": "IMPORTS", "nodes": []}],
+                      violations_resolved=[{"rule_id": "legacy-is-frozen", "from": "app.legacy", "to": "app.domain", "edge_kind": "IMPORTS", "nodes": []}],
+                      summary={"files_moved": [{"from": "src/domain/old_a.rs", "to": "src/domain/a.rs", "node_before": "app.domain", "node_after": "app.domain"}],
+                               "files_added": [{"path": "src/api/a.rs", "node": "app.api"}],
+                               "files_removed": [{"path": "src/legacy/x.rs", "node": "app.legacy"}]}),
+    # A file renamed since the snapshot keeps its identity.
+    "app.domain": level_diff("app.domain", entries_moved=[{"from": "file:src/domain/old_a.rs", "to": "file:src/domain/a.rs"}],
+                             entries_added=["file:src/domain/b.rs"]),
+    # A level the snapshot did not have: everything on it is new.
+    "app.web": level_diff("app.web", focus_existed=False, entries_added=["node:app.web.build", "node:app.web.old", "node:app.web.ui"]),
+    # Any other level: nothing changed.
+    "": level_diff(""),
+}
 META = {"project": {"name": "Browser fixture", "root": "app"}, "provider": {"provider": "fixture"}, "stats": {},
         "schema_version": 1, "evidence_notice": NOTICE, "diagnostics": ["Test-only coverage warning"], "read_only": True}
 
@@ -360,7 +408,8 @@ def main():
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.route("https://archgraph.invalid/**", lambda route: route.fulfill(body="<!doctype html><title>fixture</title>", content_type="text/html"))
         page.goto("https://archgraph.invalid/")
-        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION], "packages": PACKAGES, "sources": SOURCES}
+        mocked = {"meta": META, "projections": PROJECTIONS, "nodes": list(NODES.values()), "violations": [VIOLATION], "packages": PACKAGES, "sources": SOURCES,
+                  "snapshots": SNAPSHOTS, "diffs": DIFFS}
         index = (ROOT / "src/web/index.html").read_text()
         index = re.sub(r'<script[^>]*>.*?</script>', '', index, flags=re.S)
         index = re.sub(r'<link[^>]*rel="stylesheet"[^>]*>', '', index)
@@ -396,6 +445,17 @@ def main():
                     payload = {path, node: 'app.fixture', line_count: text.split('\n').length - 1, bytes: text.length, hash, unchanged};
                     if (!unchanged) payload.text = text;
                 }
+                else if (url.pathname === '/api/snapshots') payload = fixture.snapshots;
+                else if (url.pathname.startsWith('/api/diff/')) {
+                    // Like the server: a snapshot that is not saved is refused.
+                    window.__diffFetches = (window.__diffFetches || 0) + 1;
+                    const name = url.searchParams.get('snapshot') || 'before';
+                    if (!fixture.snapshots.snapshots.some((item) => item.name === name)) return new Response(JSON.stringify({error: `no snapshot named \`${name}\`; take one with \`archgraph snapshot --name ${name}\``, reason: 'missing'}), {status: 404, headers: {'Content-Type': 'application/json'}});
+                    const focus = decodeURIComponent(url.pathname.slice('/api/diff/'.length));
+                    // Levels without changes of their own compare as unchanged.
+                    const diff = fixture.diffs[focus] || (fixture.projections[focus] ? {...fixture.diffs[''], focus} : null);
+                    payload = diff && {...diff, snapshot: name};
+                }
                 else if (url.pathname === '/api/search') {
                     const q = (url.searchParams.get('q') || '').toLowerCase();
                     payload = fixture.nodes.filter(n => n.id.toLowerCase().includes(q) || n.title.toLowerCase().includes(q));
@@ -426,6 +486,13 @@ def main():
         assert "This level" in page.locator("#details").inner_text()
         assert NOTICE in page.locator("#evidence-notice").inner_text()
         checks.append("root projection, directed arrows, merged relation kinds, external/manual entries, violation markers, level overview")
+        # Comparing with a snapshot is off by default: nothing is asked for
+        # and nothing extra is drawn or listed.
+        assert page.evaluate("window.__diffFetches || 0") == 0
+        assert page.locator("#graph .rev, #graph .ghost-card, #graph .edge.ghost, #legend .legend-subhead, #compare-section").count() == 0
+        assert page.locator("#compare-label").inner_text() == "Compare" and page.locator("#compare-count").is_hidden()
+        assert "compare" not in page.evaluate("location.search")
+        checks.append("comparing with a snapshot is off by default: no diff is fetched and nothing extra is drawn")
 
         page.locator("#graph .edge-label", has_text="2 kinds").click()
         assert "src/api/a.rs" in page.locator("#details").inner_text()
@@ -1465,6 +1532,140 @@ def main():
         page.set_viewport_size({"width": 1440, "height": 1000})
         page.wait_for_timeout(100)
         checks.append("at phone width the right panel is a drawer without a resize edge and the page never scrolls sideways")
+
+        # Comparing with a snapshot: the Compare control lists the saved
+        # snapshots; choosing one draws the level's changes as revisions.
+        def click(selector):
+            page.evaluate("(s) => document.querySelector(s).dispatchEvent(new MouseEvent('click', { bubbles: true }))", selector)
+        def tag(selector):
+            return page.locator(selector + " > .rev-tag .rev-text").text_content()
+        page.evaluate("loadFocus('app')")
+        page.wait_for_function("document.getElementById('focus-id').textContent === 'app'")
+        page.locator("#compare-button").click()
+        page.wait_for_selector("#compare-list input[value='before']")
+        assert "commit 5b29b17" in page.locator("#compare-list").inner_text()
+        assert page.locator("#compare-list input[value='']").is_checked() and page.locator("#compare-only").is_disabled()
+        page.locator("#compare-list input[value='before']").check()
+        page.wait_for_selector("#graph .ghost-card")
+        assert "compare=before" in page.evaluate("location.search")
+        assert json.loads(page.evaluate("localStorage.getItem('archgraph.compare.v1:Browser fixture')"))["name"] == "before"
+        assert page.locator("#compare-label").inner_text() == "Since before" and page.locator("#compare-count").inner_text() == "8"
+        page.keyboard.press("Escape")
+        assert page.locator("#compare-panel").is_hidden()
+        # Entries: new, and another file count; each tag has a glyph, not only a colour.
+        api_card, service_card = "#graph .node[data-id='node:app.api']", "#graph .node[data-id='node:external.service']"
+        assert page.locator(api_card + ".rev-resized").count() == 1 and tag(api_card) == "▲ 1→2 files"
+        assert page.locator(service_card + ".rev-new").count() == 1 and tag(service_card) == "+ new"
+        assert page.locator("#graph .node[data-id='node:app.domain'].rev").count() == 0
+        # Wires: a new one between rails of the revision ink, one whose count
+        # changed (IMPORTS 10 → 25 and CALLS new: 10 → 50 in all).
+        changed_wire = "#graph .edge[data-from='node:app.api'][data-to='node:app.domain']"
+        new_wire = "#graph .edge[data-from='node:app.api'][data-to='node:external.service']"
+        assert page.locator(changed_wire + ".rev-changed").count() == 1 and tag(changed_wire) == "▲ 10→50"
+        assert page.locator(new_wire + ".rev-new .rev-casing").count() == 1 and tag(new_wire) == "+ new"
+        # Gone: a ghost card for Legacy in a band below the level, and phantom
+        # lines (dashed, open arrowhead) for the gone wires, also into the ghost.
+        ghost = page.locator("#graph .ghost-card[data-ghost='node:app.legacy']")
+        assert ghost.count() == 1 and "gone since before" in ghost.text_content() and tag("#graph .ghost-card") == "− gone"
+        ghost_y = page.evaluate("scene.ghostBoxes.get('node:app.legacy').y")
+        assert all(ghost_y > box["y"] + box["height"] for box in page.evaluate("[...scene.positions.values()]"))
+        ghosts = page.evaluate("[...document.querySelectorAll('#graph .edge.ghost')].map((g) => [g.dataset.from, g.dataset.to, g.querySelector('.ghost-line').getAttribute('marker-end'), getComputedStyle(g.querySelector('.ghost-line')).strokeDasharray, g.querySelector('.rev-text').textContent])")
+        assert sorted(g[:2] for g in ghosts) == [["node:app.domain", "node:app.api"], ["node:app.legacy", "node:app.domain"]], ghosts
+        assert all(g[2] == "url(#arrow-ghost)" and g[3] != "none" for g in ghosts) and sorted(g[4] for g in ghosts) == ["− 3", "− 7"], ghosts
+        # The legend explains the marks present.
+        legend = page.locator("#legend-body").inner_text()
+        for text in ("Since snapshot before", "new entry", "file count changed", "new wire", "wire with another count", "gone: phantom line"):
+            assert text in legend, legend
+        # The level's details: counts, violations that appeared (opening
+        # their evidence) and were resolved, what is gone, and the files.
+        section = page.locator("#compare-section").inner_text()
+        for text in ("Since snapshot before", "commit 5b29b17", "1 new", "1 resized", "1 gone", "2 new", "1 changed count", "2 gone", "1 appeared", "1 resolved",
+                     "legacy-is-frozen", "app.legacy", "src/domain/old_a.rs", "src/legacy/x.rs"):
+            assert text in section, (text, section)
+        assert page.locator("#compare-section .overview-violation.resolved").is_disabled()
+        page.locator("#compare-section .overview-violation:not(.resolved)").click()
+        assert page.locator("#details .detail-kind").inner_text() == "Violation: deny dependency"
+        # A selected entry, wire or ghost says how it changed.
+        click(api_card)
+        assert "1 mapped file in the snapshot, 2 now." in page.locator("#details .rev-note").inner_text()
+        click(changed_wire)
+        note = page.locator("#details .rev-note").inner_text()
+        assert "10 observations in the snapshot, 50 now." in note and "IMPORTS: 10 → 25" in note and "CALLS: new" in note, note
+        click("#graph .edge.ghost[data-from='node:app.domain']")
+        assert page.locator("#details .detail-kind").inner_text() == "Gone since snapshot before" and "CALLS × 3" in page.locator("#details").inner_text()
+        assert page.locator("#lift-graph .edge.ghost").count() == 1
+        click("#graph .ghost-card")
+        assert page.locator("#details h2").inner_text() == "Legacy" and "→ app.domain" in page.locator("#details").inner_text()
+        assert page.locator("#lift-graph .ghost-card").count() == 1 and page.locator("#lift-graph .node[data-id='node:app.domain']").count() == 1
+        page.keyboard.press("Escape")
+        # Only changes: everything unchanged is dimmed, changes are not.
+        page.locator("#compare-button").click()
+        page.locator("#compare-only").check()
+        page.keyboard.press("Escape")
+        opacity = lambda selector: float(page.evaluate("(s) => getComputedStyle(document.querySelector(s)).opacity", selector))
+        assert page.locator("#graph.changes-only").count() == 1
+        assert opacity("#graph .node[data-id='node:app.domain']") < 0.2 and opacity(api_card) == 1 and opacity("#graph .ghost-card") == 1
+        assert opacity(changed_wire) > 0.9
+        page.evaluate("setCompareOnly(false)")
+        assert page.locator("#graph.changes-only").count() == 0 and opacity("#graph .node[data-id='node:app.domain']") > 0.9
+        # On a board the gone wires take one elbow or a Z.
+        page.evaluate("setDisplay({ mode: 'pcb' })")
+        assert page.locator("#graph .edge.ghost").count() == 2
+        assert all(set(re.sub(r"[^A-Z]", "", d)) <= {"M", "L"} for d in page.evaluate("[...document.querySelectorAll('#graph .ghost-line')].map((p) => p.getAttribute('d'))"))
+        page.evaluate("setDisplay({ mode: 'curves' })")
+        checks.append("compare with a snapshot: the control lists snapshots and is remembered and linked (?compare=); new, moved and resized entries carry glyph tags, new wires rails and a tag, changed counts ▲/▼ tags, gone wires phantom lines and gone entries hatched ghost cards below the level; a legend, the level's changes with violations appeared (opening their evidence) and resolved, the selection's change, and an only-changes filter")
+
+        # A renamed file is one entry, moved; a level the snapshot did not
+        # have is all new, and says so instead of marking every entry.
+        page.evaluate("(p) => { window.__fixture.projections['app.domain'] = p; }", PROJECTIONS["app.domain"])
+        page.evaluate("loadFocus('app.domain')")
+        page.wait_for_selector("#graph .node[data-id='file:src/domain/a.rs'].rev-moved")
+        assert tag("#graph .node[data-id='file:src/domain/a.rs']") == "↦ moved" and tag("#graph .node[data-id='file:src/domain/b.rs']") == "+ new"
+        click("#graph .node[data-id='file:src/domain/a.rs']")
+        assert "Moved since the snapshot, from src/domain/old_a.rs." in page.locator("#details .rev-note").inner_text()
+        page.keyboard.press("Escape")
+        page.evaluate("loadFocus('app.web')")
+        page.wait_for_function("document.getElementById('compare-count').textContent === 'new'")
+        assert page.locator("#graph .rev").count() == 0
+        assert "everything on it is new" in page.locator("#legend-body").inner_text() and "everything on it is new" in page.locator("#compare-section").inner_text()
+        # A snapshot that cannot be read is an error, never a clean comparison.
+        page.evaluate("setCompare({ on: true, name: 'deleted' })")
+        assert page.locator("#compare-count").inner_text() == "!"
+        assert "Cannot compare with deleted: no snapshot named `deleted`" in page.locator("#compare-section").inner_text()
+        assert page.locator("#graph .rev, #legend .legend-subhead").count() == 0
+        # No snapshots yet: the control says how to take one.
+        page.evaluate("() => { window.__fixture.snapshots = { enabled: true, snapshots: [] }; }")
+        page.locator("#compare-button").click()
+        page.wait_for_function("document.getElementById('compare-note').textContent.includes('No snapshot is saved yet')")
+        assert "archgraph snapshot" in page.locator("#compare-note").inner_text()
+        page.keyboard.press("Escape")
+        page.evaluate("() => { window.__fixture.snapshots = { enabled: false, snapshots: [] }; }")
+        page.locator("#compare-button").click()
+        page.wait_for_function("document.getElementById('compare-note').textContent.includes('no snapshots to compare with')")
+        page.keyboard.press("Escape")
+        page.evaluate("(s) => { window.__fixture.snapshots = s; }", SNAPSHOTS)
+        # Off again: nothing extra drawn, the address forgets it; the address
+        # alone turns it on (a deep link).
+        page.evaluate("loadFocus('app')")
+        page.locator("#compare-button").click()
+        page.wait_for_selector("#compare-list input[value='before']")
+        page.locator("#compare-list input[value='']").check()
+        page.keyboard.press("Escape")
+        page.wait_for_function("document.getElementById('compare-label').textContent === 'Compare'")
+        assert page.locator("#graph .rev, #graph .ghost-card, #graph .edge.ghost, #compare-section").count() == 0
+        assert "compare" not in page.evaluate("location.search")
+        assert page.evaluate("history.replaceState(null, '', '?focus=app&compare=before'); loadCompareSettings(); [compare.on, compare.name]") == [True, "before"]
+        page.evaluate("setCompare({ on: false })")
+        # At phone width the control and its panel fit.
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.locator("#compare-button").click()
+        page.wait_for_selector("#compare-list input[value='before']")
+        assert page.locator("#compare-panel").bounding_box()["x"] + page.locator("#compare-panel").bounding_box()["width"] <= 390
+        assert page.evaluate("document.documentElement.scrollWidth") == 390
+        page.keyboard.press("Escape")
+        page.set_viewport_size({"width": 1440, "height": 1000})
+        page.wait_for_timeout(100)
+        checks.append("compare: a renamed file is one moved entry; a level new since the snapshot says so; a missing snapshot is an error; without snapshots the control says to run archgraph snapshot; off again draws nothing extra; ?compare= turns it on; the panel fits at phone width")
 
         screenshot = os.environ.get("ARCHGRAPH_UI_SCREENSHOT")
         if screenshot:

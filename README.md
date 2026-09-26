@@ -772,6 +772,33 @@ infinite canvas, drawn like a drawing sheet:
   only violations or only files with no observed users (the rest is
   dimmed), relation kinds, observed and manual dependencies, and entries
   outside the focus.
+- **Compare** (next to Filters, off by default) draws the live graph
+  against a snapshot saved with `archgraph snapshot` (see [Snapshots: what
+  a refactoring changed](#snapshots-what-a-refactoring-changed)). It lists
+  the saved snapshots, or says how to take one when there are none; the
+  choice is remembered in the browser and in the address
+  (`/?focus=app&compare=before` opens with it on). While it is on, the
+  level's comparison (`/api/diff`) is fetched with each level and each new
+  live revision, and changes are drawn as revisions, never by colour
+  alone: a changed entry carries a tag on its top right corner (`+ new`,
+  `↦ moved` for a renamed file, `▲ 3→5 files`, or for a directory group
+  how many of its files are new or moved), a new wire runs between two
+  rails of the revision ink with a `+ new` tag, and a wire whose count
+  changed has a `▲`/`▼ before→after` tag (a trunk's tag counts its changed
+  wires, `Δ n`). What is gone is drawn in grey phantom lines: a gone wire
+  between entries still drawn (or a gone entry) is a dashed line with an
+  open arrowhead and a `− count` tag, and a gone entry is a hatched ghost
+  card in a band below the level (the first 40; all of them are listed in
+  the details). The legend explains the marks present, and pointing at a
+  row lights them. The level's details get a "Since snapshot" section:
+  counts of entries, dependencies and violations that changed, the
+  violations that appeared (each opening its evidence) and were resolved,
+  the entries that are gone, and the subtree's files moved, added, removed
+  and assigned to another node. A selected entry, wire or ghost says how
+  it changed. **Only changes** dims everything unchanged. A level that did
+  not exist in the snapshot is not marked entry by entry; its legend and
+  details say that everything on it is new. A snapshot that cannot be read
+  is shown as an error, not as a comparison without changes.
 - **Node list** on the left: the whole architecture tree with the number of
   violations in each subtree, an "Only with violations" switch, and the list
   of all violations. Clicking a node selects and centres it in its parent's

@@ -496,6 +496,7 @@ function showOverview() {
   interfaces.id = "interfaces";
   interfacesInto(interfaces, focus.interfaces);
   panel.append(description, interfaces, summaryList(projection));
+  compareSection(panel);
   if (focusUnused(focus)) usageNote(panel, "idle", "No observed code outside this node depends on it, and it declares no entry point. Possibly started by a tool, or dead code; declare its entry points in project.entry_points if it has any.", IDLE_CAVEAT);
   panel.append(html("h3", `Violations in this view (${projection.violations.length})`));
   if (!projection.violations.length) panel.append(html("p", "No matching observed architecture violations.", "muted"));
@@ -579,8 +580,9 @@ function renderLift() {
   lift.setAttribute("transform", graph.getAttribute("transform") || "");
   // Copies in the drawing's order, so what was on top stays on top.
   const copies = new Map();
-  for (const id of lit.nodes) { const element = scene.nodeEls.get(id); if (element) copies.set(element, null); }
+  for (const id of lit.nodes) { const element = scene.nodeEls.get(id) || (scene.ghostEls && scene.ghostEls.get(id)); if (element) copies.set(element, null); }
   for (const item of scene.edgeEls) if (lit.edges.has(item.edge)) copies.set(item.element, item);
+  for (const item of scene.ghostWireEls || []) if (lit.edges.has(item.edge)) copies.set(item.element, null);
   for (const item of scene.trunkEls || []) {
     const count = item.trunk.members.filter((edge) => lit.edges.has(edge)).length;
     if (!count) continue;
@@ -664,6 +666,12 @@ function neighbourhood(id) {
     lit.edges.add(edge);
     lit.nodes.add(edge.from);
     lit.nodes.add(edge.to);
+  }
+  if (scene && scene.rev && scene.byId.has(id)) for (const ghost of scene.rev.ghostEdges) {
+    if (ghost.from !== id && ghost.to !== id) continue;
+    lit.edges.add(ghost);
+    lit.nodes.add(ghost.from);
+    lit.nodes.add(ghost.to);
   }
   return lit;
 }
@@ -784,6 +792,8 @@ function showNode(node, element) {
     const packages = node.package_count ? plural(node.package_count, "imported package") : "";
     panel.append(html("p", node.file_count || !packages ? `${plural(node.file_count, "mapped file")}${observed}${packages ? `, ${packages}` : ""}` : packages));
   }
+  const change = scene && scene.byId.has(node.id) ? entryChange(node.id) : null;
+  if (change) revNote(panel, change);
   if (node.description && !node.package) panel.append(html("p", node.description));
   if (node.entry_kind === "file") fileUsageDetails(panel, node);
   else if (!node.package) groupUsageDetails(panel, node);
@@ -839,6 +849,7 @@ function showNode(node, element) {
   const edges = sceneEdges(node.id);
   dependencyList(panel, "Depends on", edges.filter((edge) => edge.from === node.id), (edge) => edge.to);
   dependencyList(panel, "Used by", edges.filter((edge) => edge.to === node.id), (edge) => edge.from);
+  if (scene && scene.rev) ghostWireList(panel, node.id);
   revealDetails();
   // Selecting a file shows its source next to its details.
   if (node.entry_kind === "file" && node.file_path) viewer.open({ path: node.file_path });
@@ -968,6 +979,8 @@ function showEdge(group, element) {
   const title = onlyPackages ? (packageIds.length <= 3 ? packageIds.map(packageName).join(", ") : plural(packageIds.length, "package")) : edgeSummary(group);
   const panel = detailsTitle(title, null, onlyPackages ? `Imported packages · ${edgeSummary(group)}` : group.origin === "manual" ? "Manual dependency" : "Observed dependency");
   panel.append(html("p", `${displayEndpoint(group.from)}\n→ ${displayEndpoint(group.to)}`, "evidence-pair endpoints"));
+  const change = edgeChange(group);
+  if (change) revNote(panel, change);
   panel.append(html("p", group.origin === "manual" ? "Manual relationship: descriptive intent, not source evidence."
     : onlyPackages ? "Imports of third-party packages, read from the source by ArchGraph." : "Observed file dependencies from GitNexus."));
   if (packageIds.length) packageSection(panel, packageIds, group);
@@ -1095,6 +1108,12 @@ function restoreSelection() {
   } else if (selected.kind === "trunk") {
     const item = (scene.trunkEls || []).find(({ trunk }) => trunk.id === selected.id);
     if (item) select(item.element, trunkScope(item.trunk)); else showOverview();
+  } else if (selected.kind === "ghost-entry") {
+    const element = scene.ghostEls && scene.ghostEls.get(selected.id);
+    if (element) select(element, ghostScope(selected.id)); else showOverview();
+  } else if (selected.kind === "ghost-edge") {
+    const item = (scene.ghostWireEls || []).find(({ edge }) => edge.id === selected.id);
+    if (item) select(item.element, { nodes: new Set([item.edge.from, item.edge.to]), edges: new Set([item.edge]) }); else showOverview();
   }
 }
 
@@ -1198,8 +1217,10 @@ function buildScene(projection) {
     .filter((edge) => edge.from !== edge.to && byId.has(edge.from) && byId.has(edge.to)))
     .map((edge) => ({ ...edge, grouped: groupById.has(edge.from) || groupById.has(edge.to) }));
   for (const item of groups) entries.set(item.id, item);
-  return { focusId, clustered, open, groups, owner, entries: list, byId, layoutEdges: project(projection.edges),
+  const built = { focusId, clustered, open, groups, owner, entries: list, byId, layoutEdges: project(projection.edges),
     edges: project(projection.edges.filter(edgeShown)), layers: clustered ? null : projection.layers };
+  built.rev = compare.on && compare.diff ? compareModel(compare.diff, built) : null;
+  return built;
 }
 // The deepest group the user expanded that contains this entry, so that it
 // can be collapsed again from the entry's details.
@@ -1368,6 +1389,7 @@ function contentBounds() {
   };
   for (const box2 of scene.positions.values()) add({ ...box2, x: box2.x - (box2.hex || 0), width: box2.width + 2 * (box2.hex || 0) });
   if (scene.board) { const e = scene.board.extent; add({ x: e.x1, y: e.y1, width: e.x2 - e.x1, height: e.y2 - e.y1 }); }
+  for (const ghost of (scene.ghostBoxes || new Map()).values()) add(ghost);
   const frame = frameBox();
   if (frame) add(frame);
   if (!box) return { x: 0, y: 0, width: 600, height: 400 };
@@ -1939,8 +1961,9 @@ function drawScene() {
     }
   }
   Object.assign(scene, { positions, moved, nodeEls: new Map(), edgeEls: [], trunkEls: [], cards: [], textKey: null,
-    batching: display.focus && scene.edges.length > FOCUS_EDGE_LIMIT });
-  graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${display.focus && scene.edges.length > FOCUS_EDGE_LIMIT ? " faint" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}`);
+    batching: display.focus && scene.edges.length > FOCUS_EDGE_LIMIT, revFits: [], ghostEls: new Map(), ghostWireEls: [], ghostBoxes: new Map() });
+  const changesOnly = scene.rev && !scene.rev.whole && compare.only;
+  graph.setAttribute("class", `mode-${display.mode} colour-${display.colour}${scene.edges.length > LABEL_LIMIT ? " quiet" : ""}${display.focus && scene.edges.length > FOCUS_EDGE_LIMIT ? " faint" : ""}${filters.violationsOnly ? " violations-only" : ""}${filters.idleOnly ? " idle-only" : ""}${changesOnly ? " changes-only" : ""}`);
   graph.setAttribute("aria-label", `${currentProjection.focus.title}: ${scene.entries.length} entries, ${scene.edges.length} directed dependencies`);
   if (!scene.entries.length) graph.append(svg("text", { x: 40, y: 70, class: "graph-note" }, "No mapped files or dependencies at this focus."));
   const frame = frameBox();
@@ -1950,6 +1973,10 @@ function drawScene() {
     graph.append(scene.frameRect, scene.frameLabel);
   }
   for (const note of notes) graph.append(svg("text", { x: left - 24, y: note.y, class: "graph-note" }, note.band === "callers" ? "Outside this focus, depending on it" : "Outside this focus"));
+  // Comparing with a snapshot: entries that are gone, in a band below.
+  const ghosts = placeGhosts(positions);
+  scene.ghostBoxes = ghosts.boxes;
+  if (ghosts.note) graph.append(svg("text", { x: ghosts.note.x, y: ghosts.note.y, class: "graph-note ghost-note" }, `Gone since snapshot ${scene.rev.name}${scene.rev.hiddenGhosts ? `: the first ${GHOST_LIMIT}, all of them in the details` : ""}`));
   if (!board) {
     const routed = route(scene.edges, positions, moved);
     plans = routed.plans;
@@ -1965,6 +1992,8 @@ function drawScene() {
   plans.sort((a, b) => (a.edge.violation_rule_ids.length > 0) - (b.edge.violation_rule_ids.length > 0) || a.order - b.order);
   scene.batchLayer = svg("g", { class: "edge-batch", "aria-hidden": "true" });
   graph.append(scene.batchLayer);
+  // Gone wires, under the live ones.
+  for (const ghost of scene.rev ? scene.rev.ghostEdges : []) graph.append(drawGhostEdge(ghost).element);
   for (const plan of plans) graph.append(drawEdge(plan));
   // Trunks go over the wires they carry, violating ones last.
   const tags = [];
@@ -1972,17 +2001,21 @@ function drawScene() {
   for (const item of scene.trunkEls) graph.append(item.tagGroup);
   for (const fit of tags) fit();
   scene.wireKey = null;
+  for (const ghost of scene.rev ? scene.rev.ghosts : []) graph.append(drawGhostEntry(ghost, scene.ghostBoxes.get(ghost.id)));
   scene.entries.forEach((node, index) => {
     const element = drawNode(node, positions.get(node.id), index === 0);
     graph.append(element);
     for (const fit of element.fits) fitText(...fit);
   });
+  for (const fit of scene.revFits) fit();
   // Everything that can leave the DOM when it is out of view, in drawing
   // order (see cull).
   scene.cullItems = [
+    ...scene.ghostWireEls.map((item) => ({ element: item.element, bounds: () => item.bounds })),
     ...scene.edgeEls.map((item) => ({ element: item.element, bounds: () => item.bounds })),
     ...scene.trunkEls.map((item) => ({ element: item.element, bounds: () => item.bounds })),
     ...scene.trunkEls.map((item) => ({ element: item.tagGroup, bounds: () => (item.end ? padBox({ x: item.end.tip.x, y: item.end.tip.y, width: 0, height: 0 }, TAG_REACH) : item.bounds) })),
+    ...[...scene.ghostEls].map(([id, element]) => ({ element, bounds: () => padBox(scene.ghostBoxes.get(id), 24) })),
     ...scene.entries.map((node) => ({ element: scene.nodeEls.get(node.id), bounds: () => scene.positions.get(node.id) })),
   ];
   scene.cullDirty = true;
@@ -2012,11 +2045,22 @@ function drawEdge(plan) {
   const weight = edge.count > 50 ? 4 : edge.count > 10 ? 3 : edge.count > 2 ? 2 : 1;
   const look = edgeLook(edge);
   const net = look.net !== null && look.net !== undefined ? ` ${netClass(look.net)}` : "";
+  const change = scene.rev ? edgeChange(edge) : null;
   // Edges are not tab stops (a level can have hundreds); the keyboard
   // reaches them through the selected entry's dependency list.
-  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.trunk ? " branch" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}`, "aria-hidden": "true", "data-from": edge.from, "data-to": edge.to });
+  const group = svg("g", { class: `edge ${edge.origin} w${weight}${net}${look.strands ? " bus" : ""}${plan.trunk ? " branch" : ""}${plan.dir === "up" ? " upward" : ""}${plan.crowded ? " crowded" : ""}${violating ? " violating" : ""}${cut ? " cut" : ""}${change ? ` rev rev-${change.kind}` : ""}`, "aria-hidden": "true", "data-from": edge.from, "data-to": edge.to });
   const hit = svg("path", { d: plan.d, class: "edge-hit" });
   group.append(hit);
+  // A new wire runs between two rails of the revision ink, outside a
+  // violation's casing.
+  if (change && change.kind === "new") {
+    const rails = svg("path", { d: plan.d, class: "rev-casing" }), inside = svg("path", { d: plan.d, class: "rev-gap" });
+    if (look.strands) {
+      rails.style.strokeWidth = `calc(${round(2 * busHalfWidth(edge) + 12)}px * var(--ws, 1))`;
+      inside.style.strokeWidth = `calc(${round(2 * busHalfWidth(edge) + 8)}px * var(--ws, 1))`;
+    }
+    group.append(rails, inside);
+  }
   // A violation keeps the wire's own colour inside a red casing.
   const casing = violating ? svg("path", { d: plan.d, class: "edge-casing" }) : null;
   if (casing) group.append(casing);
@@ -2048,7 +2092,8 @@ function drawEdge(plan) {
   }
   const label = svg("text", { x: round(plan.label.x), y: round(plan.label.y + 4.5), class: "edge-label" }, plan.text);
   group.append(label);
-  group.append(svg("title", {}, `${displayEndpoint(edge.from)} → ${displayEndpoint(edge.to)}\n${kindCounts(edge.parts).map(([kind, count]) => `${kind} × ${count}`).join(", ")}. Click for concrete evidence.`));
+  if (change) { const at = pointAlong(plan, plan.trunk ? 0.5 : 0.3); group.append(revTag(change, at.x, at.y, "wire-tag", "middle")); }
+  group.append(svg("title", {}, `${displayEndpoint(edge.from)} → ${displayEndpoint(edge.to)}\n${kindCounts(edge.parts).map(([kind, count]) => `${kind} × ${count}`).join(", ")}.${change ? ` ${change.text}` : ""} Click for concrete evidence.`));
   group.addEventListener("click", () => showEdge(edge, group));
   group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas({ nodes: new Set([edge.from, edge.to]), edges: new Set([edge]) }, { edge }); });
   group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
@@ -2059,7 +2104,7 @@ function drawEdge(plan) {
     parts: [...group.childNodes] };
   // A dimmed wire is drawn by the batch layer; its own group keeps only the
   // hit path, the label and the tooltip (see drawBatch).
-  if (scene.batching && !violating && !cut && !look.strands) {
+  if (scene.batching && !violating && !cut && !look.strands && !change) {
     const net = look.net !== null && look.net !== undefined ? `n${look.net % PALETTE}` : "";
     item.batch = { style: `w${weight}${net ? ` ${net}` : ""}`, net, d: plan.d, gap: Boolean(gap), end: end && end.getAttribute("d"), tip: end ? endTip(plan) : null,
       arrow: plan.trunk ? null : ids.end, via: plan.points ? plan.points[0] : null };
@@ -2109,9 +2154,10 @@ function endStretch(plan) {
 // ribbon keeps a minimum width on screen, the chevrons a fixed spacing.
 function drawTrunk(trunk, tags) {
   const violations = trunk.members.filter(violates).length;
+  const changed = scene.rev ? trunk.members.filter((edge) => edgeChange(edge)).length : 0;
   const ribbon = ribbonOf(trunk.members);
   const single = ribbon.wide && ribbon.strands[0].className;
-  const group = svg("g", { class: `edge trunk${single ? ` ${single}` : ribbon.wide ? " neutral" : " ribbon"}${violations ? " violating" : ""}`, "aria-hidden": "true", "data-trunk": trunk.id });
+  const group = svg("g", { class: `edge trunk${single ? ` ${single}` : ribbon.wide ? " neutral" : " ribbon"}${violations ? " violating" : ""}${changed ? " rev" : ""}`, "aria-hidden": "true", "data-trunk": trunk.id });
   // The strands overlap where tails share a course: dimmed as one group,
   // they fade evenly.
   const body = svg("g", { class: "trunk-body" });
@@ -2151,6 +2197,7 @@ function drawTrunk(trunk, tags) {
     const plate = svg("rect", { class: "tag-plate", height: 22, rx: 2 });
     const text = svg("text", { class: "tag-text" }, content);
     if (violations) text.append(svg("tspan", { class: "tag-alert" }, `  ⚠ ${violations}`));
+    if (changed) text.append(svg("tspan", { class: "tag-rev" }, `  Δ ${changed}`));
     scale.append(plate, ...strip, text);
     tag.append(scale);
     const shape = { scale, plate, text, strip, width: 0 };
@@ -2313,6 +2360,8 @@ function drawNode(node, box, first) {
   const entryPoint = usageCount(node, "entry_point") > 0;
   const group = svg("g", { class: `node ${node.entry_kind}${node.outside_focus ? " outside" : ""}${node.node_kind === "external" ? " external" : ""}${violating ? " violating" : ""}${isIdle(node) ? " idle" : ""}${entryPoint ? " entry-point" : ""}${node.usage === "not_indexed" ? " unknown" : ""}`,
     transform: `translate(${round(box.x)}, ${round(box.y)})`, tabindex: first ? 0 : -1, role: "button", "aria-label": status ? `${node.title}, ${status}` : node.title, "data-id": node.id });
+  const change = scene && scene.rev ? entryChange(node.id) : null;
+  if (change) group.classList.add("rev", `rev-${change.kind}`);
   // On the hexagonal board a card is a plate with pointed ends; its text
   // stays horizontal inside the rectangle between them.
   const ear = box.hex || 0;
@@ -2361,7 +2410,9 @@ function drawNode(node, box, first) {
     toggle.addEventListener("click", (event) => { event.stopPropagation(); setGroupOpen(node, true); });
     group.append(toggle);
   }
-  group.append(svg("title", {}, [node.title, node.architecture_id || node.file_path, node.description, status ? `Usage: ${status}` : null,
+  // How it changed since the snapshot: a tag on its top right corner.
+  if (change) group.append(revTag(change, box.width, 0, "entry-tag"));
+  group.append(svg("title", {}, [node.title, node.architecture_id || node.file_path, node.description, status ? `Usage: ${status}` : null, change ? change.text : null,
     hasValue(node.observed_file_count) && node.file_count ? `${node.observed_file_count} of ${node.file_count} files have an observed dependency` : null,
     node.package ? `${ecosystemTitle(node.package.ecosystem)} package ${node.id}` : null,
     node.entry_kind === "group" ? "Double-click to expand" : node.entry_kind === "architecture" ? "Double-click to open" : null].filter(Boolean).join("\n")));
@@ -2418,7 +2469,10 @@ function startDrag(id) {
 // A wire's simple course while its entry is dragged: from the sides
 // freeRoute picks, straight on curves, one elbow or a Z on a board.
 function dragRoute(item) {
-  const plan = freeRoute({ edge: item.edge, a: scene.positions.get(item.edge.from), b: scene.positions.get(item.edge.to) });
+  return simpleRoute(item.edge, scene.positions.get(item.edge.from), scene.positions.get(item.edge.to));
+}
+function simpleRoute(edge, a, b) {
+  const plan = freeRoute({ edge, a, b });
   const s = plan.start, e = plan.end;
   if (!scene.board) {
     plan.curves = [[s, s, e, e]];
@@ -2835,6 +2889,7 @@ function drawMinimap() {
     map.append(svg("rect", { x: round(box.x), y: round(box.y), width: box.width, height: box.height, "data-id": node.id,
       class: `mm-node${node.violation_rule_ids.length ? " violating" : ""}${node.outside_focus ? " outside" : ""}` }));
   }
+  for (const box of (scene.ghostBoxes || new Map()).values()) map.append(svg("rect", { x: round(box.x), y: round(box.y), width: box.width, height: box.height, class: "mm-ghost" }));
   map.append(svg("rect", { id: "minimap-view", class: "mm-view" }));
   updateMinimapView();
 }
@@ -2940,7 +2995,7 @@ window.addEventListener("pointerup", (event) => endGesture(event));
 window.addEventListener("pointercancel", (event) => endGesture(event, true));
 stage.addEventListener("click", (event) => {
   if (suppressClick) { event.stopPropagation(); event.preventDefault(); return; }
-  if (!event.target.closest("#graph .node, #graph .edge") && selected) showOverview();
+  if (!event.target.closest("#graph .node, #graph .edge, #graph .ghost-card") && selected) showOverview();
 }, true);
 stage.addEventListener("wheel", (event) => {
   if (view !== "diagram") return;
@@ -3372,6 +3427,7 @@ function togglePopover(button, panel, force) {
 }
 function closePopovers() {
   togglePopover($("filters-button"), $("filters-panel"), false);
+  togglePopover($("compare-button"), $("compare-panel"), false);
   togglePopover($("shortcuts-button"), $("shortcuts"), false);
 }
 $("filters-button").addEventListener("click", () => togglePopover($("filters-button"), $("filters-panel")));
@@ -3379,6 +3435,7 @@ $("shortcuts-button").addEventListener("click", () => togglePopover($("shortcuts
 document.addEventListener("click", (event) => {
   if (!$("search-form").contains(event.target)) closeSearch();
   if (!event.target.closest("#filters-panel, #filters-button")) togglePopover($("filters-button"), $("filters-panel"), false);
+  if (!event.target.closest("#compare-panel, #compare-button")) togglePopover($("compare-button"), $("compare-panel"), false);
   if (!event.target.closest("#shortcuts, #shortcuts-button")) togglePopover($("shortcuts-button"), $("shortcuts"), false);
 });
 $("reset-layout").addEventListener("click", () => {
@@ -3404,7 +3461,7 @@ function drawLegend() {
   const legend = $("legend"), body = $("legend-body");
   body.replaceChildren();
   const colours = scene && scene.colours;
-  legend.hidden = view !== "diagram" || !colours || !scene.edges.length;
+  legend.hidden = view !== "diagram" || !colours || (!scene.edges.length && !scene.rev);
   if (legend.hidden) return;
   $("legend-title").textContent = COLOUR_TITLES[colours.mode];
   if (scene.board && scene.board.fallback) body.append(html("p", scene.board.fallback, "legend-notice"));
@@ -3457,6 +3514,58 @@ function drawLegend() {
     item.append(sample, html("span", "trunk"));
     marks.append(item);
   }
+  if (scene.rev) compareLegend(body, row);
+}
+// The key to the comparison's marks, a row for each kind of change on this
+// level; pointing at a row lights what it names.
+function compareLegend(body, row) {
+  const rev = scene.rev;
+  // Without wires the comparison is the whole legend and names it.
+  if (scene.edges.length) body.append(html("p", `Since snapshot ${rev.name}`, "legend-subhead"));
+  else $("legend-title").textContent = `Since snapshot ${rev.name}`;
+  if (rev.whole) { body.append(html("p", "This level is new since then: everything on it is new.", "legend-notice rev")); return; }
+  const tag = (glyph) => {
+    const sample = svg("svg", { viewBox: "0 0 30 14", width: 30, height: 14, "aria-hidden": "true", class: "swatch rev-swatch" });
+    const text = svg("text", { x: 15, y: 10.8, class: "rev-text" });
+    text.append(svg("tspan", { class: "rev-glyph" }, glyph));
+    sample.append(svg("rect", { x: 3, y: 1, width: 24, height: 12, rx: 6, class: "rev-plate" }), text);
+    return sample;
+  };
+  const entriesWhere = (test) => () => {
+    const lit = { nodes: new Set(), edges: new Set() };
+    for (const node of scene.entries) { const change = entryChange(node.id); if (change && test(change)) lit.nodes.add(node.id); }
+    return lit;
+  };
+  const wiresWhere = (test) => () => {
+    const lit = { nodes: new Set(), edges: new Set() };
+    for (const edge of scene.edges) { const change = edgeChange(edge); if (change && test(change)) { lit.edges.add(edge); lit.nodes.add(edge.from); lit.nodes.add(edge.to); } }
+    return lit;
+  };
+  const gone = () => {
+    const lit = { nodes: new Set(rev.ghosts.map((ghost) => ghost.id)), edges: new Set(rev.ghostEdges) };
+    for (const ghost of rev.ghostEdges) { lit.nodes.add(ghost.from); lit.nodes.add(ghost.to); }
+    return lit;
+  };
+  const entryKinds = [...scene.entries].map((node) => entryChange(node.id)).filter(Boolean).map((change) => change.kind);
+  const wireKinds = scene.edges.map(edgeChange).filter(Boolean).map((change) => change.kind);
+  let rows = 0;
+  const add = (present, sample, text, lit) => { if (present) { row(sample, text, lit, null, null, text); rows++; } };
+  add(entryKinds.includes("new"), tag("+"), "new entry", entriesWhere((change) => change.kind === "new"));
+  add(entryKinds.includes("moved"), tag("↦"), "moved (renamed file)", entriesWhere((change) => change.kind === "moved"));
+  add(entryKinds.some((kind) => kind === "resized" || kind === "group"), tag("▲"), "file count changed", entriesWhere((change) => change.kind === "resized" || change.kind === "group"));
+  if (wireKinds.includes("new")) {
+    const sample = wireSample({ net: null });
+    sample.insertBefore(svg("path", { d: "M 2 6 H 28", class: "rev-gap" }), sample.firstChild);
+    sample.insertBefore(svg("path", { d: "M 2 6 H 28", class: "rev-casing" }), sample.firstChild);
+    add(true, sample, "new wire", wiresWhere((change) => change.kind === "new"));
+  }
+  add(wireKinds.includes("changed"), tag("▲"), "wire with another count", wiresWhere((change) => change.kind === "changed"));
+  if (rev.ghosts.length || rev.ghostEdges.length) {
+    const sample = svg("svg", { viewBox: "0 0 30 12", width: 30, height: 12, "aria-hidden": "true", class: "swatch" });
+    sample.append(svg("path", { d: "M 2 6 H 28", class: "ghost-line" }));
+    add(true, sample, "gone: phantom line", gone);
+  }
+  if (!rows) body.append(html("p", "Nothing drawn here changed.", "legend-empty"));
 }
 function updateDisplayUI() {
   for (const mode of MODES) $(`mode-${mode}`).setAttribute("aria-pressed", String(display.mode === mode));
@@ -3482,6 +3591,524 @@ $("colour-by").addEventListener("change", () => setDisplay({ colour: $("colour-b
 $("focus-mode").addEventListener("click", () => setDisplay({ focus: !display.focus }));
 updateDisplayUI();
 
+// ---------------------------------------------------------------- compare
+// The live graph against a snapshot saved with `archgraph snapshot`: while a
+// refactoring is under way, the canvas shows what it has changed so far.
+// The server compares one level at a time (GET /api/diff/{node}), in the
+// live level's entry IDs. Changes are drawn like revisions on a sheet: a
+// changed entry carries a tag on its top right corner (+ new, ↦ moved, ▲ or
+// ▼ with its file count), a new wire a casing in the revision ink and a +
+// tag, a wire whose count changed a ▲ or ▼ tag. What is gone is drawn in
+// grey phantom lines: a gone wire between entries still drawn as a dashed
+// wire with an open arrowhead, a gone entry as a hatched ghost card in a
+// band below the level. Off by default; while it is off, nothing here runs.
+const GHOST_LIMIT = 40;
+const compare = { on: false, name: null, only: false, snapshots: null, enabled: true, listError: null, diff: null, error: null, request: 0 };
+const compareKey = () => `archgraph.compare.v1:${meta ? meta.project.name : ""}`;
+// The remembered choice, unless the address names a snapshot (?compare=NAME).
+function loadCompareSettings() {
+  const saved = stored(compareKey(), {}) || {};
+  compare.name = typeof saved.name === "string" && saved.name ? saved.name : null;
+  compare.on = saved.on === true && Boolean(compare.name);
+  compare.only = saved.only === true;
+  const linked = new URL(location.href).searchParams.get("compare");
+  if (linked) Object.assign(compare, { name: linked, on: true });
+}
+function saveCompareSettings() {
+  store(compareKey(), { name: compare.name, on: compare.on, only: compare.only });
+  const url = new URL(location.href);
+  if (compare.on) url.searchParams.set("compare", compare.name); else url.searchParams.delete("compare");
+  if (url.href !== location.href) history.replaceState(history.state, "", url);
+}
+async function fetchDiff(focusId) {
+  try {
+    return { diff: await api(`/api/diff/${encodeURIComponent(focusId)}?snapshot=${encodeURIComponent(compare.name)}`), error: null };
+  } catch (error) {
+    return { diff: null, error: error.message || String(error) };
+  }
+}
+async function loadSnapshots() {
+  try {
+    const payload = await api("/api/snapshots");
+    Object.assign(compare, { snapshots: payload.snapshots || [], enabled: payload.enabled !== false, listError: null });
+  } catch (error) {
+    Object.assign(compare, { snapshots: [], listError: error.message || String(error) });
+  }
+}
+// Turns the comparison on or off, or picks another snapshot, and draws the
+// level again.
+async function setCompare(change) {
+  Object.assign(compare, change);
+  if (!compare.name) compare.on = false;
+  saveCompareSettings();
+  const request = ++compare.request;
+  if (compare.on && currentProjection) {
+    const result = await fetchDiff(currentProjection.focus.id);
+    if (request !== compare.request) return;
+    Object.assign(compare, result);
+  } else Object.assign(compare, { diff: null, error: null });
+  updateCompareUI();
+  if (view === "diagram") redraw();
+  refreshDetails();
+}
+function setCompareOnly(only) {
+  compare.only = only;
+  saveCompareSettings();
+  updateCompareUI();
+  if (view === "diagram") redraw();
+}
+// The details say how the selection changed: shown again after a change.
+function refreshDetails() {
+  if (!selected || !scene) { showOverview(); return; }
+  if (selected.kind === "node" && scene.byId.has(selected.id)) { showNode(scene.byId.get(selected.id), scene.nodeEls ? scene.nodeEls.get(selected.id) : null); return; }
+  if (selected.kind === "edge") {
+    const edge = scene.edges.find((other) => other.from === selected.from && other.to === selected.to && other.origin === selected.origin);
+    if (edge) { showEdge(edge, drawnEdge(edge)); return; }
+  }
+  if (selected.kind === "violation" || selected.kind === "trunk") return;
+  showOverview();
+}
+
+// What changed on the drawn level, in the scene's terms: files inside a
+// directory group count for their group, and wires are the drawn (merged)
+// ones. Null without a comparison of this level.
+const sceneEdgeKey = (from, to, origin) => `${from}\u0000${to}\u0000${origin}`;
+function compareModel(diff, built) {
+  if (!diff || diff.focus !== built.focusId) return null;
+  const model = { name: diff.snapshot, whole: !diff.focus_existed, entries: new Map(), edges: new Map(), ghosts: [], ghostEdges: [], hiddenGhosts: 0 };
+  if (model.whole) return model;
+  const place = (id) => built.owner.get(id) || id;
+  const entry = (id) => {
+    if (!model.entries.has(id)) model.entries.set(id, { isNew: false, added: 0, movedFrom: null, moved: 0, resized: null });
+    return model.entries.get(id);
+  };
+  for (const id of diff.entries_added) {
+    const at = place(id);
+    if (!built.byId.has(at)) continue;
+    if (at === id) entry(at).isNew = true; else entry(at).added++;
+  }
+  for (const move of diff.entries_moved) {
+    const at = place(move.to);
+    if (!built.byId.has(at)) continue;
+    if (at === move.to) entry(at).movedFrom = move.from; else entry(at).moved++;
+  }
+  for (const item of diff.entries_resized) if (built.byId.has(place(item.id))) entry(place(item.id)).resized = item;
+  // Entries that are gone: ghost cards, as many as a band holds.
+  const ghostIds = new Set();
+  for (const item of diff.entries_removed) {
+    if (item.outside_focus && !filters.outside) continue;
+    if (model.ghosts.length >= GHOST_LIMIT) { model.hiddenGhosts++; continue; }
+    model.ghosts.push(item);
+    ghostIds.add(item.id);
+  }
+  // Each drawn wire's count in the snapshot, from its relation kinds.
+  const key = (edge) => [edge.from, edge.to, edge.kind, edge.origin].join("\u0000");
+  const added = new Set(diff.edges_added.map(key));
+  const changed = new Map(diff.edges_changed.map((edge) => [key(edge), edge]));
+  const wire = (id) => {
+    if (!model.edges.has(id)) model.edges.set(id, { before: 0, after: 0, added: [], removed: [], changed: [] });
+    return model.edges.get(id);
+  };
+  for (const edge of currentProjection.edges) {
+    if (!edgeShown(edge)) continue;
+    const from = place(edge.from), to = place(edge.to);
+    if (from === to || !built.byId.has(from) || !built.byId.has(to)) continue;
+    const item = wire(sceneEdgeKey(from, to, edge.origin));
+    item.after += edge.count;
+    if (added.has(key(edge))) item.added.push(edge.kind);
+    else if (changed.has(key(edge))) {
+      const before = changed.get(key(edge)).count_before;
+      item.before += before;
+      item.changed.push({ kind: edge.kind, before, after: edge.count });
+    } else item.before += edge.count;
+  }
+  // Gone wires: part of a drawn wire, or a phantom line of their own
+  // between entries that are drawn (ghost cards included).
+  const ghostWires = new Map();
+  for (const edge of diff.edges_removed) {
+    if (!edgeShown(edge)) continue;
+    const from = place(edge.from), to = place(edge.to);
+    if (from === to) continue;
+    const id = sceneEdgeKey(from, to, edge.origin);
+    if (model.edges.has(id)) {
+      const item = model.edges.get(id);
+      item.before += edge.count_before;
+      item.removed.push({ kind: edge.kind, count: edge.count_before });
+      continue;
+    }
+    const drawn = (end) => built.byId.has(end) || ghostIds.has(end);
+    if (!drawn(from) || !drawn(to)) continue;
+    if (!ghostWires.has(id)) ghostWires.set(id, { id: `ghost:${id}`, ghost: true, from, to, origin: edge.origin, count: 0, parts: [] });
+    const ghost = ghostWires.get(id);
+    ghost.count += edge.count_before;
+    ghost.parts.push({ kind: edge.kind, count: edge.count_before });
+  }
+  model.ghostEdges = [...ghostWires.values()];
+  for (const [id, item] of [...model.edges]) {
+    if (item.before === item.after && !item.added.length && !item.removed.length) model.edges.delete(id);
+    else item.status = item.before === 0 ? "new" : "changed";
+  }
+  return model;
+}
+// How a drawn entry changed, or null.
+function entryChange(id) {
+  const item = scene && scene.rev && scene.rev.entries.get(id);
+  if (!item) return null;
+  if (item.isNew) return { kind: "new", glyph: "+", label: "new", text: "New since the snapshot." };
+  if (item.movedFrom) {
+    const path = item.movedFrom.startsWith("file:") ? item.movedFrom.slice(5) : item.movedFrom;
+    return { kind: "moved", glyph: "↦", label: "moved", text: `Moved since the snapshot, from ${path}.` };
+  }
+  if (item.resized) {
+    const { file_count_before: before, file_count_after: after } = item.resized;
+    return { kind: "resized", glyph: after > before ? "▲" : "▼", label: `${before}→${after} files`, text: `${plural(before, "mapped file")} in the snapshot, ${after} now.` };
+  }
+  const label = [item.added ? `${item.added} new` : null, item.moved ? `${item.moved} moved` : null].filter(Boolean).join(", ");
+  const words = [item.added ? plural(item.added, "new file") : null, item.moved ? plural(item.moved, "moved file") : null].filter(Boolean);
+  return { kind: "group", glyph: item.added ? "+" : "↦", label, text: `${words.join(" and ")} since the snapshot.` };
+}
+// How a drawn wire changed, or null.
+function edgeChange(edge) {
+  const item = scene && scene.rev && scene.rev.edges.get(sceneEdgeKey(edge.from, edge.to, edge.origin));
+  if (!item) return null;
+  if (item.status === "new") return { kind: "new", glyph: "+", label: "new", text: "New since the snapshot." };
+  const lines = [...new Set(item.added)].sort().map((kind) => `${kind}: new`)
+    .concat(item.changed.map((part) => `${part.kind}: ${part.before} → ${part.after}`))
+    .concat(item.removed.map((part) => `${part.kind}: ${part.count} → gone`));
+  const glyph = item.after > item.before ? "▲" : item.after < item.before ? "▼" : "±";
+  return { kind: "changed", glyph, label: `${item.before}→${item.after}`, text: `${plural(item.before, "observation")} in the snapshot, ${item.after} now.`, lines };
+}
+function changeCount(diff) {
+  if (!diff) return 0;
+  return diff.entries_added.length + diff.entries_removed.length + diff.entries_moved.length + diff.entries_resized.length
+    + diff.edges_added.length + diff.edges_removed.length + diff.edges_changed.length;
+}
+const shortCommit = (commit) => (commit ? commit.slice(0, 7) : null);
+
+// A revision tag: a glyph and a few words on a plate. Its right end
+// ("end") or its centre ("middle") is at (x, y), and it scales around that
+// point like a trunk's tag (--tag-scale), so it stays readable zoomed out.
+function revTag(change, x, y, className, align = "end") {
+  const outer = svg("g", { class: `rev-tag ${className}`, transform: `translate(${round(x)}, ${round(y)})`, "aria-hidden": "true" });
+  const inner = svg("g", { class: "rev-scale" });
+  const plate = svg("rect", { class: "rev-plate", height: 18, y: -9, rx: 9 });
+  const text = svg("text", { class: "rev-text", y: 4.5 });
+  text.append(svg("tspan", { class: "rev-glyph" }, change.glyph), ` ${change.label}`);
+  inner.append(plate, text);
+  outer.append(inner);
+  // Sized again once the text is in the document and its font is known.
+  const size = () => {
+    const width = (textWidth(text, text.textContent) || text.textContent.length * 6.6) + 16;
+    const left = align === "end" ? 8 - width : -width / 2;
+    plate.setAttribute("x", round(left));
+    plate.setAttribute("width", round(width));
+    text.setAttribute("x", round(left + width / 2));
+  };
+  size();
+  scene.revFits.push(size);
+  return outer;
+}
+// The point `fraction` of the way along a routed wire.
+function pointAlong(plan, fraction) {
+  const points = plan.points || tailPolyline({ curves: plan.curves });
+  let total = 0;
+  for (let i = 1; i < points.length; i++) total += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y);
+  let left = total * fraction;
+  for (let i = 1; i < points.length; i++) {
+    const p = points[i - 1], q = points[i], length = Math.hypot(q.x - p.x, q.y - p.y);
+    if (length >= left) { const t = length ? left / length : 0; return { x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t }; }
+    left -= length;
+  }
+  return points[points.length - 1];
+}
+// Ghost cards go in rows below everything drawn, under a note.
+function placeGhosts(positions) {
+  const boxes = new Map();
+  if (!scene.rev || !scene.rev.ghosts.length) return { boxes, note: null };
+  let bottom = PAD;
+  for (const box of positions.values()) bottom = Math.max(bottom, box.y + box.height);
+  if (scene.board) bottom = Math.max(bottom, scene.board.extent.y2);
+  const frame = frameBox();
+  if (frame) bottom = Math.max(bottom, frame.y + frame.height);
+  const left = PAD + 24, top = bottom + 96;
+  scene.rev.ghosts.forEach((ghost, index) => {
+    const row = Math.floor(index / MAX_COLUMNS), column = index % MAX_COLUMNS;
+    boxes.set(ghost.id, { x: left + column * (CARD.width + GAP_X), y: top + row * (CARD.height + 56), width: CARD.width, height: CARD.height });
+  });
+  return { boxes, note: { x: left - 24, y: top - 26 } };
+}
+function ghostTitle(ghost) { return ghost.entry_kind === "file" && ghost.file_path ? splitPath(ghost.file_path)[1] : ghost.title; }
+function ghostKind(ghost) { return (ENTRY_KINDS[ghost.entry_kind] || ghost.entry_kind).toLowerCase(); }
+function drawGhostEntry(ghost, box) {
+  const group = svg("g", { class: "ghost-card rev", transform: `translate(${round(box.x)}, ${round(box.y)})`, "aria-hidden": "true", "data-ghost": ghost.id });
+  group.append(svg("rect", { width: box.width, height: box.height, class: "ghost-back" }), svg("rect", { width: box.width, height: box.height, class: "ghost-box" }));
+  const title = ghostTitle(ghost);
+  const titleText = svg("text", { x: 14, y: 30, class: "node-title" }, compact(title, 26));
+  const where = ghost.file_path ? `${splitPath(ghost.file_path)[0] || "."}/` : ghost.architecture_id || ghostKind(ghost);
+  const subtitle = svg("text", { x: 14, y: 51, class: "node-subtitle" }, compactStart(where, 30));
+  const facts = svg("text", { x: 14, y: 70, class: "node-facts" }, `gone since ${compact(scene.rev.name, 20)}`);
+  group.append(titleText, subtitle, facts, revTag({ glyph: "−", label: "gone" }, box.width, 0, "entry-tag"));
+  scene.cards.push({ element: titleText, full: title, box, width: box.width - 26, y: 30, compactWidth: box.width - 28 });
+  group.append(svg("title", {}, `${title}\n${ghost.file_path || ghost.architecture_id || ghost.id}\nGone since snapshot ${scene.rev.name}: the snapshot had this ${ghostKind(ghost)} at this level.`));
+  group.addEventListener("click", () => showGhostEntry(ghost, group));
+  group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas(ghostScope(ghost.id), { node: ghost.id }); });
+  group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
+  scene.ghostEls.set(ghost.id, group);
+  return group;
+}
+function boxFor(id) { return scene.positions.get(id) || scene.ghostBoxes.get(id); }
+// A gone wire takes a simple course: a curve, or on a board one elbow or a Z.
+function drawGhostEdge(ghost) {
+  const a = boxFor(ghost.from), b = boxFor(ghost.to);
+  const plan = scene.board ? simpleRoute(ghost, a, b) : freeRoute({ edge: ghost, a, b });
+  const group = svg("g", { class: "edge ghost rev", "aria-hidden": "true", "data-from": ghost.from, "data-to": ghost.to });
+  group.append(svg("path", { d: plan.d, class: "edge-hit" }), svg("path", { d: plan.d, class: "ghost-line", "marker-end": "url(#arrow-ghost)" }));
+  const at = pointAlong(plan, 0.7);
+  group.append(revTag({ glyph: "−", label: String(ghost.count) }, at.x, at.y, "wire-tag", "middle"));
+  const kinds = ghost.parts.map((part) => `${part.kind} × ${part.count}`).join(", ");
+  group.append(svg("title", {}, `${displayGhostEnd(ghost.from)} → ${displayGhostEnd(ghost.to)}\nGone since snapshot ${scene.rev.name}: ${kinds}. Click for details.`));
+  group.addEventListener("click", () => showGhostEdge(ghost, group));
+  group.addEventListener("mouseenter", () => { if (!gesture) hoverCanvas({ nodes: new Set([ghost.from, ghost.to]), edges: new Set([ghost]) }, { edge: ghost }); });
+  group.addEventListener("mouseleave", () => { if (!gesture) hoverCanvas(null); });
+  const item = { edge: ghost, element: group, bounds: planBounds({ ...plan, label: at }) };
+  scene.ghostWireEls.push(item);
+  return item;
+}
+function displayGhostEnd(id) {
+  const ghost = scene && scene.rev && scene.rev.ghosts.find((item) => item.id === id);
+  return ghost ? ghost.file_path || ghost.architecture_id || ghost.title : displayEndpoint(id);
+}
+// A ghost card lit with its gone wires and their other ends.
+function ghostScope(id) {
+  const lit = { nodes: new Set([id]), edges: new Set() };
+  for (const ghost of scene.rev ? scene.rev.ghostEdges : []) {
+    if (ghost.from !== id && ghost.to !== id) continue;
+    lit.edges.add(ghost);
+    lit.nodes.add(ghost.from);
+    lit.nodes.add(ghost.to);
+  }
+  return lit;
+}
+function showGhostEntry(ghost, element) {
+  select(element, ghostScope(ghost.id));
+  selected = { kind: "ghost-entry", id: ghost.id };
+  const panel = detailsTitle(ghostTitle(ghost), ghost.file_path || ghost.architecture_id || ghost.id, `Gone since snapshot ${scene.rev.name}`);
+  revNote(panel, { glyph: "−", text: `The snapshot had this ${ghostKind(ghost)} at this level${ghost.outside_focus ? ", outside the focus" : ""}; the live graph does not.` }, "gone");
+  if (ghost.entry_kind === "architecture" && ghost.architecture_id && tree.byId.has(ghost.architecture_id)) {
+    const actions = html("div", null, "actions");
+    actions.append(actionButton("Show where it is now", () => goToNode(ghost.architecture_id), "secondary"));
+    panel.append(actions);
+  }
+  ghostWireList(panel, ghost.id);
+  revealDetails();
+}
+function showGhostEdge(ghost, element) {
+  select(element, { nodes: new Set([ghost.from, ghost.to]), edges: new Set([ghost]) });
+  selected = { kind: "ghost-edge", id: ghost.id };
+  const kinds = ghost.parts.length === 1 ? `${ghost.parts[0].kind} × ${ghost.count}` : `${ghost.parts.length} kinds × ${ghost.count}`;
+  const panel = detailsTitle(kinds, null, `Gone since snapshot ${scene.rev.name}`);
+  panel.append(html("p", `${displayGhostEnd(ghost.from)}\n→ ${displayGhostEnd(ghost.to)}`, "evidence-pair endpoints"));
+  revNote(panel, { glyph: "−", text: `The snapshot observed this ${ghost.origin === "manual" ? "manual " : ""}dependency; the live graph does not. It is drawn as a grey phantom line with an open arrowhead.` }, "gone");
+  panel.append(html("h3", "Relation kinds"));
+  for (const part of ghost.parts) panel.append(html("p", `${part.kind} × ${part.count}`, "detail-id"));
+  revealDetails();
+}
+// An entry's gone wires, each selecting its phantom line.
+function ghostWireList(panel, id) {
+  const ghosts = scene.rev ? scene.rev.ghostEdges.filter((ghost) => ghost.from === id || ghost.to === id) : [];
+  if (!ghosts.length) return;
+  panel.append(html("h3", `Gone since the snapshot (${ghosts.length})`));
+  const list = html("ul", null, "dependency-list");
+  for (const ghost of ghosts) {
+    const button = html("button", null, "dependency gone");
+    button.type = "button";
+    button.append(pathText(`${ghost.from === id ? "→ " : "← "}${displayGhostEnd(ghost.from === id ? ghost.to : ghost.from)}`, "dependency-name"), html("span", `− ${ghost.count}`, "dependency-count"));
+    button.addEventListener("click", () => { const drawn = scene.ghostWireEls.find((item) => item.edge === ghost); showGhostEdge(ghost, drawn ? drawn.element : null); });
+    const item = html("li");
+    item.append(button);
+    list.append(item);
+  }
+  panel.append(list);
+}
+// How the selected entry or wire changed: a glyph, a sentence, details.
+function revNote(panel, change, className) {
+  const note = html("div", null, `rev-note ${className || change.kind}`);
+  const head = html("p");
+  head.append(html("span", change.glyph, "rev-glyph"), html("span", change.text));
+  note.append(head);
+  for (const line of change.lines || []) note.append(html("p", line, "detail-id"));
+  panel.append(note);
+}
+
+// The level's details: what changed on it since the snapshot.
+function compareSection(panel) {
+  if (!compare.on) return;
+  const section = html("section", null, "compare-section");
+  section.id = "compare-section";
+  const diff = compare.diff && currentProjection && compare.diff.focus === currentProjection.focus.id ? compare.diff : null;
+  section.append(html("h3", `Since snapshot ${compare.name}`));
+  if (!diff) {
+    section.append(html("p", compare.error ? `Cannot compare with ${compare.name}: ${compare.error}` : "Loading the comparison…", compare.error ? "compare-error" : "muted"));
+    panel.append(section);
+    return;
+  }
+  section.append(html("p", `${diff.commit ? `Taken at commit ${shortCommit(diff.commit)}. ` : ""}The canvas marks what changed; the legend explains the marks.`, "muted"));
+  if (diff.warning) section.append(html("p", diff.warning, "compare-warning"));
+  if (!diff.focus_existed) section.append(html("p", `This level did not exist in snapshot ${diff.snapshot}: everything on it is new.`, "rev-note new"));
+  const counts = html("dl", null, "compare-counts");
+  const row = (label, parts) => {
+    const shown = parts.filter(([count]) => count);
+    const data = html("dd");
+    if (!shown.length) data.append(html("span", "no change", "muted"));
+    for (const [count, glyph, text, className] of shown) {
+      const chip = html("span", null, `rev-chip ${className}`);
+      chip.append(html("span", glyph, "rev-glyph"), html("span", `${count} ${text}`));
+      data.append(chip);
+    }
+    const item = html("div", null, "compare-count");
+    item.append(html("dt", label), data);
+    counts.append(item);
+  };
+  row("Entries", [[diff.entries_added.length, "+", "new", "new"], [diff.entries_moved.length, "↦", "moved", "changed"],
+    [diff.entries_resized.length, "±", "resized", "changed"], [diff.entries_removed.length, "−", "gone", "gone"]]);
+  row("Dependencies by kind", [[diff.edges_added.length, "+", "new", "new"], [diff.edges_changed.length, "±", "changed count", "changed"], [diff.edges_removed.length, "−", "gone", "gone"]]);
+  row("Violations", [[diff.violations_appeared.length, "+", "appeared", "alert"], [diff.violations_resolved.length, "✓", "resolved", "resolved"]]);
+  section.append(counts);
+  violationChanges(section, "Violations that appeared", diff.violations_appeared, true);
+  violationChanges(section, "Violations resolved", diff.violations_resolved, false);
+  if (diff.entries_removed.length) {
+    section.append(html("h4", `Gone from this level (${diff.entries_removed.length})`));
+    const list = html("ul", null, "dependency-list");
+    for (const ghost of diff.entries_removed) {
+      const drawn = scene && scene.ghostEls && scene.ghostEls.get(ghost.id);
+      const button = html("button", null, "dependency gone");
+      button.type = "button";
+      button.append(pathText(ghost.file_path || ghost.architecture_id || ghost.title, "dependency-name"), html("span", ghostKind(ghost), "dependency-count"));
+      if (drawn) button.addEventListener("click", () => { showGhostEntry(ghost, drawn); centreOnBox(scene.ghostBoxes.get(ghost.id)); });
+      else button.disabled = true;
+      const item = html("li");
+      item.append(button);
+      list.append(item);
+    }
+    section.append(list);
+    if (scene && scene.rev && scene.rev.hiddenGhosts) section.append(html("p", `The canvas draws the first ${GHOST_LIMIT} of them.`, "notice"));
+  }
+  fileChanges(section, diff.summary);
+  panel.append(section);
+}
+// Violations by rule and nodes; one that is still there opens its evidence.
+function violationChanges(section, heading, keys, live) {
+  if (!keys.length) return;
+  section.append(html("h4", `${heading} (${keys.length})`));
+  const list = html("ul", null, "plain-list");
+  const same = (a, b) => (a ?? null) === (b ?? null);
+  for (const key of keys) {
+    const found = live && allViolations.find((violation) => violation.rule_id === key.rule_id && same(violation.from, key.from) && same(violation.to, key.to)
+      && same(violation.edge_kind, key.edge_kind) && (key.from || JSON.stringify([...(violation.nodes || [])].sort()) === JSON.stringify([...key.nodes].sort())));
+    const where = key.from ? `${key.from} → ${key.to}${key.edge_kind ? ` (${key.edge_kind})` : ""}` : key.nodes.join(", ");
+    const button = html("button", null, `overview-violation${live ? "" : " resolved"}`);
+    button.type = "button";
+    button.append(html("span", `${live ? "+" : "✓"} ${key.rule_id}`, "violation-rule"), html("span", where, "violation-message"));
+    if (found) button.addEventListener("click", () => openViolation(found));
+    else button.disabled = true;
+    const item = html("li");
+    item.append(button);
+    list.append(item);
+  }
+  section.append(list);
+}
+// The subtree's files: moved, added, removed and assigned to another node.
+function fileChanges(section, summary) {
+  if (!summary) return;
+  const groups = [
+    ["Moved", summary.files_moved, (item) => [item.to, `from ${item.from}`, true]],
+    ["Added", summary.files_added, (item) => [item.path, item.node || "unassigned", true]],
+    ["Removed", summary.files_removed, (item) => [item.path, item.node || "unassigned", false]],
+    ["Assigned to another node", summary.files_reassigned, (item) => [item.path, `${item.node_before || "none"} → ${item.node_after || "none"}`, true]],
+  ].filter(([, items]) => items.length);
+  if (!groups.length) return;
+  section.append(html("h4", "Files in this subtree"));
+  for (const [heading, items, parts] of groups) {
+    const fold = html("details", null, "file-changes");
+    fold.open = items.length <= 8;
+    fold.append(html("summary", `${heading} (${items.length})`));
+    const list = html("ul", null, "plain-list");
+    for (const item of items.slice(0, 200)) {
+      const [path, note, exists] = parts(item);
+      const row = html("li", null, "file-change");
+      row.append(exists ? sourceButton(path, { path }, "source-link detail-id") : html("span", path, "detail-id gone-path"), html("span", note, "file-change-note"));
+      list.append(row);
+    }
+    fold.append(list);
+    if (items.length > 200) fold.append(html("p", `${items.length - 200} more; archgraph diff lists them all.`, "notice"));
+    section.append(fold);
+  }
+}
+function centreOnBox(box) {
+  if (!box || view !== "diagram") return;
+  const size = stageSize(), k = Math.max(camera.k, 0.9);
+  animateTo({ k, x: size.width / 2 - (box.x + box.width / 2) * k, y: size.height / 2 - (box.y + box.height / 2) * k });
+}
+
+// The Compare control: while it is on its label names the snapshot, and a
+// badge counts the level's changes.
+function updateCompareUI() {
+  const button = $("compare-button"), count = $("compare-count");
+  const active = compare.on && Boolean(compare.name);
+  button.classList.toggle("active", active);
+  $("compare-label").textContent = active ? `Since ${compact(compare.name, 16)}` : "Compare";
+  button.title = active ? `Drawing what changed since snapshot ${compare.name}` : "Draw what changed since a saved snapshot";
+  const diff = active && compare.diff && currentProjection && compare.diff.focus === currentProjection.focus.id ? compare.diff : null;
+  count.hidden = !active || (!compare.error && !diff);
+  count.classList.toggle("warn", Boolean(compare.error));
+  count.textContent = compare.error ? "!" : diff && !diff.focus_existed ? "new" : String(changeCount(diff));
+  $("compare-only").checked = compare.only;
+  $("compare-only").disabled = !active;
+  if (!$("compare-panel").hidden) renderComparePanel();
+}
+function renderComparePanel() {
+  const list = $("compare-list"), note = $("compare-note");
+  list.replaceChildren();
+  note.replaceChildren();
+  const option = (value, title, sub) => {
+    const label = html("label", null, "compare-option");
+    const input = html("input");
+    Object.assign(input, { type: "radio", name: "compare-snapshot", value, checked: value === (compare.on ? compare.name : "") });
+    input.addEventListener("change", () => { if (input.checked) setCompare(value ? { on: true, name: value } : { on: false }); });
+    const text = html("span", null, "compare-option-text");
+    text.append(html("span", title, "compare-option-title"));
+    if (sub) text.append(html("span", sub, "compare-option-sub"));
+    label.append(input, text);
+    list.append(label);
+  };
+  option("", "Off", null);
+  const snapshots = compare.snapshots || [];
+  for (const item of snapshots) option(item.name, item.name, item.commit ? `commit ${shortCommit(item.commit)}` : "no commit recorded");
+  if (compare.snapshots && compare.name && !snapshots.some((item) => item.name === compare.name)) option(compare.name, compare.name, "not found");
+  if (compare.error) note.append(html("p", `Cannot compare with ${compare.name}: ${compare.error}`, "compare-error"));
+  if (compare.listError) note.append(html("p", `Cannot list the snapshots: ${compare.listError}`, "compare-error"));
+  if (!compare.enabled) note.append(html("p", "This server shows a fixed compile without its repository, so it has no snapshots to compare with.", "muted"));
+  else if (compare.snapshots && !snapshots.length) {
+    const how = html("p");
+    how.append("No snapshot is saved yet. Run ", html("code", "archgraph snapshot"), " in the repository before a refactoring, and the canvas then draws what changed since. ",
+      html("code", "--name NAME"), " keeps several.");
+    note.append(how);
+  } else if (compare.snapshots) {
+    const how = html("p", null, "muted");
+    how.append("Take another with ", html("code", "archgraph snapshot --name NAME"), ".");
+    note.append(how);
+  }
+}
+$("compare-button").addEventListener("click", async () => {
+  const opening = $("compare-panel").hidden;
+  togglePopover($("compare-button"), $("compare-panel"));
+  if (!opening) return;
+  renderComparePanel();
+  await loadSnapshots();
+  if (!$("compare-panel").hidden) renderComparePanel();
+});
+$("compare-only").addEventListener("change", () => setCompareOnly($("compare-only").checked));
+
 // ---------------------------------------------------------------- navigation
 async function loadFocus(id, pushHistory = true, options = {}) {
   const request = ++focusRequest;
@@ -3497,8 +4124,11 @@ async function loadFocus(id, pushHistory = true, options = {}) {
     dive = animateTo(cameraFor(scene.positions.get(entering.id), { maxK: 4, pad: -60 }), 300);
   }
   try {
-    const [projection] = await Promise.all([api(`/api/focus/${encodeURIComponent(id)}`), dive]);
+    // Comparing with a snapshot: the level's changes come with it.
+    const [projection, compared] = await Promise.all([api(`/api/focus/${encodeURIComponent(id)}`), compare.on ? fetchDiff(id) : null, dive]);
     if (request !== focusRequest) return;
+    ++compare.request;
+    Object.assign(compare, compared || { diff: null, error: null });
     const sameFocus = previous !== null && previous.focus.id === projection.focus.id;
     const keep = { ...camera };
     currentProjection = projection;
@@ -3521,6 +4151,7 @@ async function loadFocus(id, pushHistory = true, options = {}) {
     renderTree();
     renderViolationList();
     renderView();
+    updateCompareUI();
     showOverview();
     if (view === "diagram") {
       const target = initialCamera();
@@ -3569,6 +4200,8 @@ applyPanels();
 (async () => {
   try {
     meta = await api("/api/meta");
+    loadCompareSettings();
+    updateCompareUI();
     showNotesButton();
     showRefreshState(false);
     await loadTree();

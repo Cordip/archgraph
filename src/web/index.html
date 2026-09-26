@@ -82,6 +82,9 @@
           <marker id="via-n4" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n4"/></marker>
           <marker id="via-n5" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via n5"/></marker>
           <marker id="via" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse"><circle cx="5" cy="5" r="3.4" class="via"/></marker>
+          <!-- Comparing with a snapshot: a dependency that is gone ends in an open arrowhead, and an entry that is gone is hatched. -->
+          <marker id="arrow-ghost" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="11" markerHeight="11" markerUnits="userSpaceOnUse" orient="auto-start-reverse"><path d="M 1.5 1 L 9 5 L 1.5 9" class="arrow-ghost"/></marker>
+          <pattern id="ghost-hatch" width="9" height="9" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><path d="M0 0V9" class="ghost-hatch"/></pattern>
         </defs>
         <rect id="grid-bg" class="grid-bg" width="100%" height="100%" fill="url(#grid)"/>
         <g id="graph" role="group" aria-label="Focused architecture dependency graph"></g>
@@ -100,6 +103,8 @@
         </form>
         <div class="tool-card tool-row">
           <button type="button" id="filters-button" aria-expanded="false" aria-controls="filters-panel">Filters<span id="filters-count" class="badge" hidden></span></button>
+          <button type="button" id="compare-button" aria-expanded="false" aria-controls="compare-panel" title="Draw what changed since a saved snapshot">
+            <svg viewBox="0 0 20 20" aria-hidden="true" focusable="false"><path d="M10 3.5 17 16.5H3z"/></svg><span id="compare-label">Compare</span><span id="compare-count" class="badge" hidden></span></button>
           <button type="button" id="reset-layout" title="Put every entry back where the layout placed it">Reset layout</button>
           <button type="button" id="collapse-groups" hidden>Collapse groups</button>
         </div>
@@ -141,6 +146,15 @@
             <div id="filter-kinds"></div>
           </fieldset>
           <button type="button" id="filters-reset">Show everything</button>
+        </div>
+        <div id="compare-panel" class="tool-card popover compare-panel" role="group" aria-labelledby="compare-heading" hidden>
+          <h2 id="compare-heading">Compare with a snapshot</h2>
+          <fieldset>
+            <legend class="visually-hidden">Snapshot</legend>
+            <div id="compare-list"></div>
+          </fieldset>
+          <label><input type="checkbox" id="compare-only"> Only changes; dim the rest</label>
+          <div id="compare-note" class="compare-note"></div>
         </div>
       </div>
       <div class="tools tools-bottom">
