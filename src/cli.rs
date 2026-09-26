@@ -7,7 +7,7 @@ use crate::{
     provider::{gitnexus::GitNexusCliProvider, ReindexMode},
     render,
     rules::violation_touches,
-    server, suggest, vcs,
+    server, snapshot, suggest, vcs,
 };
 use anyhow::{bail, Context, Result};
 use clap::{Parser, Subcommand, ValueEnum};
@@ -109,6 +109,27 @@ pub enum Commands {
         reindex: Option<ReindexMode>,
         #[arg(long)]
         baseline: Option<PathBuf>,
+    },
+    /// Compile fresh and save the result as a snapshot in
+    /// `.archgraph/snapshots/`, to compare later work against (`diff`, the UI).
+    Snapshot {
+        /// Refresh the provider index first: `--reindex` (incremental) or
+        /// `--reindex=full` (after package.json/tsconfig changes).
+        #[arg(long, value_enum, num_args = 0..=1, require_equals = true, default_missing_value = "incremental")]
+        reindex: Option<ReindexMode>,
+        /// Snapshot name; an existing snapshot of that name is replaced.
+        #[arg(long, default_value = snapshot::DEFAULT_NAME)]
+        name: String,
+    },
+    /// Compile fresh and report what changed since a snapshot: violation
+    /// observations, dependencies and files, in all or a subtree.
+    Diff {
+        node: Option<String>,
+        /// The snapshot to compare with.
+        #[arg(long, default_value = snapshot::DEFAULT_NAME)]
+        snapshot: String,
+        #[arg(long)]
+        json: bool,
     },
     /// Compile fresh and render one semantic focus level.
     Show {
@@ -235,7 +256,8 @@ pub async fn run(cli: Cli) -> Result<u8> {
         | Commands::Show { node, .. }
         | Commands::Styles { node, .. }
         | Commands::Http { node, .. }
-        | Commands::Unused { node, .. } => node.as_deref(),
+        | Commands::Unused { node, .. }
+        | Commands::Diff { node, .. } => node.as_deref(),
         Commands::Context { node, .. } => Some(node.as_str()),
         _ => None,
     };
@@ -262,11 +284,21 @@ pub async fn run(cli: Cli) -> Result<u8> {
             bail!("unknown architecture node `{id}`; inspect architecture.yaml or use UI search");
         }
     }
+    // A missing or unreadable snapshot fails before the compile it would waste.
+    let saved = match &cli.command {
+        Commands::Snapshot { name, .. } => {
+            snapshot::validate_name(name)?;
+            None
+        }
+        Commands::Diff { snapshot: name, .. } => Some(snapshot::load(&root, name)?),
+        _ => None,
+    };
     let provider = GitNexusCliProvider::new(&root, &validated.config.provider)?;
     let reindex = match &cli.command {
         Commands::Compile { reindex, .. }
         | Commands::Check { reindex, .. }
         | Commands::Baseline { reindex, .. }
+        | Commands::Snapshot { reindex, .. }
         | Commands::Serve { reindex, .. } => *reindex,
         _ => None,
     };
@@ -469,6 +501,38 @@ pub async fn run(cli: Cli) -> Result<u8> {
             );
             Ok(0)
         }
+        Commands::Snapshot { name, .. } => {
+            let path = snapshot::save(&root, &name, &ir, vcs::head_commit(&root))?;
+            outln!(
+                "Saved snapshot `{name}`: {} file(s), {} dependency observation(s), {} violation(s) in {}",
+                ir.stats.mapped_file_count,
+                ir.resolved_edges.len(),
+                ir.violations.len(),
+                path.display()
+            );
+            outln!(
+                "Compare with it: archgraph diff{}",
+                if name == snapshot::DEFAULT_NAME {
+                    String::new()
+                } else {
+                    format!(" --snapshot {name}")
+                }
+            );
+            Ok(0)
+        }
+        Commands::Diff { node, json, .. } => {
+            let saved = saved.context("internal error: diff without a snapshot")?;
+            let (diff, rename_error) = diff_with_renames(&root, &saved, &ir, node.as_deref());
+            if let Some(error) = &rename_error {
+                eprintln!("warning: moved files are shown as removed and added: {error}");
+            }
+            if json {
+                outln!("{}", render::json::render(&diff)?);
+            } else {
+                out!("{}", render::diff::render(&diff));
+            }
+            Ok(0)
+        }
         Commands::Show { node, format } => {
             let focus = node.as_deref().unwrap_or(&ir.project.root);
             let view = projection::project(&ir, focus, EVIDENCE_LIMIT)?;
@@ -592,6 +656,29 @@ pub async fn run(cli: Cli) -> Result<u8> {
             Ok(0)
         }
         Commands::Init { .. } => Ok(0), // Handled before loading config/provider.
+    }
+}
+
+/// The diff against a snapshot, asking Git about renames only when files
+/// both disappeared and appeared. A Git failure leaves moves as a removed
+/// and an added file, and is returned to be reported.
+pub fn diff_with_renames(
+    root: &Path,
+    saved: &snapshot::Snapshot,
+    ir: &ArchitectureIr,
+    node: Option<&str>,
+) -> (snapshot::Diff, Option<String>) {
+    let no_renames = std::collections::BTreeMap::new();
+    // Decided on the whole architecture: a file may move out of the subtree.
+    let everything = snapshot::diff(saved, ir, None, &no_renames);
+    let may_have_moved = !everything.files_added.is_empty() && !everything.files_removed.is_empty();
+    let without_renames = || snapshot::diff(saved, ir, node, &no_renames);
+    let (true, Some(commit)) = (may_have_moved, &saved.commit) else {
+        return (without_renames(), None);
+    };
+    match vcs::renames_since(root, commit) {
+        Ok(renames) => (snapshot::diff(saved, ir, node, &renames), None),
+        Err(error) => (without_renames(), Some(format!("{error:#}"))),
     }
 }
 

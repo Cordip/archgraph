@@ -16,6 +16,7 @@ pub mod provider;
 pub mod render;
 pub mod rules;
 pub mod server;
+pub mod snapshot;
 pub mod source;
 pub mod suggest;
 pub mod vcs;

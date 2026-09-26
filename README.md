@@ -262,6 +262,33 @@ cycle path. Each participating architecture edge has its own evidence sample.
 Interfaces are descriptive metadata: only `name` and `kind` are required, and
 kinds are open strings. They do not establish runtime compatibility.
 
+## Snapshots: what a refactoring changed
+
+A refactoring moves files and cuts dependencies over many steps, and a
+check only says where it stands now. `archgraph snapshot [--name NAME]`
+compiles fresh and saves the result in `.archgraph/snapshots/NAME.json`
+(default `before`), with the Git commit it was taken at; a snapshot of the
+same name is replaced. Like everything in `.archgraph/`, it is never
+committed and leaves the repository's Git status clean, so it works in both
+modes of [Where the architecture file lives](#where-the-architecture-file-lives).
+
+`archgraph diff [NODE] [--snapshot NAME] [--json]` compiles fresh and
+reports what changed since, in the whole architecture or the subtree of
+`NODE`:
+
+- violation observations (rule and file pair, as in a baseline) that
+  appeared and that were resolved;
+- file dependencies added and removed, with the nodes at both ends;
+- files added, removed and moved, and files the architecture now assigns to
+  another node (an edit of `maps`).
+
+A file moved since the snapshot stays one file: as with a baseline, Git is
+asked which files were renamed since the snapshot's commit, committed or
+not, and the snapshot's paths follow them, so a moved file's dependencies
+and violations are not reported as removed and added again. Without Git,
+or when Git fails (a warning says so), a move is a removed and an added
+file. `diff` is a report and exits 0; it changes nothing.
+
 ## CLI reference
 
 Global `--root PATH` and `--config PATH` work before or after a subcommand.
@@ -302,6 +329,11 @@ archgraph packages ortools --json
 
 archgraph unused
 archgraph unused app.web --json
+
+archgraph snapshot
+archgraph snapshot --name before-split
+archgraph diff
+archgraph diff app.billing --snapshot before-split --json
 
 archgraph serve
 archgraph serve --reindex --port 7331 --host 127.0.0.1
@@ -931,9 +963,22 @@ GET /api/violations
 GET /api/search?q=...
 GET /api/packages
 GET /api/source?path=<repository-relative path>[&if_hash=<hash>]
+GET /api/snapshots
+GET /api/diff/{node_id}[?snapshot=<name>]
 ```
 
-`/api/source` is the only endpoint that reads repository files, and its scope
+`/api/diff` compares one level with the same level of a saved snapshot
+(default `before`): entries added, removed, moved (a file renamed since the
+snapshot) and resized; edges added, removed and with another count;
+violations that appeared and were resolved; and the subtree's file-level
+diff as `archgraph diff` reports it. A snapshot name is a file name of
+letters, digits, `-`, `_` and `.`, not starting with a dot (`invalid`
+otherwise), and a missing snapshot or node is refused (`missing`,
+`unknown_node`). The parsed snapshot is kept while its file and the live
+revision are unchanged.
+
+`/api/source` is the only endpoint that reads source files (`/api/diff` reads
+only `.archgraph/snapshots/` and asks Git about renames), and its scope
 is narrow. It serves a file only when the architecture being served maps it
 to a node (files that are excluded, outside `source_roots`, unassigned or
 ambiguous are refused, whatever is on disk), and only as UTF-8 text. The

@@ -1,7 +1,7 @@
 use crate::{
     model::{ArchitectureIr, EVIDENCE_LIMIT},
     projection::{self, NodeSummary, Projection},
-    source,
+    snapshot, source, vcs,
 };
 use anyhow::{Context, Result};
 use axum::{
@@ -15,10 +15,11 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     net::{IpAddr, SocketAddr},
     path::{Path as FilePath, PathBuf},
-    sync::{Arc, RwLock},
+    sync::{Arc, Mutex, RwLock},
+    time::SystemTime,
 };
 
 /// The architecture being served. `serve` replaces it when the index or the
@@ -29,7 +30,24 @@ pub struct Live {
     watching: bool,
     /// The canonical repository root, when the server may show the source
     /// of mapped files (`GET /api/source`); `None` refuses every request.
+    /// Snapshots (`GET /api/diff`) are read from under it too.
     source_root: Option<PathBuf>,
+    /// The snapshot last compared with, so that moving around the levels
+    /// does not parse it (tens of megabytes on zammad) and ask Git about
+    /// renames again for every request.
+    compared: Mutex<Option<Compared>>,
+}
+
+#[derive(Debug)]
+struct Compared {
+    name: String,
+    /// The snapshot file's size and modification time when it was read.
+    stamp: (u64, SystemTime),
+    /// The live revision the renames were found for.
+    revision: u64,
+    snapshot: Arc<snapshot::Snapshot>,
+    renames: Arc<BTreeMap<String, String>>,
+    rename_error: Option<String>,
 }
 
 #[derive(Debug)]
@@ -50,6 +68,7 @@ impl Live {
             }),
             watching,
             source_root: None,
+            compared: Mutex::new(None),
         })
     }
     /// Like `new`, and serves the source of mapped files under `root`.
@@ -65,6 +84,7 @@ impl Live {
             }),
             watching,
             source_root: Some(root),
+            compared: Mutex::new(None),
         }))
     }
     fn read(&self) -> std::sync::RwLockReadGuard<'_, LiveState> {
@@ -117,6 +137,8 @@ pub fn live_router(live: Arc<Live>) -> Router {
         .route("/api/search", get(search))
         .route("/api/packages", get(packages))
         .route("/api/source", get(source))
+        .route("/api/snapshots", get(snapshots))
+        .route("/api/diff/{node_id}", get(diff))
         .fallback(not_found)
         .layer(middleware::map_response(security_headers))
         .with_state(live)
@@ -300,6 +322,185 @@ async fn source(
     .map_err(|error| refused(500, "internal", format!("reading the file failed: {error}")))?;
     read.map(Json)
         .map_err(|refusal| refused(refusal.status, refusal.reason, refusal.message))
+}
+type Refusal = (StatusCode, Json<Value>);
+
+fn refusal(status: StatusCode, reason: &str, message: String) -> Refusal {
+    (status, Json(json!({"error": message, "reason": reason})))
+}
+
+/// Saved snapshots, for the UI's comparison menu.
+async fn snapshots(State(live): State<Arc<Live>>) -> std::result::Result<Json<Value>, Refusal> {
+    let Some(root) = live.source_root.clone() else {
+        return Ok(Json(json!({"enabled": false, "snapshots": []})));
+    };
+    let listed = tokio::task::spawn_blocking(move || snapshot::list(&root))
+        .await
+        .map_err(|error| {
+            refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                error.to_string(),
+            )
+        })?
+        .map_err(|error| {
+            refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "unreadable",
+                format!("{error:#}"),
+            )
+        })?;
+    Ok(Json(json!({"enabled": true, "snapshots": listed})))
+}
+
+#[derive(Deserialize)]
+struct DiffQuery {
+    #[serde(default)]
+    snapshot: String,
+}
+
+/// The snapshot and the renames since it, read again only when the file or
+/// the live revision changed.
+/// A snapshot, the renames since it (old -> new path) and why they could
+/// not be found.
+type Comparison = (
+    Arc<snapshot::Snapshot>,
+    Arc<BTreeMap<String, String>>,
+    Option<String>,
+);
+
+fn compared(
+    live: &Live,
+    root: &FilePath,
+    name: &str,
+    ir: &ArchitectureIr,
+    revision: u64,
+) -> std::result::Result<Comparison, Refusal> {
+    let path = snapshot::path(root, name)
+        .map_err(|error| refusal(StatusCode::BAD_REQUEST, "invalid", format!("{error:#}")))?;
+    let stamp = std::fs::metadata(&path)
+        .and_then(|metadata| Ok((metadata.len(), metadata.modified()?)))
+        .map_err(|_| {
+            refusal(
+                StatusCode::NOT_FOUND,
+                "missing",
+                format!(
+                    "no snapshot named `{name}`; take one with `archgraph snapshot --name {name}`"
+                ),
+            )
+        })?;
+    let mut cache = live
+        .compared
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(cached) = cache.as_ref() {
+        if cached.name == name && cached.stamp == stamp && cached.revision == revision {
+            return Ok((
+                cached.snapshot.clone(),
+                cached.renames.clone(),
+                cached.rename_error.clone(),
+            ));
+        }
+    }
+    let loaded = match cache.as_ref() {
+        Some(cached) if cached.name == name && cached.stamp == stamp => cached.snapshot.clone(),
+        _ => Arc::new(snapshot::load(root, name).map_err(|error| {
+            refusal(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "unreadable",
+                format!("{error:#}"),
+            )
+        })?),
+    };
+    // Git is asked only when files differ: a rename needs a file gone and one new.
+    let files_differ = !loaded
+        .ir
+        .files
+        .iter()
+        .map(|file| &file.path)
+        .eq(ir.files.iter().map(|file| &file.path));
+    let (renames, rename_error) = match &loaded.commit {
+        Some(commit) if files_differ => match vcs::renames_since(root, commit) {
+            Ok(renames) => (renames, None),
+            Err(error) => (
+                BTreeMap::new(),
+                Some(format!(
+                    "moved files are shown as removed and added: {error:#}"
+                )),
+            ),
+        },
+        _ => (BTreeMap::new(), None),
+    };
+    let renames = Arc::new(renames);
+    *cache = Some(Compared {
+        name: name.to_owned(),
+        stamp,
+        revision,
+        snapshot: loaded.clone(),
+        renames: renames.clone(),
+        rename_error: rename_error.clone(),
+    });
+    Ok((loaded, renames, rename_error))
+}
+
+/// One level compared with the same level in a snapshot.
+async fn diff(
+    State(live): State<Arc<Live>>,
+    Path(id): Path<String>,
+    Query(query): Query<DiffQuery>,
+) -> std::result::Result<Json<Value>, Refusal> {
+    let Some(root) = live.source_root.clone() else {
+        return Err(refusal(
+            StatusCode::NOT_FOUND,
+            "disabled",
+            "this server has no snapshots; run archgraph serve in the repository".into(),
+        ));
+    };
+    let (ir, revision) = {
+        let state = live.read();
+        (state.ir.clone(), state.revision)
+    };
+    if !ir.nodes.contains_key(&id) {
+        return Err(refusal(
+            StatusCode::NOT_FOUND,
+            "unknown_node",
+            format!("unknown architecture node `{id}`; use search"),
+        ));
+    }
+    let name = if query.snapshot.is_empty() {
+        snapshot::DEFAULT_NAME.to_owned()
+    } else {
+        query.snapshot
+    };
+    let worker = live.clone();
+    tokio::task::spawn_blocking(move || {
+        let (saved, renames, warning) = compared(&worker, &root, &name, &ir, revision)?;
+        let level = snapshot::level_diff(&saved, &ir, &id, &renames).map_err(|error| {
+            refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                format!("{error:#}"),
+            )
+        })?;
+        let mut value = serde_json::to_value(level).map_err(|error| {
+            refusal(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "internal",
+                error.to_string(),
+            )
+        })?;
+        value["revision"] = json!(revision);
+        value["warning"] = json!(warning);
+        Ok(Json(value))
+    })
+    .await
+    .map_err(|error| {
+        refusal(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "internal",
+            error.to_string(),
+        )
+    })?
 }
 async fn not_found() -> impl IntoResponse {
     (

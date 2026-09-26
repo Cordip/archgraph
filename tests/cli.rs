@@ -1045,6 +1045,113 @@ fn a_file_moved_since_the_baseline_keeps_its_accepted_observations() {
     );
 }
 
+#[test]
+fn diff_reports_violations_and_dependencies_since_a_snapshot() {
+    let fixture = Fixture::new();
+    let snapshot = fixture.run(&["snapshot"], "clean");
+    assert!(
+        snapshot.status.success(),
+        "{}",
+        String::from_utf8_lossy(&snapshot.stderr)
+    );
+    assert!(fixture
+        .root
+        .path()
+        .join(".archgraph/snapshots/before.json")
+        .exists());
+
+    // The provider result is cached per index; the fake's index never changes.
+    let output = fixture.run(&["--no-cache", "diff", "--json"], "violation");
+    assert_eq!(output.status.code(), Some(0));
+    let diff: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(diff["snapshot"], "before");
+    assert_eq!(
+        diff["violations_appeared"],
+        serde_json::json!([{"rule_id": "denied", "from_file": "src/a.rs", "to_file": "src/b.rs", "kind": "IMPORTS"}])
+    );
+    assert_eq!(diff["dependencies_added"].as_array().unwrap().len(), 1);
+    assert_eq!(diff["violations_resolved"], serde_json::json!([]));
+
+    let text = fixture.run(&["--no-cache", "diff"], "violation");
+    let text = String::from_utf8_lossy(&text.stdout);
+    assert!(
+        text.contains("New violation observations (1):\n  [denied] src/a.rs -> src/b.rs [IMPORTS]"),
+        "{text}"
+    );
+
+    // A subtree the change does not touch has nothing to report.
+    let scoped = fixture.run(&["--no-cache", "diff", "app.c"], "violation");
+    assert!(
+        String::from_utf8_lossy(&scoped.stdout).contains("No changes"),
+        "{}",
+        String::from_utf8_lossy(&scoped.stdout)
+    );
+
+    // The other way round, the violation is resolved.
+    assert!(fixture
+        .run(&["--no-cache", "snapshot", "--name", "broken"], "violation")
+        .status
+        .success());
+    let fixed = fixture.run(
+        &["--no-cache", "diff", "--snapshot", "broken", "--json"],
+        "clean",
+    );
+    let fixed: Value = serde_json::from_slice(&fixed.stdout).unwrap();
+    assert_eq!(fixed["violations_resolved"].as_array().unwrap().len(), 1);
+    assert_eq!(fixed["violations_appeared"], serde_json::json!([]));
+}
+
+#[test]
+fn diff_refuses_unknown_and_unsafe_snapshot_names() {
+    let fixture = Fixture::new();
+
+    let missing = fixture.run(&["diff", "--snapshot", "nothing"], "clean");
+    let unsafe_name = fixture.run(&["snapshot", "--name", "../outside"], "clean");
+
+    assert_eq!(missing.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&missing.stderr).contains("no snapshot named `nothing`"));
+    assert_eq!(unsafe_name.status.code(), Some(1));
+    assert!(!fixture.root.path().join(".archgraph/outside.json").exists());
+}
+
+#[test]
+fn a_file_moved_since_a_snapshot_is_one_moved_file() {
+    let fixture = Fixture::new();
+    let root = fixture.root.path();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .current_dir(root)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    };
+    // Git does not match empty files as renames.
+    let source: String = (0..30).map(|line| format!("fn f{line}() {{}}\n")).collect();
+    std::fs::write(root.join("src/a.rs"), &source).unwrap();
+    git(&["init", "-q"]);
+    git(&["add", "-A"]);
+    git(&["commit", "-qm", "base"]);
+    assert!(fixture.run(&["snapshot"], "violation").status.success());
+
+    // Moved and edited in the working tree, not committed.
+    std::fs::remove_file(root.join("src/a.rs")).unwrap();
+    std::fs::write(root.join("src/a_renamed.rs"), source + "fn extra() {}\n").unwrap();
+    let output = fixture.run(&["--no-cache", "diff", "--json"], "violation_renamed");
+    let diff: Value = serde_json::from_slice(&output.stdout).unwrap();
+
+    assert_eq!(
+        diff["files_moved"],
+        serde_json::json!([{"from": "src/a.rs", "to": "src/a_renamed.rs", "node_before": "app.a", "node_after": "app.a"}])
+    );
+    assert_eq!(diff["files_added"], serde_json::json!([]));
+    assert_eq!(diff["files_removed"], serde_json::json!([]));
+    // The violation moved with its file; it did not appear or go away.
+    assert_eq!(diff["violations_appeared"], serde_json::json!([]));
+    assert_eq!(diff["violations_resolved"], serde_json::json!([]));
+}
+
 fn http_get(port: u16, path: &str) -> Option<Value> {
     use std::io::{Read, Write};
     let mut stream = std::net::TcpStream::connect(("127.0.0.1", port)).ok()?;
