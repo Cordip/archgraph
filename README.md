@@ -814,9 +814,13 @@ band of tracks per channel wide enough for the ribbon. Manual dependencies
 never merge.
 
 **Focus** (the button next to Colour, on by default): on a level with more
-than 60 drawn wires, the wires are dimmed (but not below 35%) until an entry,
-a wire or a legend row is pointed at or selected, and then only its wires
-are drawn at full strength. Trunks and violations stay at full strength.
+than 60 drawn wires, the other wires are drawn lighter and solid (their dash
+patterns return when they are lit) until an entry, a wire or a legend row is
+pointed at or selected, and then only its wires are drawn at full strength.
+Trunks, violations and every arrowhead stay at full strength, and each wire
+turns solid and full-coloured for its last stretch before the arrowhead, so
+the direction reads without pointing. Arrowheads carry a thin casing of the
+sheet's colour and keep at least 11 px on screen.
 The setting is remembered with the mode and colouring.
 
 **Zoomed out.** Wires keep at least 1.5 px on screen, trunk strands 2 to 3
