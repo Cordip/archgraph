@@ -218,9 +218,11 @@ def spacing_problems(page, pitch):
 
 
 def camera(page):
-    """The canvas camera as (x, y, k), parsed from the #graph transform."""
+    """The canvas camera as (x, y, k), parsed from the #graph transform (the
+    drawing starts half a canvas above and left of the canvas: overscan)."""
     numbers = [float(n) for n in re.findall(r"-?[\d.]+", page.locator("#graph").get_attribute("transform"))]
-    return numbers[0], numbers[1], numbers[2]
+    box = page.locator("#canvas").bounding_box()
+    return numbers[0] - box["width"] / 2, numbers[1] - box["height"] / 2, numbers[2]
 
 
 def main():
@@ -331,7 +333,7 @@ def main():
         checks.append("keyboard navigation between entries, highlighted neighbourhood, dependency rows and canvas entries light each other on hover, dependency list to edge evidence, Escape back to the level")
 
         # Canvas: drag empty space to pan, wheel to zoom at the pointer.
-        stage = page.locator("#stage").bounding_box()
+        stage = page.locator("#canvas").bounding_box()
         x0, y0, k0 = camera(page)
         page.mouse.move(stage["x"] + 20, stage["y"] + stage["height"] / 2)
         page.mouse.down()
@@ -352,6 +354,19 @@ def main():
         assert k2 > k1 * 1.3, (k1, k2)
         assert abs((px - x2) / k2 - world[0]) < 0.5 and abs((py - y2) / k2 - world[1]) < 0.5
         assert page.locator("#zoom-level").inner_text() == f"{round(k2 * 100)}%"
+        # A pan of 45% of the canvas is still one moving picture, and the
+        # drawing is rendered far enough beyond the canvas (overscan) that no
+        # blank strip shows at its edge.
+        empty = page.evaluate("""() => { const c = document.getElementById('canvas').getBoundingClientRect();
+            for (let y = c.top + c.height * 0.3; y < c.bottom - 60; y += 23) for (let x = c.right - 60; x > c.left + c.width * 0.6; x -= 29)
+                if (document.elementFromPoint(x, y).id === 'grid-bg') return [x, y]; return null; }""")
+        page.mouse.move(*empty)
+        page.mouse.down()
+        page.mouse.move(empty[0] - stage["width"] * 0.45, empty[1] - 10, steps=8)
+        cover = page.evaluate("""() => { const s = document.getElementById('stage').getBoundingClientRect(), c = document.getElementById('canvas').getBoundingClientRect();
+            return [document.getElementById('viewport').style.transform, s.left <= c.left + 0.5 && s.top <= c.top + 0.5 && s.right >= c.right - 0.5 && s.bottom >= c.bottom - 0.5]; }""")
+        page.mouse.up()
+        assert cover[0] != "" and cover[1], cover
         page.locator("#zoom-fit").click()
         page.wait_for_timeout(500)
         checks.append("pan by dragging empty space, wheel zoom anchored at the pointer, zoom to fit")
@@ -533,7 +548,7 @@ def main():
 
         # Search sits in a corner of the canvas; entries of this view come first.
         assert page.locator("#canvas #search").count() == 1
-        page.locator("#stage").click(position={"x": 20, "y": 500})
+        page.locator("#canvas").click(position={"x": 20, "y": 500})
         page.keyboard.press("/")
         assert page.evaluate("document.activeElement.id") == "search"
         page.locator("#search").fill("Domain")
@@ -752,6 +767,8 @@ def main():
             return ['composables/', 'authentication/', 'test_solver_progress.py'].map((name) => twoLines(t, name, textWidth(t, name.slice(0, -1), 30) + 0.5, 30)); }""")
         assert all(len(line) >= 3 for group in lines for line in group), lines
         assert len(lines[0]) == 1 and lines[0][0].endswith("…") and lines[2] == ["test_solver_", "progress.py"], lines
+        # (Clear of the tools over the top of the canvas.)
+        page.evaluate("setCamera({k: 0.4, x: 0, y: 200})")
         page.locator("#graph .node[data-id='file:w/a.ts']").hover()
         assert page.locator("#lift-graph .edge.hover .edge-label").first.evaluate("e => getComputedStyle(e).display") != "none"
         page.mouse.move(0, 0)
@@ -949,7 +966,7 @@ def main():
         # Every wire group carries an opacity of its own (below 1): without
         # one, each frame's layerization is 30 times slower on a large level.
         assert page.evaluate("[...document.querySelectorAll('#graph .edge')].every((e) => parseFloat(getComputedStyle(e).opacity) < 1)")
-        stage = page.locator("#stage").bounding_box()
+        stage = page.locator("#canvas").bounding_box()
         page.mouse.move(stage["x"] + stage["width"] / 2, stage["y"] + stage["height"] / 2)
         for _ in range(2):
             page.mouse.wheel(0, -120)

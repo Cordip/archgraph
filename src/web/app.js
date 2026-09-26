@@ -2329,16 +2329,26 @@ function stageSize() {
 // its own); the camera is committed to the drawing once the gesture pauses
 // for SETTLE_MS, or when the picture has moved or scaled too far to stand
 // in for it. Text sizes and wire widths follow the committed camera.
-const SETTLE_MS = 140;
+const SETTLE_MS = 140, OVERSCAN = 0.5, MAX_LIVE_SCALE = 2.5;
 let drawn = null, settleTimer = 0;
+// Where the canvas's top left corner is in the drawing's own coordinates:
+// the drawing starts OVERSCAN of the canvas above and left of it.
+function overscan() {
+  const size = stageSize();
+  return { x: size.width * OVERSCAN, y: size.height * OVERSCAN, width: size.width, height: size.height };
+}
 function applyCamera(live = false) {
   $("zoom-level").textContent = `${Math.round(camera.k * 100)}%`;
   updateMinimapView();
   clearTimeout(settleTimer);
   if (live && drawn) {
-    const scale = camera.k / drawn.k, size = stageSize();
+    // The moved picture must still cover the canvas: the rendered area,
+    // canvas plus overscan, scaled by `scale` about the canvas's corner and
+    // shifted by (dx, dy).
+    const scale = camera.k / drawn.k, { x: ox, y: oy, width, height } = overscan();
     const dx = camera.x - drawn.x * scale, dy = camera.y - drawn.y * scale;
-    if (scale > 0.6 && scale < 1.6 && Math.abs(dx) < size.width * 0.4 && Math.abs(dy) < size.height * 0.4) {
+    const covers = dx - ox * scale <= 0 && dy - oy * scale <= 0 && dx + (width + ox) * scale >= width && dy + (height + oy) * scale >= height;
+    if (covers && scale < MAX_LIVE_SCALE) {
       $("viewport").style.transform = `translate(${round(dx)}px, ${round(dy)}px) scale(${scale.toFixed(4)})`;
       settleTimer = setTimeout(commitCamera, SETTLE_MS);
       return;
@@ -2348,7 +2358,8 @@ function applyCamera(live = false) {
 }
 function commitCamera() {
   clearTimeout(settleTimer);
-  const transform = `translate(${round(camera.x)} ${round(camera.y)}) scale(${camera.k.toFixed(4)})`;
+  const { x: ox, y: oy } = overscan();
+  const transform = `translate(${round(camera.x + ox)} ${round(camera.y + oy)}) scale(${camera.k.toFixed(4)})`;
   $("graph").setAttribute("transform", transform);
   $("lift-graph").setAttribute("transform", transform);
   $("grid").setAttribute("patternTransform", transform);
