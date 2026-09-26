@@ -1,6 +1,8 @@
 # Desired architecture for lct-task3, a field-service planning app: a Python
 # backend (FastAPI, OR-Tools) and a React + TypeScript frontend with one
 # global stylesheet. Layers follow the repository's docs/architecture.md.
+# This is an English copy of lct-task3's own architecture.yaml, which is the
+# source; change that file first.
 #
 #   archgraph --root /path/to/lct-task3 \
 #       --config examples/lct-task3/architecture.yaml check
@@ -57,11 +59,41 @@ nodes:
   lct.backend.core:
     title: Planning core
     description: Solver, validator (the only source of times and metrics), replanning, explanations.
-    maps: ["backend/planner/core/**"]
+  lct.backend.core.planning:
+    title: Planning
+    description: Solver, replanning, the baseline plan and the comparison with the manual assignment.
+    maps: ["backend/planner/core/{solver,replan,baseline,control}.py"]
+  lct.backend.core.reporting:
+    title: Explanations and metrics
+    description: Assignment explanations, reasons for unassigned orders, metrics and route geometry for the map.
+    maps: ["backend/planner/core/{explain,reasons,metrics,geometry}.py"]
+  lct.backend.core.validation:
+    title: Validator
+    description: The only place that computes route times and checks constraints.
+    maps: ["backend/planner/core/validate.py"]
+  lct.backend.core.domain:
+    title: Domain rules
+    description: Travel time, equipment, zones.
+    maps: ["backend/planner/core/{travel,equipment,zones}.py"]
+  lct.backend.core.base:
+    title: Models and utilities
+    description: Data models, time, texts, work types.
+    maps: ["backend/planner/core/{models,timeutil,text,worktype,__init__}.py"]
   lct.backend.api:
     title: Web service
     description: FastAPI endpoints, background jobs, candidate previews, plan store.
-    maps: ["backend/planner/api/**"]
+  lct.backend.api.routes:
+    title: Endpoints
+    maps: ["backend/planner/api/{app,__init__}.py"]
+  lct.backend.api.jobs:
+    title: Background jobs
+    maps: ["backend/planner/api/jobs.py"]
+  lct.backend.api.candidates:
+    title: Assignment previews
+    maps: ["backend/planner/api/candidates.py"]
+  lct.backend.api.store:
+    title: Plan store
+    maps: ["backend/planner/api/store.py"]
   lct.backend.cli:
     title: Command line
     description: Wires data preparation, core and scenarios together outside the service.
@@ -88,7 +120,20 @@ nodes:
     maps: ["frontend/src/{derive,geo,sim,labels,colors,time}.ts"]
   lct.frontend.components:
     title: Components
-    maps: ["frontend/src/components/**"]
+  lct.frontend.components.screens:
+    title: Screens
+    description: The schedule and the simulation, assembled from panels.
+    maps: ["frontend/src/components/{Schedule,Simulation}.tsx"]
+  lct.frontend.components.panels:
+    title: Panels
+    description: Tables, the order queue, the Gantt chart, forms and control bars.
+    maps: ["frontend/src/components/{Comparison,EngineerList,Gantt,JobPanel,JobQueue,KpiStrip,RouteTable,SimulationEventForm,Topbar,VariantBar}.tsx", "frontend/src/components/useJobCandidates.ts"]
+  lct.frontend.components.map:
+    title: Map
+    maps: ["frontend/src/components/{MapView.tsx,mapIcons.ts}"]
+  lct.frontend.components.common:
+    title: Shared elements
+    maps: ["frontend/src/components/common.tsx"]
   lct.frontend.styles:
     title: Stylesheet
     maps: ["frontend/src/**/*.css"]
@@ -119,6 +164,25 @@ rules:
       - lct.backend.core
       - lct.backend.paths
     edge_types: *observed
+  # Inside the core: plans are built on explanations and metrics, those on
+  # the validator, the validator on the domain rules, all of it on the models.
+  - id: core-layers
+    kind: layers
+    layers:
+      - lct.backend.core.planning
+      - lct.backend.core.reporting
+      - lct.backend.core.validation
+      - lct.backend.core.domain
+      - lct.backend.core.base
+    edge_types: *observed
+  # The endpoints assemble responses from the rest of the service; jobs,
+  # previews and the store never call the endpoints.
+  - id: api-layers
+    kind: layers
+    layers:
+      - lct.backend.api.routes
+      - [lct.backend.api.jobs, lct.backend.api.candidates, lct.backend.api.store]
+    edge_types: *observed
   - id: production-code-does-not-use-tests
     kind: deny_dependency
     from: lct.backend
@@ -141,3 +205,13 @@ rules:
     edge_types: *observed
   # The solver stays behind the planning core; tests may drive it directly.
   - {id: only-the-core-uses-the-solver, kind: allow_only_from, to: libs.ortools, from: [lct.backend.core, lct.tests]}
+  # Screens are assembled from panels, panels use the map, shared elements
+  # are at the bottom.
+  - id: component-layers
+    kind: layers
+    layers:
+      - lct.frontend.components.screens
+      - lct.frontend.components.panels
+      - lct.frontend.components.map
+      - lct.frontend.components.common
+    edge_types: *observed

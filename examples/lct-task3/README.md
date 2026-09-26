@@ -20,10 +20,11 @@ archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.y
 archgraph --root . --config /path/to/archgraph/examples/lct-task3/architecture.yaml packages ortools
 ```
 
-Since branch `refactor/architecture-boundaries`, lct-task3 carries the same
-configuration as its own `architecture.yaml`, with comments and titles in
-Russian (the repository's language), and runs it with `make arch`. The copy
-here is the one this validation used and ArchGraph's tests parse. Running
+lct-task3 carries the same configuration as its own `architecture.yaml`,
+with comments and titles in Russian (the repository's language), and runs it
+with `make arch`. The project's file is the source: the copy here follows it
+(branch `refactor/finer-architecture` of the fork) and is what ArchGraph's
+tests parse. Running
 ArchGraph writes only `.archgraph/` into the target, which ignores itself.
 
 ## Nodes and rules
@@ -33,6 +34,15 @@ preparation (`ingest`) builds core models from the raw export, the core
 (`solver`, `validate`, `replan`, ...) computes plans, and the web service and
 the CLI sit on top. `paths.py` only names data directories and sits below
 everything.
+
+Inside the core, `core-layers` orders five sub-nodes: planning (`solver`,
+`replan`, `baseline`, `control`), explanations and metrics, the validator,
+domain rules (`travel`, `equipment`, `zones`) and models and utilities. The
+web service's endpoints (`api/app.py`) sit above jobs, previews and the plan
+store (`api-layers`). The frontend components are split into screens, panels,
+the map and shared elements (`component-layers`). Every observed dependency
+between these sub-nodes points down, so the check stays clean; the rules
+catch the first one that points up.
 
 The frontend is split by role: app state and hooks, components, pure view
 helpers, the HTTP client, the API types and the stylesheet. Classes a
