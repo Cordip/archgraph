@@ -49,3 +49,35 @@ From [ui-backlog.md](ui-backlog.md), in this order: the code viewer in the
 split right panel (a violation or evidence line opens the source), then
 `archgraph snapshot` with a live graph diff, then agent plan files drawn over
 the graph.
+
+## 6. A skill for boring, readable code
+
+An agent skill, next to [skills/archgraph](../skills/archgraph/SKILL.md),
+that makes code written or refactored by an agent read as if one careful
+person wrote all of it, in the spirit of early Go: one obvious way to do each
+thing, so no file differs in style from any other. The architecture says
+where code belongs; this skill says how it reads. Requirements from the
+user:
+
+- **Visible hierarchy.** A reader sees how the author thought: which
+  function serves which purpose, from the entry point down to the helpers.
+  In Rust the hierarchy may follow the data (types first, then what works on
+  them) rather than the calls.
+- **One shape for every function.** First set up everything it needs, then
+  do the work, then hand the result on or return it. Errors are handled the
+  same way everywhere.
+- **Whitespace.** Blank lines separate the setup, work and return steps;
+  indentation is never saved on.
+- **`if` is always multi-line**, never a one-line conditional body.
+- **Comments answer "why".** The code answers what and how; if it cannot, the
+  code is what needs fixing.
+- **Nesting no deeper than three or four levels.** Early returns and small
+  functions instead.
+- **Boring and standard.** Easy to read beats clever.
+- **Optimised code is explained in detail.** Where performance matters, a
+  comment describes how the algorithm works and why it is written this way,
+  as the Go runtime does.
+
+Open questions: whether the skill carries per-language rules (Rust,
+TypeScript, Python) or one set with examples in each, and whether a check
+(nesting depth, one-line `if`) backs the parts that a tool can measure.
