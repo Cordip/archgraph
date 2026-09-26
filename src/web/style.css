@@ -407,11 +407,12 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .edge-line { fill: none; stroke: var(--net, var(--line)); }
 .edge-strand { fill: none; stroke: var(--net, var(--line)); stroke-width: calc(1.7px * var(--ws, 1)); }
 .edge.bus > .edge-line { stroke: none; }
-/* Past six nets the hues repeat with a dash pattern. */
-.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: calc(6px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
-.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: calc(1.6px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
-.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: calc(10px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(2px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
-.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: calc(2px * var(--ws, 1)) calc(5px * var(--ws, 1)); }
+/* Past six nets the hues repeat with a dash pattern: dashes of four
+   lengths, never dots, which read as a faint grey line at a distance. */
+.edge.c1 .edge-line, .edge.c1 .edge-strand, .edge .edge-strand.c1 { stroke-dasharray: calc(7px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+.edge.c2 .edge-line, .edge .edge-strand.c2 { stroke-dasharray: calc(14px * var(--ws, 1)) calc(4px * var(--ws, 1)); }
+.edge.c3 .edge-line, .edge .edge-strand.c3 { stroke-dasharray: calc(11px * var(--ws, 1)) calc(3px * var(--ws, 1)) calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
+.edge.c4 .edge-line, .edge .edge-strand.c4 { stroke-dasharray: calc(4px * var(--ws, 1)) calc(3px * var(--ws, 1)); }
 /* A violation keeps the wire's own colour inside a red casing. */
 .edge-casing { fill: none; stroke: var(--red); stroke-width: calc(8px * var(--ws, 1)); stroke-linejoin: round; }
 .w3 .edge-casing { stroke-width: calc(9px * var(--ws, 1)); }
@@ -460,10 +461,10 @@ body.sidebar-closed .sidebar, body.inspector-closed .inspector { display: none; 
 .trunk-strand.more { stroke: var(--ink-3); }
 .edge.trunk .trunk-casing { stroke-linejoin: round; }
 .edge.trunk .edge-gap.trunk-casing { stroke: var(--sheet); }
-.edge .trunk-strand.c1 { stroke-dasharray: calc(6px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
-.edge .trunk-strand.c2 { stroke-dasharray: calc(1.6px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
-.edge .trunk-strand.c3 { stroke-dasharray: calc(10px * var(--ts, 1)) calc(3px * var(--ts, 1)) calc(2px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
-.edge .trunk-strand.c4 { stroke-dasharray: calc(2px * var(--ts, 1)) calc(5px * var(--ts, 1)); }
+.edge .trunk-strand.c1 { stroke-dasharray: calc(7px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
+.edge .trunk-strand.c2 { stroke-dasharray: calc(14px * var(--ts, 1)) calc(4px * var(--ts, 1)); }
+.edge .trunk-strand.c3 { stroke-dasharray: calc(11px * var(--ts, 1)) calc(3px * var(--ts, 1)) calc(4px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
+.edge .trunk-strand.c4 { stroke-dasharray: calc(4px * var(--ts, 1)) calc(3px * var(--ts, 1)); }
 .trunk-arrow { fill: var(--net, var(--ink-2)); stroke: var(--sheet); stroke-linejoin: round; }
 .edge.trunk.ribbon .trunk-arrow { fill: var(--ink-2); }
 .edge.trunk.violating .trunk-arrow { fill: var(--red); }

@@ -893,6 +893,16 @@ def main():
             return end ? [parseFloat(style.strokeDasharray) * camera.k, style.strokeOpacity, parseFloat(getComputedStyle(line).strokeOpacity)] : null; })""")
         assert ends and all(end and end[0] >= 12 and end[1] == "1" for end in ends), ends[:5]
         assert any(end[2] < 0.5 for end in ends), ends[:5]
+        # Nets past the sixth hue repeat it with dashes, never dots: every
+        # drawn piece of a pattern is at least three times the stroke's width.
+        patterns = page.evaluate("""() => { const ns = 'http://www.w3.org/2000/svg', box = document.createElementNS(ns, 'svg'); document.body.append(box);
+            const out = ['c1', 'c2', 'c3', 'c4'].map((c) => { const g = document.createElementNS(ns, 'g'), line = document.createElementNS(ns, 'path'), strand = document.createElementNS(ns, 'path');
+                g.setAttribute('class', `edge w1 n0 ${c}`); line.setAttribute('class', 'edge-line'); strand.setAttribute('class', `trunk-strand ${c}`); g.append(line, strand); box.append(g);
+                const dashes = (e) => getComputedStyle(e).strokeDasharray.split(/[ ,]+/).map(parseFloat).filter((v, i) => i % 2 === 0);
+                return [c, dashes(line), parseFloat(getComputedStyle(line).strokeWidth), dashes(strand), parseFloat(getComputedStyle(strand).strokeWidth)]; });
+            box.remove(); return out; }""")
+        assert all(min(line) >= 3 * lw and min(strand) >= 2 * sw for _, line, lw, strand, sw in patterns), patterns
+        assert len({tuple(line) for _, line, *_ in patterns}) == 4, patterns
         # Arrowheads are cased in the sheet's colour, so they read on the grid.
         casing = page.evaluate("() => { const a = getComputedStyle(document.querySelector('#arrow-n0 path')); return [a.stroke, parseFloat(a.strokeWidth), a.paintOrder, getComputedStyle(document.getElementById('stage')).getPropertyValue('--sheet').trim()]; }")
         assert casing[1] >= 1 and casing[2].startswith("stroke"), casing

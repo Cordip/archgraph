@@ -785,7 +785,7 @@ also shown as a tab on its card), by **relation kind** (an edge of several
 kinds is drawn as a bus of strands, one per kind), by **target**, or
 **none**. The six hues are the colour-blind-safe Okabe–Ito set, tuned for
 the light sheet and the dark blueprint; past six nets they repeat with a
-dash pattern. Violations keep a red casing around the wire's colour and
+dash pattern (dashes of four lengths, never dots). Violations keep a red casing around the wire's colour and
 suggested cuts stay dashed. A legend in the top-right corner lists the
 colours (hovering a row lights its wires), and the details panel shows each
 dependency's wire sample. The mode and colouring are remembered in the
