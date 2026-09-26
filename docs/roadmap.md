@@ -81,3 +81,29 @@ user:
 Open questions: whether the skill carries per-language rules (Rust,
 TypeScript, Python) or one set with examples in each, and whether a check
 (nesting depth, one-line `if`) backs the parts that a tool can measure.
+
+## 7. A skill for using ArchGraph
+
+The bundled [skills/archgraph](../skills/archgraph/SKILL.md) covers the
+refactoring loop inside a repository that carries its own
+`architecture.yaml`. It does not cover the way ArchGraph is used now: as a
+local tool whose configuration for a target project lives outside that
+project (for lct-task3, `examples/lct-task3/architecture.yaml` here), with the
+work on the architecture done from this repository. The skill should cover:
+
+- Running every command against an outside target: `--root <target>
+  --config <file>`, where the index lives (`.gitnexus/`, `.archgraph/` in the
+  target, ignored there) and that nothing else may be written into the
+  target.
+- Writing and changing the architecture: nodes and `maps`, the rule kinds,
+  `entry_points`, the providers (`css`, `http`, `packages`), and proving that
+  a new rule can fail (the edges it constrains are observed) rather than
+  trusting a clean check.
+- Reading results: `check` exit codes, `show`, `context`, `styles`, `http`,
+  `packages`, `unused`, and false positives from GitNexus guesses
+  (`exclude_reasons`, `min_confidence`) with evidence from the source.
+- The UI for people: canvas, table and matrix, focus mode, trunks, colour
+  modes, the code viewer, and how to point a person at a level or a
+  violation.
+- Installing it globally (`~/.claude/skills/archgraph`) so it works from
+  any directory, as well as with `archgraph init --install-skill`.
